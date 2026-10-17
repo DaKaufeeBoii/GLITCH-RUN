@@ -1,6 +1,6 @@
 extends CharacterBody2D
 ## Production-grade cyberpunk pixel-art player with multi-animation state machine,
-## aiming weapon pivot, dash ghost trails, and mobile/desktop controls.
+## aiming blaster weapon pivot, dash ghost trails, and mobile/desktop controls.
 
 signal health_changed(current: int, maximum: int)
 signal died
@@ -8,7 +8,7 @@ signal dashed
 signal damaged(amount: int)
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/projectile.tscn")
-const PLAYER_TEX := preload("res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/Players/players blue x1.png")
+const ASSET_LOADER := preload("res://scripts/asset_loader.gd")
 
 const MOVE_SPEED := 245.0
 const DASH_SPEED := 720.0
@@ -49,44 +49,46 @@ func _ready() -> void:
 
 
 func _setup_visual_components() -> void:
-	# Build multi-animation SpriteFrames dynamically from players blue x1.png
+	var sheet_tex := ASSET_LOADER.load_texture("res://assets/player/player_sheet.png")
+	var blaster_tex := ASSET_LOADER.load_texture("res://assets/player/blaster.png")
+
 	var frames := SpriteFrames.new()
 
-	# 1. Idle (Row 0 Col 0 + Row 1 Cols 0, 1, 2)
-	frames.add_animation("idle")
-	frames.set_animation_speed("idle", 6.0)
-	frames.set_animation_loop("idle", true)
-	frames.add_frame("idle", _make_atlas(0, 0))
-	for c in range(3):
-		frames.add_frame("idle", _make_atlas(c, 1))
+	if sheet_tex:
+		# 1. Idle (Row 0, 4 frames)
+		frames.add_animation("idle")
+		frames.set_animation_speed("idle", 6.0)
+		frames.set_animation_loop("idle", true)
+		for c in range(4):
+			frames.add_frame("idle", _make_atlas(sheet_tex, c, 0))
 
-	# 2. Run (Row 2 Cols 0..5)
-	frames.add_animation("run")
-	frames.set_animation_speed("run", 10.0)
-	frames.set_animation_loop("run", true)
-	for c in range(6):
-		frames.add_frame("run", _make_atlas(c, 2))
+		# 2. Run (Row 1, 6 frames)
+		frames.add_animation("run")
+		frames.set_animation_speed("run", 10.0)
+		frames.set_animation_loop("run", true)
+		for c in range(6):
+			frames.add_frame("run", _make_atlas(sheet_tex, c, 1))
 
-	# 3. Dash (Row 3 Cols 0..4)
-	frames.add_animation("dash")
-	frames.set_animation_speed("dash", 14.0)
-	frames.set_animation_loop("dash", false)
-	for c in range(5):
-		frames.add_frame("dash", _make_atlas(c, 3))
+		# 3. Dash (Row 2, 4 frames)
+		frames.add_animation("dash")
+		frames.set_animation_speed("dash", 14.0)
+		frames.set_animation_loop("dash", false)
+		for c in range(4):
+			frames.add_frame("dash", _make_atlas(sheet_tex, c, 2))
 
-	# 4. Hurt (Row 4 Cols 0..4)
-	frames.add_animation("hurt")
-	frames.set_animation_speed("hurt", 12.0)
-	frames.set_animation_loop("hurt", false)
-	for c in range(5):
-		frames.add_frame("hurt", _make_atlas(c, 4))
+		# 4. Hurt (Row 3, 4 frames)
+		frames.add_animation("hurt")
+		frames.set_animation_speed("hurt", 12.0)
+		frames.set_animation_loop("hurt", false)
+		for c in range(4):
+			frames.add_frame("hurt", _make_atlas(sheet_tex, c, 3))
 
-	# 5. Death (Row 5 Cols 0..7)
-	frames.add_animation("death")
-	frames.set_animation_speed("death", 8.0)
-	frames.set_animation_loop("death", false)
-	for c in range(8):
-		frames.add_frame("death", _make_atlas(c, 5))
+		# 5. Death (Row 4, 6 frames)
+		frames.add_animation("death")
+		frames.set_animation_speed("death", 8.0)
+		frames.set_animation_loop("death", false)
+		for c in range(6):
+			frames.add_frame("death", _make_atlas(sheet_tex, c, 4))
 
 	anim_sprite = AnimatedSprite2D.new()
 	anim_sprite.name = "PlayerSprite"
@@ -94,18 +96,17 @@ func _setup_visual_components() -> void:
 	anim_sprite.play("idle")
 	add_child(anim_sprite)
 
-	# Dedicated Blaster Weapon Sprite (Row 0 Col 1)
+	# Dedicated Blaster Weapon Sprite
 	gun_sprite = Sprite2D.new()
 	gun_sprite.name = "Blaster"
-	gun_sprite.texture = _make_atlas(1, 0)
-	# Center pivot around weapon handle
+	gun_sprite.texture = blaster_tex
 	gun_sprite.offset = Vector2(0, 0)
 	add_child(gun_sprite)
 
 
-func _make_atlas(col: int, row: int) -> AtlasTexture:
+func _make_atlas(tex: Texture2D, col: int, row: int) -> AtlasTexture:
 	var at := AtlasTexture.new()
-	at.atlas = PLAYER_TEX
+	at.atlas = tex
 	at.region = Rect2(col * 32, row * 32, 32, 32)
 	return at
 
@@ -214,13 +215,14 @@ func _update_animation_and_weapon(move_input: Vector2) -> void:
 
 func _spawn_dash_ghost(has_static_blink: bool) -> void:
 	var ghost := Sprite2D.new()
-	var current_frame_tex := anim_sprite.sprite_frames.get_frame_texture(anim_sprite.animation, anim_sprite.frame)
-	ghost.texture = current_frame_tex
+	if anim_sprite.sprite_frames and anim_sprite.sprite_frames.has_animation(anim_sprite.animation):
+		var frame_count := anim_sprite.sprite_frames.get_frame_count(anim_sprite.animation)
+		if anim_sprite.frame < frame_count:
+			ghost.texture = anim_sprite.sprite_frames.get_frame_texture(anim_sprite.animation, anim_sprite.frame)
 	ghost.global_position = global_position
 	ghost.flip_h = anim_sprite.flip_h
 	ghost.z_index = z_index - 1
 
-	# Neon cyan or hyper violet for static blink
 	var ghost_color := Color("c084fc") if has_static_blink else Color("38bdf8")
 	ghost_color.a = 0.55
 	ghost.modulate = ghost_color
@@ -265,7 +267,6 @@ func try_dash() -> void:
 
 
 func _apply_dash_damage() -> void:
-	# Deal contact shock damage to nearby enemies during static blink
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if is_instance_valid(enemy) and global_position.distance_to(enemy.global_position) < 42.0:
 			if enemy.has_method("take_damage"):
@@ -273,7 +274,6 @@ func _apply_dash_damage() -> void:
 
 
 func take_damage(amount: int) -> void:
-	# i-frames during dash or invulnerability cooldown
 	if dead or damage_cooldown > 0.0 or dash_time > 0.0:
 		return
 	health = maxi(0, health - amount)
@@ -309,7 +309,6 @@ func _fire() -> void:
 	if count == 1:
 		_spawn_bullet(aim_direction, extra_dmg)
 	else:
-		# Twin spread shot
 		_spawn_bullet(aim_direction.rotated(-0.08), extra_dmg)
 		_spawn_bullet(aim_direction.rotated(0.08), extra_dmg)
 
@@ -323,7 +322,6 @@ func _spawn_bullet(dir: Vector2, extra_dmg: int) -> void:
 
 
 func _draw() -> void:
-	# Draw static electric arc during static blink dash
 	var rs = get_node_or_null("/root/RunState")
 	if dash_time > 0.0 and rs and rs.dash_damage:
 		for i in range(4):

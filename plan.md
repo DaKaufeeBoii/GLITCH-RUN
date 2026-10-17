@@ -20,17 +20,18 @@ This plan tracks the current prototype, the next playable milestones, and later 
 ```text
 project.godot
 assets/
-  Tech Dungeon Roguelite - Asset Pack (DEMO)/
-    Players/
-      players blue x1.png (32x32 spritesheet: idle, run, dash, hurt, death, blaster)
-    tileset x1.png (32x32 modular tech dungeon floor and obstacle plates)
-    UI/
-      ui x1.png (32x32 full and empty heart containers)
+  player/
+    player_sheet.png (192x160 32x32 spritesheet: idle, run, dash, hurt, death)
+    blaster.png (32x32 bullpup rail pistol)
+  environment/
+    tileset.png (256x128 32x32 tiles: alloy plates, cyber circuits, grates, hatches, server racks, generators)
+  ui/
+    hearts.png (64x32 32x32 health module containers: full & depleted)
   enemies/
-    chaser_sheet.png (32x32 4-frame scuttle crawl)
-    shooter_sheet.png (32x32 4-frame hover sentry with charge & recoil)
-    dasher_sheet.png (32x32 4-frame razor interceptor with afterburners)
-    boss_sheet.png (64x64 4-frame Nexus Overlord singularity core)
+    chaser_sheet.png (128x32 4-frame scuttle crawl)
+    shooter_sheet.png (128x32 4-frame hover sentry with charge & recoil)
+    dasher_sheet.png (128x32 4-frame razor interceptor with afterburners)
+    boss_sheet.png (256x64 4-frame Nexus Overlord singularity core)
     boss_drone.png (16x16 autonomous orbital defense pod)
   weapons/
     player_plasma.png (32x16 plasma dart with ion trail)

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://byxdy4gq88t1g"
-path="res://.godot/imported/players blue x3.png-161b848055ffcd6498e6cf28c726156c.ctex"
+uid="uid://euithovl2dix"
+path="res://.godot/imported/dasher_sheet.png-131e40dc5f733e54f05aedf196f642b5.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/Players/No Outlines/players blue x3.png"
-dest_files=["res://.godot/imported/players blue x3.png-161b848055ffcd6498e6cf28c726156c.ctex"]
+source_file="res://assets/enemies/dasher_sheet.png"
+dest_files=["res://.godot/imported/dasher_sheet.png-131e40dc5f733e54f05aedf196f642b5.ctex"]
 
 [params]
 

@@ -8,9 +8,7 @@ const SHOOTER_SCENE := preload("res://scenes/enemies/shooter.tscn")
 const DASHER_SCENE := preload("res://scenes/enemies/dasher.tscn")
 const BOSS_SCENE := preload("res://scenes/enemies/boss.tscn")
 const TOUCH_CONTROLS := preload("res://scripts/mobile_controls.gd")
-
-const TILESET_TEX := preload("res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/tileset x1.png")
-const UI_TEX := preload("res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/UI/ui x1.png")
+const ASSET_LOADER := preload("res://scripts/asset_loader.gd")
 
 const BEHAVIOR_TRACKER_SCRIPT := preload("res://scripts/behavior_tracker.gd")
 const ADAPTIVE_DIRECTOR_SCRIPT := preload("res://scripts/adaptive_director.gd")
@@ -18,12 +16,16 @@ const DIRECTOR_TESTS_SCRIPT := preload("res://scripts/test_director.gd")
 
 const ROOM_RECT := Rect2(42.0, 64.0, 876.0, 424.0)
 
-# Floor tile coordinates in tileset x1.png (32x32)
-const FLOOR_TILE_BASE := Rect2(128, 32, 32, 32) # (4, 1)
-const FLOOR_TILE_GRID := Rect2(192, 32, 32, 32) # (6, 1)
-const FLOOR_TILE_VENT := Rect2(384, 32, 32, 32) # (12, 1)
-const FLOOR_TILE_HATCH := Rect2(448, 32, 32, 32) # (14, 1)
-const OBSTACLE_TILE := Rect2(1024, 32, 32, 32) # (32, 1)
+# Custom tileset coordinates (32x32 tiles in assets/environment/tileset.png)
+const FLOOR_TILE_BASE := Rect2(0, 0, 32, 32)
+const FLOOR_TILE_CIRCUIT := Rect2(32, 0, 32, 32)
+const FLOOR_TILE_VENT := Rect2(64, 0, 32, 32)
+const FLOOR_TILE_HATCH := Rect2(96, 0, 32, 32)
+const OBSTACLE_SERVER := Rect2(0, 64, 32, 32)
+const OBSTACLE_GENERATOR := Rect2(32, 64, 32, 32)
+
+var tileset_tex: Texture2D
+var hearts_tex: Texture2D
 
 var player: CharacterBody2D
 var active_enemies: Array[Node2D] = []
@@ -78,6 +80,9 @@ var sector_tints: Array[Color] = [
 
 
 func _ready() -> void:
+	tileset_tex = ASSET_LOADER.load_texture("res://assets/environment/tileset.png")
+	hearts_tex = ASSET_LOADER.load_texture("res://assets/ui/hearts.png")
+
 	tracker = BEHAVIOR_TRACKER_SCRIPT.new()
 	director = ADAPTIVE_DIRECTOR_SCRIPT.new()
 
@@ -134,7 +139,6 @@ func _update_hud_hearts() -> void:
 	if not is_instance_valid(hearts_box) or not is_instance_valid(player):
 		return
 
-	# Rebuild heart slots if max health changed
 	while hearts_box.get_child_count() < player.max_health:
 		var tr := TextureRect.new()
 		tr.custom_minimum_size = Vector2(28, 28)
@@ -157,24 +161,26 @@ func _draw() -> void:
 	var sec_idx: int = rs.current_room_index if rs else 0
 	var tint: Color = sector_tints[clampi(sec_idx, 0, sector_tints.size() - 1)]
 
-	# 1. Modular Floor Panels from tileset x1.png
-	for x in range(int(ROOM_RECT.position.x), int(ROOM_RECT.end.x), 32):
-		for y in range(int(ROOM_RECT.position.y), int(ROOM_RECT.end.y), 32):
-			var w := minf(32.0, ROOM_RECT.end.x - float(x))
-			var h := minf(32.0, ROOM_RECT.end.y - float(y))
-			var dest := Rect2(float(x), float(y), w, h)
+	# 1. Custom Modular Floor Panels
+	if tileset_tex:
+		for x in range(int(ROOM_RECT.position.x), int(ROOM_RECT.end.x), 32):
+			for y in range(int(ROOM_RECT.position.y), int(ROOM_RECT.end.y), 32):
+				var w := minf(32.0, ROOM_RECT.end.x - float(x))
+				var h := minf(32.0, ROOM_RECT.end.y - float(y))
+				var dest := Rect2(float(x), float(y), w, h)
 
-			# Deterministic pattern hash based on coordinates
-			var hash_val := ((x * 73856093) ^ (y * 19349663) ^ (sec_idx * 83492791)) % 100
-			var src := FLOOR_TILE_BASE
-			if hash_val < 8:
-				src = FLOOR_TILE_VENT
-			elif hash_val < 18:
-				src = FLOOR_TILE_GRID
-			elif hash_val < 24:
-				src = FLOOR_TILE_HATCH
+				var hash_val := ((x * 73856093) ^ (y * 19349663) ^ (sec_idx * 83492791)) % 100
+				var src := FLOOR_TILE_BASE
+				if hash_val < 10:
+					src = FLOOR_TILE_VENT
+				elif hash_val < 22:
+					src = FLOOR_TILE_CIRCUIT
+				elif hash_val < 30:
+					src = FLOOR_TILE_HATCH
 
-			draw_texture_rect_region(TILESET_TEX, dest, Rect2(src.position.x, src.position.y, w, h), tint)
+				draw_texture_rect_region(tileset_tex, dest, Rect2(src.position.x, src.position.y, w, h), tint)
+	else:
+		draw_rect(ROOM_RECT, Color("0b0f19"), true)
 
 	# 2. Outer arena perimeter & neon hazard rails
 	draw_rect(ROOM_RECT.grow(4.0), Color(0.01, 0.02, 0.04, 0.95), false, 4.0)
@@ -195,17 +201,18 @@ func _draw() -> void:
 	# 3. Hand-authored obstacles with server/terminal textures and telemetry LEDs
 	var ticks := Time.get_ticks_msec()
 	for r in obstacle_rects:
-		# Drop shadow beneath obstacles
 		draw_rect(Rect2(r.position.x + 3.0, r.position.y + 4.0, r.size.x, r.size.y), Color(0.0, 0.0, 0.0, 0.55), true)
 
-		# Textured server body
-		for ox in range(int(r.position.x), int(r.end.x), 32):
-			for oy in range(int(r.position.y), int(r.end.y), 32):
-				var ow := minf(32.0, r.end.x - float(ox))
-				var oh := minf(32.0, r.end.y - float(oy))
-				draw_texture_rect_region(TILESET_TEX, Rect2(float(ox), float(oy), ow, oh), Rect2(OBSTACLE_TILE.position.x, OBSTACLE_TILE.position.y, ow, oh), Color(0.85, 0.92, 1.0))
+		if tileset_tex:
+			for ox in range(int(r.position.x), int(r.end.x), 32):
+				for oy in range(int(r.position.y), int(r.end.y), 32):
+					var ow := minf(32.0, r.end.x - float(ox))
+					var oh := minf(32.0, r.end.y - float(oy))
+					var obs_src := OBSTACLE_SERVER if (ox + oy) % 64 == 0 else OBSTACLE_GENERATOR
+					draw_texture_rect_region(tileset_tex, Rect2(float(ox), float(oy), ow, oh), Rect2(obs_src.position.x, obs_src.position.y, ow, oh), Color(0.9, 0.95, 1.0))
+		else:
+			draw_rect(r, Color("1e293b"), true)
 
-		# Reinforced neon cyber rim
 		draw_rect(r, Color("1e293b"), false, 2.0)
 		draw_line(r.position, Vector2(r.end.x, r.position.y), Color("38bdf8"), 2.0)
 
@@ -297,25 +304,21 @@ func _load_room(index: int) -> void:
 	boss_ref = null
 	boss_bar_bg.visible = false
 
-	# Clear previous room obstacles and projectiles
 	for obs in active_obstacles:
 		if is_instance_valid(obs):
 			obs.queue_free()
 	active_obstacles.clear()
 	obstacle_rects.clear()
 
-	# Clear lingering projectiles
 	for child in get_children():
 		if child.is_in_group("projectiles") or child.has_method("_on_body_entered"):
 			child.queue_free()
 
-	# Reset player position to center-left
 	if is_instance_valid(player):
 		player.position = Vector2(ROOM_RECT.position.x + 120.0, ROOM_RECT.get_center().y)
 
 	active_enemies.clear()
 
-	# Adaptive Director evaluation
 	var speed_mult := 1.0
 	var telegraph_mult := 1.0
 
@@ -332,7 +335,6 @@ func _load_room(index: int) -> void:
 		telegraph_mult = decision.enemy_telegraph_mult
 		_show_director_banner(decision.banner_title, decision.banner_sub)
 
-		# Spawn tactical counter reinforcements based on player profile
 		if decision.extra_dashers > 0:
 			_spawn_enemy(DASHER_SCENE, Vector2(620, 150), speed_mult, telegraph_mult)
 		if decision.extra_shooters > 0:
@@ -342,7 +344,6 @@ func _load_room(index: int) -> void:
 
 	damage_taken_this_sector = 0
 
-	# Hand-authored room layouts & encounters
 	match index:
 		0:
 			# Room 1: Calibration (Open room, 3 Chasers)
@@ -439,7 +440,6 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 	if rs:
 		rs.on_enemy_eliminated()
 
-	# Check wave clearance
 	if active_enemies.is_empty() and not room_cleared:
 		room_cleared = true
 		_on_room_cleared()
@@ -532,14 +532,15 @@ func _create_ui() -> void:
 	ui_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(ui_layer)
 
-	# Full and Empty Heart textures from UI/ui x1.png
-	full_heart_tex = AtlasTexture.new()
-	full_heart_tex.atlas = UI_TEX
-	full_heart_tex.region = Rect2(0, 0, 32, 32)
+	# Full and Empty Heart textures from assets/ui/hearts.png
+	if hearts_tex:
+		full_heart_tex = AtlasTexture.new()
+		full_heart_tex.atlas = hearts_tex
+		full_heart_tex.region = Rect2(0, 0, 32, 32)
 
-	empty_heart_tex = AtlasTexture.new()
-	empty_heart_tex.atlas = UI_TEX
-	empty_heart_tex.region = Rect2(32, 0, 32, 32)
+		empty_heart_tex = AtlasTexture.new()
+		empty_heart_tex.atlas = hearts_tex
+		empty_heart_tex.region = Rect2(32, 0, 32, 32)
 
 	# Top Status Bar Container
 	var top_bar := HBoxContainer.new()

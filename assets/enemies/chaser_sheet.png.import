@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://4t0llvx126mx"
-path="res://.godot/imported/players blue x1.png-4db3ace1fe8c9b7f5983740d03dbaa5c.ctex"
+uid="uid://pbi3au6k5ton"
+path="res://.godot/imported/chaser_sheet.png-112431c396eb1d1acfb1e193c60f27ce.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/Players/players blue x1.png"
-dest_files=["res://.godot/imported/players blue x1.png-4db3ace1fe8c9b7f5983740d03dbaa5c.ctex"]
+source_file="res://assets/enemies/chaser_sheet.png"
+dest_files=["res://.godot/imported/chaser_sheet.png-112431c396eb1d1acfb1e193c60f27ce.ctex"]
 
 [params]
 

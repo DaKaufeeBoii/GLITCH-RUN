@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://drin3ea7da2un"
-path="res://.godot/imported/ui x3.png-d5b51ec2289bf97cfc2fadab0afa0e2c.ctex"
+uid="uid://djod5t3erxb8t"
+path="res://.godot/imported/shooter_sheet.png-3afa76973ff03fd6bdb52fd29a17d066.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/UI/ui x3.png"
-dest_files=["res://.godot/imported/ui x3.png-d5b51ec2289bf97cfc2fadab0afa0e2c.ctex"]
+source_file="res://assets/enemies/shooter_sheet.png"
+dest_files=["res://.godot/imported/shooter_sheet.png-3afa76973ff03fd6bdb52fd29a17d066.ctex"]
 
 [params]
 

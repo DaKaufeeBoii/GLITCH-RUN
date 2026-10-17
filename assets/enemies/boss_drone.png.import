@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cd8lgus8ife3p"
-path="res://.godot/imported/tileset x3.png-29610980c00e1af6bc03d420034a20d6.ctex"
+uid="uid://e3k06g2fnb7p"
+path="res://.godot/imported/boss_drone.png-311c0ac6867d4360d0b8f1f3cdc3bae8.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/tileset x3.png"
-dest_files=["res://.godot/imported/tileset x3.png-29610980c00e1af6bc03d420034a20d6.ctex"]
+source_file="res://assets/enemies/boss_drone.png"
+dest_files=["res://.godot/imported/boss_drone.png-311c0ac6867d4360d0b8f1f3cdc3bae8.ctex"]
 
 [params]
 

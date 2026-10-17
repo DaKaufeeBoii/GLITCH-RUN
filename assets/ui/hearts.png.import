@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cmjoxr1d472xv"
-path="res://.godot/imported/players blue x1.png-0810587acbc29841b4abb7b484d6dcba.ctex"
+uid="uid://fdelqa6ac8tm"
+path="res://.godot/imported/hearts.png-452f7a5b4e5560c2f12b95b51a0108c6.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/Players/No Outlines/players blue x1.png"
-dest_files=["res://.godot/imported/players blue x1.png-0810587acbc29841b4abb7b484d6dcba.ctex"]
+source_file="res://assets/ui/hearts.png"
+dest_files=["res://.godot/imported/hearts.png-452f7a5b4e5560c2f12b95b51a0108c6.ctex"]
 
 [params]
 
