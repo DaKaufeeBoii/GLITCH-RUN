@@ -1,5 +1,5 @@
-extends Node2D
-## Owns the roguelite game loop: hand-authored rooms, enemy waves, upgrade drafting, and run completion.
+extends Node3D
+## Top-Down 3D Dungeon Roguelite Game Manager using KayKit 3D Dungeon assets.
 
 const PLAYER_SCENE := preload("res://scenes/player/player.tscn")
 const CHASER_SCENE := preload("res://scenes/enemies/chaser.tscn")
@@ -8,17 +8,24 @@ const DASHER_SCENE := preload("res://scenes/enemies/dasher.tscn")
 const BOSS_SCENE := preload("res://scenes/enemies/boss.tscn")
 const TOUCH_CONTROLS := preload("res://scripts/mobile_controls.gd")
 
-const ROOM_RECT := Rect2(42.0, 64.0, 876.0, 424.0)
+# KayKit 3D Dungeon Models
+var MODEL_FLOOR: PackedScene
+var MODEL_WALL: PackedScene
+var MODEL_PILLAR: PackedScene
+var MODEL_CRATES: PackedScene
+var MODEL_BARREL: PackedScene
+var MODEL_CHEST: PackedScene
 
-var player: CharacterBody2D
-var active_enemies: Array[Node2D] = []
-var active_obstacles: Array[StaticBody2D] = []
-var obstacle_rects: Array[Rect2] = []
+var camera: Camera3D
+var sun: DirectionalLight3D
+var player: CharacterBody3D
+var active_enemies: Array[Node3D] = []
+var active_obstacles: Array[Node3D] = []
 
 var room_cleared := false
 var run_over := false
 var boss_active := false
-var boss_ref: Node2D = null
+var boss_ref: Node3D = null
 
 # UI Elements
 var ui_layer: CanvasLayer
@@ -36,6 +43,7 @@ var end_panel: Control
 var end_title: Label
 var end_stats: Label
 var end_button: Button
+var touch_controls: Control = null
 
 
 func _ready() -> void:
@@ -44,11 +52,18 @@ func _ready() -> void:
 	var rs = get_node("/root/RunState")
 	rs.start_new_run()
 
+	MODEL_FLOOR = load("res://assets/dungeon/floor_tile_large.gltf")
+	MODEL_WALL = load("res://assets/dungeon/wall.gltf")
+	MODEL_PILLAR = load("res://assets/dungeon/pillar.gltf")
+	MODEL_CRATES = load("res://assets/dungeon/crates_stacked.gltf")
+	MODEL_BARREL = load("res://assets/dungeon/barrel_large.gltf")
+	MODEL_CHEST = load("res://assets/dungeon/chest.gltf")
+
+	_setup_3d_environment()
+	_create_dungeon_room()
 	_create_ui()
-	_create_walls()
 	_create_player()
 	_load_room(rs.current_room_index)
-	queue_redraw()
 
 
 func _process(delta: float) -> void:
@@ -71,67 +86,122 @@ func _process(delta: float) -> void:
 		boss_bar_bg.visible = false
 
 
-func _draw() -> void:
-	# Subtle grid
-	for x in range(int(ROOM_RECT.position.x), int(ROOM_RECT.end.x), 32):
-		draw_line(Vector2(x, ROOM_RECT.position.y), Vector2(x, ROOM_RECT.end.y), Color("121b36"), 1.0)
-	for y in range(int(ROOM_RECT.position.y), int(ROOM_RECT.end.y), 32):
-		draw_line(Vector2(ROOM_RECT.position.x, y), Vector2(ROOM_RECT.end.x, y), Color("121b36"), 1.0)
+func _setup_3d_environment() -> void:
+	# Camera3D with high-angle top-down perspective
+	camera = Camera3D.new()
+	camera.position = Vector3(0.0, 22.0, 14.5)
+	camera.look_at(Vector3(0.0, 0.0, 0.0), Vector3.UP)
+	camera.fov = 52.0
+	camera.current = true
+	add_child(camera)
 
-	# Room boundary neon wireframe
-	draw_rect(ROOM_RECT, Color("38bdf8"), false, 2.0)
+	# Directional Sunlight with soft shadows
+	sun = DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-58, 35, 0)
+	sun.light_color = Color("fff1d6")
+	sun.light_energy = 1.3
+	sun.shadow_enabled = true
+	add_child(sun)
 
-	# Hand-authored obstacles
-	for r in obstacle_rects:
-		draw_rect(r, Color("1e293b"), true)
-		draw_rect(r, Color("475569"), false, 1.5)
+	# Ambient World Environment
+	var env := WorldEnvironment.new()
+	var environment := Environment.new()
+	environment.background_mode = Environment.BG_COLOR
+	environment.background_color = Color("090d16")
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color("232b3e")
+	environment.ambient_light_energy = 0.85
+	environment.glow_enabled = true
+	environment.glow_intensity = 0.8
+	environment.glow_strength = 1.1
+	env.environment = environment
+	add_child(env)
 
 
-func _create_walls() -> void:
-	var center_x := ROOM_RECT.position.x + ROOM_RECT.size.x * 0.5
-	var center_y := ROOM_RECT.position.y + ROOM_RECT.size.y * 0.5
+func _create_dungeon_room() -> void:
+	# 7 x 5 KayKit floor tiles (each tile is 4m x 4m -> 28m x 20m arena)
+	var floor_parent := Node3D.new()
+	floor_parent.name = "DungeonFloor"
+	add_child(floor_parent)
 
-	# Fixed: All walls accurately positioned at segment midpoints
-	_add_wall(Vector2(center_x, ROOM_RECT.position.y - 10.0), Vector2(ROOM_RECT.size.x, 20.0))
-	_add_wall(Vector2(center_x, ROOM_RECT.end.y + 10.0), Vector2(ROOM_RECT.size.x, 20.0))
-	_add_wall(Vector2(ROOM_RECT.position.x - 10.0, center_y), Vector2(20.0, ROOM_RECT.size.y))
-	_add_wall(Vector2(ROOM_RECT.end.x + 10.0, center_y), Vector2(20.0, ROOM_RECT.size.y))
+	for col in range(-3, 4):
+		for row in range(-2, 3):
+			var tile: Node3D = MODEL_FLOOR.instantiate()
+			tile.position = Vector3(col * 4.0, 0.0, row * 4.0)
+			floor_parent.add_child(tile)
+
+	# Perimeter Walls
+	var walls_parent := Node3D.new()
+	walls_parent.name = "DungeonWalls"
+	add_child(walls_parent)
+
+	# North Wall (Z = -10.0) & South Wall (Z = 10.0)
+	for col in range(-3, 4):
+		var wall_n: Node3D = MODEL_WALL.instantiate()
+		wall_n.position = Vector3(col * 4.0, 0.0, -10.0)
+		walls_parent.add_child(wall_n)
+
+		var wall_s: Node3D = MODEL_WALL.instantiate()
+		wall_s.position = Vector3(col * 4.0, 0.0, 10.0)
+		wall_s.rotation.y = PI
+		walls_parent.add_child(wall_s)
+
+	# West Wall (X = -14.0) & East Wall (X = 14.0)
+	for row in range(-2, 3):
+		var wall_w: Node3D = MODEL_WALL.instantiate()
+		wall_w.position = Vector3(-14.0, 0.0, row * 4.0)
+		wall_w.rotation.y = PI * 0.5
+		walls_parent.add_child(wall_w)
+
+		var wall_e: Node3D = MODEL_WALL.instantiate()
+		wall_e.position = Vector3(14.0, 0.0, row * 4.0)
+		wall_e.rotation.y = -PI * 0.5
+		walls_parent.add_child(wall_e)
+
+	# 3D Wall Colliders (StaticBody3D)
+	_add_wall_collider(Vector3(0.0, 2.0, -10.5), Vector3(28.0, 4.0, 1.5))
+	_add_wall_collider(Vector3(0.0, 2.0, 10.5), Vector3(28.0, 4.0, 1.5))
+	_add_wall_collider(Vector3(-14.5, 2.0, 0.0), Vector3(1.5, 4.0, 20.0))
+	_add_wall_collider(Vector3(14.5, 2.0, 0.0), Vector3(1.5, 4.0, 20.0))
 
 
-func _add_wall(center: Vector2, size: Vector2) -> void:
-	var wall := StaticBody2D.new()
-	wall.position = center
-	wall.collision_layer = 1
-	wall.collision_mask = 0
-	var shape_node := CollisionShape2D.new()
-	var shape := RectangleShape2D.new()
+func _add_wall_collider(center: Vector3, size: Vector3) -> void:
+	var body := StaticBody3D.new()
+	body.position = center
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var shape_node := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
 	shape.size = size
 	shape_node.shape = shape
-	wall.add_child(shape_node)
-	add_child(wall)
+	body.add_child(shape_node)
+	add_child(body)
 
 
-func _add_obstacle(pos: Vector2, size: Vector2) -> void:
-	var obstacle := StaticBody2D.new()
-	obstacle.position = pos
-	obstacle.collision_layer = 1
-	obstacle.collision_mask = 0
-	var shape_node := CollisionShape2D.new()
-	var shape := RectangleShape2D.new()
-	shape.size = size
+func _add_obstacle_prop(model_scene: PackedScene, pos: Vector3, rot_y: float, collider_size: Vector3) -> void:
+	var prop: Node3D = model_scene.instantiate()
+	prop.position = pos
+	prop.rotation.y = rot_y
+	add_child(prop)
+	active_obstacles.append(prop)
+
+	# StaticBody3D collision box
+	var body := StaticBody3D.new()
+	body.position = pos + Vector3(0.0, collider_size.y * 0.5, 0.0)
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var shape_node := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = collider_size
 	shape_node.shape = shape
-	obstacle.add_child(shape_node)
-	add_child(obstacle)
-	active_obstacles.append(obstacle)
-	obstacle_rects.append(Rect2(pos - size * 0.5, size))
-
-
-var touch_controls: Control = null
+	body.add_child(shape_node)
+	add_child(body)
+	active_obstacles.append(body)
 
 
 func _create_player() -> void:
 	player = PLAYER_SCENE.instantiate()
-	player.position = ROOM_RECT.get_center()
+	player.position = Vector3(-8.0, 0.0, 0.0)
 	player.connect("died", Callable(self, "_on_player_died"))
 	add_child(player)
 
@@ -143,7 +213,6 @@ func _create_player() -> void:
 	touch_controls.connect("fire_changed", Callable(player, "set_touch_fire"))
 	touch_controls.connect("dash_pressed", Callable(player, "try_dash"))
 	ui_layer.add_child(touch_controls)
-	# Ensure touch controls sit beneath interactive menus
 	ui_layer.move_child(touch_controls, 0)
 
 
@@ -153,80 +222,83 @@ func _load_room(index: int) -> void:
 	boss_ref = null
 	boss_bar_bg.visible = false
 
-	# Clear previous room obstacles and projectiles
+	# Clear previous obstacles and temporary objects
 	for obs in active_obstacles:
 		if is_instance_valid(obs):
 			obs.queue_free()
 	active_obstacles.clear()
-	obstacle_rects.clear()
 
 	# Clear lingering projectiles
 	for child in get_children():
-		if child.is_in_group("projectiles") or child.has_method("_on_body_entered"):
+		if child.has_method("_on_body_entered"):
 			child.queue_free()
 
-	# Reset player position to center-left
+	# Reset player position
 	if is_instance_valid(player):
-		player.position = Vector2(ROOM_RECT.position.x + 120.0, ROOM_RECT.get_center().y)
+		player.position = Vector3(-8.0, 0.0, 0.0)
+		player.velocity = Vector3.ZERO
 
 	active_enemies.clear()
 
-	# Hand-authored room layouts & encounters
 	match index:
 		0:
-			# Room 1: Calibration (Open room, 3 Chasers)
-			_spawn_enemy(CHASER_SCENE, Vector2(620, 200))
-			_spawn_enemy(CHASER_SCENE, Vector2(740, 276))
-			_spawn_enemy(CHASER_SCENE, Vector2(620, 360))
+			# Sector 1: Calibration (Open Hall, 3 Chasers)
+			_spawn_enemy(CHASER_SCENE, Vector3(5.0, 0.0, -3.5))
+			_spawn_enemy(CHASER_SCENE, Vector3(8.0, 0.0, 0.0))
+			_spawn_enemy(CHASER_SCENE, Vector3(5.0, 0.0, 3.5))
 
 		1:
-			# Room 2: Firing Line (2 Cover barriers, 2 Chasers, 1 Shooter)
-			_add_obstacle(Vector2(380, 276), Vector2(24, 150))
-			_add_obstacle(Vector2(620, 276), Vector2(24, 150))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(740, 276))
-			_spawn_enemy(CHASER_SCENE, Vector2(520, 180))
-			_spawn_enemy(CHASER_SCENE, Vector2(520, 370))
+			# Sector 2: Firing Line (2 Stone pillars with crates for cover, 2 Chasers, 1 Shooter)
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(-3.0, 0.0, 0.0), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(3.0, 0.0, 0.0), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_CRATES, Vector3(-3.0, 0.0, -1.8), 0.3, Vector3(1.8, 1.5, 1.8))
+			_add_obstacle_prop(MODEL_CRATES, Vector3(3.0, 0.0, 1.8), -0.4, Vector3(1.8, 1.5, 1.8))
+			_spawn_enemy(SHOOTER_SCENE, Vector3(8.0, 0.0, 0.0))
+			_spawn_enemy(CHASER_SCENE, Vector3(4.0, 0.0, -4.0))
+			_spawn_enemy(CHASER_SCENE, Vector3(4.0, 0.0, 4.0))
 
 		2:
-			# Room 3: Vector Ambush (4 Pillar obstacles, 2 Dashers, 2 Chasers)
-			_add_obstacle(Vector2(320, 180), Vector2(40, 40))
-			_add_obstacle(Vector2(640, 180), Vector2(40, 40))
-			_add_obstacle(Vector2(320, 370), Vector2(40, 40))
-			_add_obstacle(Vector2(640, 370), Vector2(40, 40))
-			_spawn_enemy(DASHER_SCENE, Vector2(680, 200))
-			_spawn_enemy(DASHER_SCENE, Vector2(680, 350))
-			_spawn_enemy(CHASER_SCENE, Vector2(520, 276))
-			_spawn_enemy(CHASER_SCENE, Vector2(760, 276))
+			# Sector 3: Vector Ambush (4-pillar cross grid, 2 Dashers, 2 Chasers)
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(-4.0, 0.0, -4.0), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(4.0, 0.0, -4.0), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(-4.0, 0.0, 4.0), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(4.0, 0.0, 4.0), 0.0, Vector3(1.5, 4.0, 1.5))
+			_spawn_enemy(DASHER_SCENE, Vector3(7.0, 0.0, -3.0))
+			_spawn_enemy(DASHER_SCENE, Vector3(7.0, 0.0, 3.0))
+			_spawn_enemy(CHASER_SCENE, Vector3(3.0, 0.0, 0.0))
+			_spawn_enemy(CHASER_SCENE, Vector3(8.5, 0.0, 0.0))
 
 		3:
-			# Room 4: Chokepoint (Central divider, 2 Shooters, 2 Dashers)
-			_add_obstacle(Vector2(480, 276), Vector2(280, 26))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(680, 180))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(680, 370))
-			_spawn_enemy(DASHER_SCENE, Vector2(480, 140))
-			_spawn_enemy(DASHER_SCENE, Vector2(480, 410))
+			# Sector 4: Chokepoint (Central wall divider creating top/bottom lanes, 2 Shooters, 2 Dashers)
+			_add_obstacle_prop(MODEL_WALL, Vector3(-2.0, 0.0, 0.0), 0.0, Vector3(4.0, 4.0, 1.2))
+			_add_obstacle_prop(MODEL_WALL, Vector3(2.0, 0.0, 0.0), 0.0, Vector3(4.0, 4.0, 1.2))
+			_spawn_enemy(SHOOTER_SCENE, Vector3(8.0, 0.0, -4.5))
+			_spawn_enemy(SHOOTER_SCENE, Vector3(8.0, 0.0, 4.5))
+			_spawn_enemy(DASHER_SCENE, Vector3(1.0, 0.0, -5.0))
+			_spawn_enemy(DASHER_SCENE, Vector3(1.0, 0.0, 5.0))
 
 		4:
-			# Room 5: Overload Horde (Fortress blocks, mixed wave)
-			_add_obstacle(Vector2(350, 190), Vector2(64, 28))
-			_add_obstacle(Vector2(610, 190), Vector2(64, 28))
-			_add_obstacle(Vector2(350, 360), Vector2(64, 28))
-			_add_obstacle(Vector2(610, 360), Vector2(64, 28))
-			_spawn_enemy(CHASER_SCENE, Vector2(740, 276))
-			_spawn_enemy(CHASER_SCENE, Vector2(600, 276))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(760, 160))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(760, 390))
-			_spawn_enemy(DASHER_SCENE, Vector2(480, 276))
+			# Sector 5: Overload Horde (Fortress barricades, mixed horde)
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(-4.0, 0.0, -2.5), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_BARREL, Vector3(-3.0, 0.0, -2.5), 0.0, Vector3(1.2, 1.4, 1.2))
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(4.0, 0.0, 2.5), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_CRATES, Vector3(3.0, 0.0, 2.5), 0.2, Vector3(1.6, 1.4, 1.6))
+			_spawn_enemy(CHASER_SCENE, Vector3(8.0, 0.0, 0.0))
+			_spawn_enemy(CHASER_SCENE, Vector3(5.0, 0.0, 0.0))
+			_spawn_enemy(SHOOTER_SCENE, Vector3(9.0, 0.0, -5.0))
+			_spawn_enemy(SHOOTER_SCENE, Vector3(9.0, 0.0, 5.0))
+			_spawn_enemy(DASHER_SCENE, Vector3(3.0, 0.0, 0.0))
 
 		5:
-			# Room 6: Boss Room (Corner cover blocks, NEXUS OVERLORD)
-			_add_obstacle(Vector2(180, 150), Vector2(36, 36))
-			_add_obstacle(Vector2(780, 150), Vector2(36, 36))
-			_add_obstacle(Vector2(180, 400), Vector2(36, 36))
-			_add_obstacle(Vector2(780, 400), Vector2(36, 36))
+			# Sector 6: Core Chamber (Boss Room with 4 corner pillars for cover, NEXUS OVERLORD)
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(-9.0, 0.0, -6.0), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(9.0, 0.0, -6.0), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(-9.0, 0.0, 6.0), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_PILLAR, Vector3(9.0, 0.0, 6.0), 0.0, Vector3(1.5, 4.0, 1.5))
+			_add_obstacle_prop(MODEL_CHEST, Vector3(11.0, 0.0, 0.0), -PI * 0.5, Vector3(1.2, 1.0, 1.2))
 
-			var boss: Node2D = BOSS_SCENE.instantiate()
-			boss.position = Vector2(680, 276)
+			var boss: Node3D = BOSS_SCENE.instantiate()
+			boss.position = Vector3(6.5, 0.0, 0.0)
 			boss.target = player
 			boss.connect("defeated", Callable(self, "_on_enemy_defeated").bind(boss))
 			add_child(boss)
@@ -235,10 +307,8 @@ func _load_room(index: int) -> void:
 			boss_active = true
 			boss_bar_bg.visible = true
 
-	queue_redraw()
 
-
-func _spawn_enemy(packed_scene: PackedScene, pos: Vector2) -> void:
+func _spawn_enemy(packed_scene: PackedScene, pos: Vector3) -> void:
 	if not is_instance_valid(player):
 		return
 	var enemy = packed_scene.instantiate()
@@ -249,7 +319,7 @@ func _spawn_enemy(packed_scene: PackedScene, pos: Vector2) -> void:
 	active_enemies.append(enemy)
 
 
-func _on_enemy_defeated(enemy_node: Node2D) -> void:
+func _on_enemy_defeated(enemy_node: Node3D) -> void:
 	if run_over:
 		return
 	active_enemies.erase(enemy_node)
@@ -258,7 +328,6 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 	if rs:
 		rs.on_enemy_eliminated()
 
-	# Check wave clearance
 	if active_enemies.is_empty() and not room_cleared:
 		room_cleared = true
 		_on_room_cleared()
@@ -266,7 +335,6 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 
 func _on_room_cleared() -> void:
 	var rs = get_node("/root/RunState")
-	# If this was the Boss room, victory!
 	if rs.current_room_index >= rs.TOTAL_ROOMS - 1:
 		_show_end_screen(true)
 	else:
@@ -280,7 +348,6 @@ func _show_upgrade_draft() -> void:
 	var rs = get_node("/root/RunState")
 	var choices: Array = rs.get_random_upgrade_choices(3)
 
-	# Clean children of upgrade cards container
 	for child in upgrade_cards_box.get_children():
 		child.queue_free()
 

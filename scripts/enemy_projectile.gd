@@ -1,10 +1,10 @@
-extends Area2D
-## Hostile projectile that damages the player on contact and dissolves on walls.
+extends Area3D
+## Hostile 3D energy projectile that damages the player on contact and dissolves on walls.
 
-@export var speed := 390.0
+@export var speed := 18.0
 @export var damage := 1
-var direction := Vector2.RIGHT
-var lifetime := 2.8
+var direction := Vector3.FORWARD
+var lifetime := 3.0
 
 
 func _ready() -> void:
@@ -18,15 +18,9 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 
 
-func _on_body_entered(body: Node2D) -> void:
-	# Ignore other enemy bodies
+func _on_body_entered(body: Node3D) -> void:
 	if body.is_in_group("enemies"):
 		return
 	if body.has_method("take_damage"):
 		body.take_damage(damage)
 	queue_free()
-
-
-func _draw() -> void:
-	draw_circle(Vector2.ZERO, 6.0, Color("ff3b5c"))
-	draw_circle(Vector2.ZERO, 3.0, Color("fff0f3"))

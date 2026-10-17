@@ -1,14 +1,91 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/boss.gd" id="1_boss"]
 
-[sub_resource type="CircleShape2D" id="CircleShape_boss"]
-radius = 28.0
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_boss"]
+radius = 1.3
+height = 2.2
 
-[node name="Boss" type="CharacterBody2D"]
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_boss_outer"]
+albedo_color = Color(0.35, 0.05, 0.12, 1)
+metallic = 0.9
+roughness = 0.2
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_boss"]
+material = SubResource("StandardMaterial3D_boss_outer")
+top_radius = 1.2
+bottom_radius = 1.2
+height = 1.8
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_boss_inner"]
+albedo_color = Color(0.96, 0.25, 0.37, 1)
+emission_enabled = true
+emission = Color(0.96, 0.25, 0.37, 1)
+emission_energy_multiplier = 4.0
+
+[sub_resource type="SphereMesh" id="SphereMesh_core"]
+material = SubResource("StandardMaterial3D_boss_inner")
+radius = 0.6
+height = 1.2
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_node"]
+albedo_color = Color(0.99, 0.64, 0.69, 1)
+emission_enabled = true
+emission = Color(0.99, 0.64, 0.69, 1)
+emission_energy_multiplier = 2.5
+
+[sub_resource type="SphereMesh" id="SphereMesh_node"]
+material = SubResource("StandardMaterial3D_node")
+radius = 0.25
+height = 0.5
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_charge_ray"]
+albedo_color = Color(1, 0.2, 0.1, 0.8)
+emission_enabled = true
+emission = Color(1, 0.2, 0.1, 1)
+emission_energy_multiplier = 3.5
+
+[sub_resource type="BoxMesh" id="BoxMesh_charge_ray"]
+material = SubResource("StandardMaterial3D_charge_ray")
+size = Vector3(0.2, 0.1, 14.0)
+
+[node name="Boss" type="CharacterBody3D"]
 collision_layer = 2
 collision_mask = 1
 script = ExtResource("1_boss")
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
-shape = SubResource("CircleShape_boss")
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+shape = SubResource("CylinderShape3D_boss")
+
+[node name="CoreMesh" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+mesh = SubResource("CylinderMesh_boss")
+
+[node name="InnerGlow" type="MeshInstance3D" parent="CoreMesh"]
+mesh = SubResource("SphereMesh_core")
+
+[node name="OrbitNodes" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+
+[node name="Node1" type="MeshInstance3D" parent="OrbitNodes"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.2, 0, 0)
+mesh = SubResource("SphereMesh_node")
+
+[node name="Node2" type="MeshInstance3D" parent="OrbitNodes"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.1, 0, 1.9)
+mesh = SubResource("SphereMesh_node")
+
+[node name="Node3" type="MeshInstance3D" parent="OrbitNodes"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.1, 0, -1.9)
+mesh = SubResource("SphereMesh_node")
+
+[node name="ChargeRay" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, -7.0)
+mesh = SubResource("BoxMesh_charge_ray")
+
+[node name="OmniLight3D" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.3, 0)
+light_color = Color(0.96, 0.25, 0.37, 1)
+light_energy = 2.0
+omni_range = 6.0

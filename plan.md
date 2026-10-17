@@ -51,6 +51,8 @@ The project currently uses simple drawn shapes. Keep placeholder visuals until c
 - [x] Milestone 1: Add 7 distinct upgrades affecting fire rate, damage, spread, speed, HP, and dash.
 - [x] Milestone 1: Add Boss encounter (Nexus Overlord) with radial burst and charge telegraphs.
 - [x] Milestone 1: Add victory & defeat summary screens with restart loop.
+- [x] Pivot to Top-Down 3D: Integrated KayKit 3D Dungeon assets (floors, walls, pillars, crates, barrels, chests).
+- [x] Converted Player, Projectiles, and all 4 Enemy types to 3D with dynamic lighting, shadows, and raycast mouse/touch aiming.
 - [ ] Open in Godot 4.7.2, run the main scene, and playtest/tune.
 - [ ] Install the first Android build on a physical device and tune touch controls.
 

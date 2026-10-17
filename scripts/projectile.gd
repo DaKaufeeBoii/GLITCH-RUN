@@ -1,10 +1,10 @@
-extends Area2D
-## Short-lived player shot; only enemy bodies are in its collision mask.
+extends Area3D
+## 3D player energy projectile that travels along the X/Z plane and impacts enemies/walls.
 
-@export var speed := 620.0
+@export var speed := 28.0
 @export var damage := 1
-var direction := Vector2.RIGHT
-var lifetime := 1.5
+var direction := Vector3.FORWARD
+var lifetime := 1.8
 
 
 func _ready() -> void:
@@ -18,13 +18,7 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 
 
-func _on_body_entered(body: Node2D) -> void:
+func _on_body_entered(body: Node3D) -> void:
 	if body.is_in_group("enemies") and body.has_method("take_damage"):
 		body.take_damage(damage)
 	queue_free()
-
-
-func _draw() -> void:
-	draw_circle(Vector2.ZERO, 5.0, Color("ffc95c"))
-	draw_circle(Vector2.ZERO, 2.0, Color("fff5d1"))
-

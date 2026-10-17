@@ -1,28 +1,32 @@
-extends CharacterBody2D
-## Fast, aggressive enemy that charges with a telegraphed lunge and stalls on recovery.
+extends CharacterBody3D
+## Fast 3D enemy that charges with a telegraphed lunge and stalls on recovery.
 
 signal defeated
 
 @export var max_health := 2
-@export var patrol_speed := 95.0
-@export var lunge_speed := 560.0
+@export var patrol_speed := 5.2
+@export var lunge_speed := 26.0
 
 var health := 2
-var target: Node2D
+var target: Node3D
 var defeated_already := false
 
 enum State { STALK, TELEGRAPH, LUNGE, RECOVER }
 var state := State.STALK
 
 var state_timer := 1.2
-var lunge_direction := Vector2.RIGHT
+var lunge_direction := Vector3.FORWARD
 var contact_dealt := false
+
+@onready var warning_ray: MeshInstance3D = $WarningRay
 
 
 func _ready() -> void:
 	health = max_health
 	add_to_group("enemies")
-	state_timer = randf_range(1.0, 2.0)
+	state_timer = randf_range(1.0, 1.8)
+	if warning_ray:
+		warning_ray.visible = false
 
 
 func _physics_process(delta: float) -> void:
@@ -30,42 +34,50 @@ func _physics_process(delta: float) -> void:
 		return
 
 	var to_target := target.global_position - global_position
+	to_target.y = 0.0
 	state_timer -= delta
 
 	match state:
 		State.STALK:
-			rotation = to_target.angle()
+			if warning_ray:
+				warning_ray.visible = false
 			velocity = to_target.normalized() * patrol_speed
-			if state_timer <= 0.0 and to_target.length() < 300.0:
+			if not to_target.is_zero_approx():
+				var look_target := global_position + to_target
+				look_target.y = global_position.y
+				look_at(look_target, Vector3.UP)
+			if state_timer <= 0.0 and to_target.length() < 13.0:
 				state = State.TELEGRAPH
 				state_timer = 0.55
 				lunge_direction = to_target.normalized()
-				velocity = Vector2.ZERO
-				queue_redraw()
+				velocity = Vector3.ZERO
+				if warning_ray:
+					warning_ray.visible = true
 
 		State.TELEGRAPH:
-			velocity = Vector2.ZERO
-			queue_redraw()
+			velocity = Vector3.ZERO
+			if warning_ray:
+				warning_ray.visible = true
 			if state_timer <= 0.0:
 				state = State.LUNGE
-				state_timer = 0.28
+				state_timer = 0.32
 				contact_dealt = false
+				if warning_ray:
+					warning_ray.visible = false
 
 		State.LUNGE:
 			velocity = lunge_direction * lunge_speed
-			rotation = lunge_direction.angle()
-			if not contact_dealt and to_target.length() < 32.0:
+			if not contact_dealt and to_target.length() < 1.4:
 				if target.has_method("take_damage"):
 					target.take_damage(1)
 					contact_dealt = true
 			if state_timer <= 0.0:
 				state = State.RECOVER
 				state_timer = 0.65
-				velocity = Vector2.ZERO
+				velocity = Vector3.ZERO
 
 		State.RECOVER:
-			velocity = Vector2.ZERO
-			rotation = to_target.angle()
+			velocity = Vector3.ZERO
 			if state_timer <= 0.0:
 				state = State.STALK
 				state_timer = randf_range(1.4, 2.2)
@@ -81,34 +93,3 @@ func take_damage(amount: int) -> void:
 		defeated_already = true
 		defeated.emit()
 		queue_free()
-	else:
-		queue_redraw()
-
-
-func _draw() -> void:
-	# Warning trajectory during telegraph
-	if state == State.TELEGRAPH:
-		var pulse := 0.4 + sin(state_timer * 25.0) * 0.3
-		draw_line(Vector2.ZERO, to_local(global_position + lunge_direction * 220.0), Color(1.0, 0.1, 0.4, pulse), 3.0)
-
-	# Body shape: aggressive magenta chevron
-	var body_color := Color("f368e0")
-	if state == State.TELEGRAPH:
-		body_color = Color("ff9ff3")
-	elif state == State.LUNGE:
-		body_color = Color("ff3838")
-	elif state == State.RECOVER:
-		body_color = Color("833471")
-
-	var pts := PackedVector2Array([
-		Vector2(16, 0),
-		Vector2(-12, -13),
-		Vector2(-4, 0),
-		Vector2(-12, 13)
-	])
-	draw_colored_polygon(pts, body_color)
-
-	# Health bar
-	var hit_points := float(health) / float(max_health)
-	draw_rect(Rect2(-12, -18, 24, 3), Color("331c38"))
-	draw_rect(Rect2(-12, -18, 24.0 * hit_points, 3), Color("ff6b81"))
