@@ -276,6 +276,7 @@ func _on_room_cleared() -> void:
 func _show_upgrade_draft() -> void:
 	if touch_controls:
 		touch_controls.enabled = false
+	get_tree().paused = true
 	var rs = get_node("/root/RunState")
 	var choices: Array = rs.get_random_upgrade_choices(3)
 
@@ -296,6 +297,7 @@ func _show_upgrade_draft() -> void:
 
 func _on_upgrade_selected(upgrade_id: String) -> void:
 	upgrade_container.visible = false
+	get_tree().paused = false
 	if touch_controls:
 		touch_controls.enabled = true
 	var rs = get_node("/root/RunState")
@@ -314,6 +316,7 @@ func _on_player_died() -> void:
 
 func _show_end_screen(won: bool) -> void:
 	run_over = true
+	get_tree().paused = true
 	if touch_controls:
 		touch_controls.enabled = false
 	var rs = get_node("/root/RunState")
@@ -337,6 +340,7 @@ func _show_end_screen(won: bool) -> void:
 
 
 func _restart_run() -> void:
+	get_tree().paused = false
 	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		rs.start_new_run()
@@ -346,6 +350,7 @@ func _restart_run() -> void:
 func _create_ui() -> void:
 	ui_layer = CanvasLayer.new()
 	ui_layer.name = "UI"
+	ui_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(ui_layer)
 
 	# Top Status Bar
@@ -390,7 +395,7 @@ func _create_ui() -> void:
 	boss_bar_bg.add_child(boss_label)
 
 	# Upgrade Selection Modal
-	upgrade_container = PanelContainer.new()
+	upgrade_container = Control.new()
 	upgrade_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	upgrade_container.visible = false
 	ui_layer.add_child(upgrade_container)
@@ -400,10 +405,14 @@ func _create_ui() -> void:
 	draft_bg.color = Color(0.02, 0.04, 0.09, 0.88)
 	upgrade_container.add_child(draft_bg)
 
+	var draft_center := CenterContainer.new()
+	draft_center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	upgrade_container.add_child(draft_center)
+
 	var draft_vbox := VBoxContainer.new()
-	draft_vbox.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	draft_vbox.add_theme_constant_override("separation", 20)
 	draft_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	draft_bg.add_child(draft_vbox)
+	draft_center.add_child(draft_vbox)
 
 	var draft_header := Label.new()
 	draft_header.text = "SECTOR SECURED // SELECT RECONFIGURATION"
@@ -435,10 +444,14 @@ func _create_ui() -> void:
 	end_bg.color = Color(0.01, 0.02, 0.05, 0.90)
 	end_panel.add_child(end_bg)
 
+	var end_center := CenterContainer.new()
+	end_center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	end_panel.add_child(end_center)
+
 	var end_vbox := VBoxContainer.new()
-	end_vbox.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	end_vbox.add_theme_constant_override("separation", 16)
 	end_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	end_bg.add_child(end_vbox)
+	end_center.add_child(end_vbox)
 
 	end_title = Label.new()
 	end_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
