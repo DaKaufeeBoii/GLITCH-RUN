@@ -76,7 +76,7 @@ func _process(delta: float) -> void:
 			var tr := TextureRect.new()
 			tr.texture = heart_tex
 			tr.custom_minimum_size = Vector2(32, 32)
-			tr.stretch_mode = TextureRect.STRETCH_KEEP_CENTER
+			tr.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
 			hearts_box.add_child(tr)
 			heart_icons.append(tr)
 
