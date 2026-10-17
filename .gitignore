@@ -1,0 +1,10 @@
+# Godot generated/imported files
+.godot/
+android/build/
+export.cfg
+export_presets.cfg
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+*.tmp
