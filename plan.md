@@ -19,22 +19,53 @@ This plan tracks the current prototype, the next playable milestones, and later 
 
 ```text
 project.godot
+assets/
+  Tech Dungeon Roguelite - Asset Pack (DEMO)/
+    Players/
+      players blue x1.png (32x32 spritesheet: idle, run, dash, hurt, death, blaster)
+    tileset x1.png (32x32 modular tech dungeon floor and obstacle plates)
+    UI/
+      ui x1.png (32x32 full and empty heart containers)
+  enemies/
+    chaser_sheet.png (32x32 4-frame scuttle crawl)
+    shooter_sheet.png (32x32 4-frame hover sentry with charge & recoil)
+    dasher_sheet.png (32x32 4-frame razor interceptor with afterburners)
+    boss_sheet.png (64x64 4-frame Nexus Overlord singularity core)
+    boss_drone.png (16x16 autonomous orbital defense pod)
+  weapons/
+    player_plasma.png (32x16 plasma dart with ion trail)
+    enemy_tachyon.png (24x24 rotating tachyon hazard orb)
 scenes/
   main.tscn
   player/player.tscn
-  enemies/chaser.tscn
-  weapons/projectile.tscn
+  enemies/
+    chaser.tscn
+    shooter.tscn
+    dasher.tscn
+    boss.tscn
+  weapons/
+    projectile.tscn
+    enemy_projectile.tscn
 scripts/
   game.gd
   player.gd
   chaser.gd
+  shooter.gd
+  dasher.gd
+  boss.gd
   projectile.gd
+  enemy_projectile.gd
   mobile_controls.gd
+  run_state.gd
+  behavior_tracker.gd
+  adaptive_director.gd
+  test_director.gd
+  asset_loader.gd
 README.md
 plan.md
 ```
 
-The project currently uses simple drawn shapes. Keep placeholder visuals until combat and controls have been tried in the editor and on a phone.
+All placeholder vector shapes have been replaced with production-ready cyberpunk pixel art.
 
 ## Progress
 
@@ -54,6 +85,9 @@ The project currently uses simple drawn shapes. Keep placeholder visuals until c
 - [x] Milestone 2: Implement `AdaptiveDirector` with weighted tactical counters (Mobility, Ranged, Turret), cooldowns, and fairness adjustments.
 - [x] Milestone 2: Add on-screen Cyberpunk Director Adaptation alert banner.
 - [x] Milestone 2: Add deterministic scenario test suite (`test_director.gd`) validating all 6 core scenarios.
+- [x] Visual Assets Overhaul: Restored Tech Dungeon pack (animated player, tileset, UI hearts).
+- [x] Visual Assets Overhaul: Generated authentic pixel art for all 4 enemy archetypes and weapon projectiles.
+- [x] Visual Assets Overhaul: Dynamic neon trails, static blink VFX, obstacle server racks with telemetry LEDs, and sector-specific ambient tints.
 - [ ] Open in Godot 4.7.2, run the main scene, and playtest/tune.
 - [ ] Install the first Android build on a physical device and tune touch controls.
 

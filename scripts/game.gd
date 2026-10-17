@@ -1,5 +1,6 @@
 extends Node2D
-## Owns the roguelite game loop: hand-authored rooms, enemy waves, upgrade drafting, and run completion.
+## Owns the roguelite game loop: hand-authored rooms, tech dungeon tile rendering,
+## enemy waves, upgrade drafting, and run completion.
 
 const PLAYER_SCENE := preload("res://scenes/player/player.tscn")
 const CHASER_SCENE := preload("res://scenes/enemies/chaser.tscn")
@@ -8,7 +9,21 @@ const DASHER_SCENE := preload("res://scenes/enemies/dasher.tscn")
 const BOSS_SCENE := preload("res://scenes/enemies/boss.tscn")
 const TOUCH_CONTROLS := preload("res://scripts/mobile_controls.gd")
 
+const TILESET_TEX := preload("res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/tileset x1.png")
+const UI_TEX := preload("res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/UI/ui x1.png")
+
+const BEHAVIOR_TRACKER_SCRIPT := preload("res://scripts/behavior_tracker.gd")
+const ADAPTIVE_DIRECTOR_SCRIPT := preload("res://scripts/adaptive_director.gd")
+const DIRECTOR_TESTS_SCRIPT := preload("res://scripts/test_director.gd")
+
 const ROOM_RECT := Rect2(42.0, 64.0, 876.0, 424.0)
+
+# Floor tile coordinates in tileset x1.png (32x32)
+const FLOOR_TILE_BASE := Rect2(128, 32, 32, 32) # (4, 1)
+const FLOOR_TILE_GRID := Rect2(192, 32, 32, 32) # (6, 1)
+const FLOOR_TILE_VENT := Rect2(384, 32, 32, 32) # (12, 1)
+const FLOOR_TILE_HATCH := Rect2(448, 32, 32, 32) # (14, 1)
+const OBSTACLE_TILE := Rect2(1024, 32, 32, 32) # (32, 1)
 
 var player: CharacterBody2D
 var active_enemies: Array[Node2D] = []
@@ -22,9 +37,13 @@ var boss_ref: Node2D = null
 
 # UI Elements
 var ui_layer: CanvasLayer
-var status_label: Label
+var hearts_box: HBoxContainer
+var full_heart_tex: AtlasTexture
+var empty_heart_tex: AtlasTexture
+var elims_label: Label
 var hint_label: Label
 var sector_label: Label
+
 var boss_bar_bg: ColorRect
 var boss_bar_fill: ColorRect
 var boss_label: Label
@@ -38,8 +57,8 @@ var end_stats: Label
 var end_button: Button
 
 # Milestone 2: Adaptive Director & Behavior Tracker
-var tracker: BehaviorTracker
-var director: AdaptiveDirector
+var tracker: RefCounted
+var director: RefCounted
 var current_sector_tactic := "DEFAULT"
 var damage_taken_this_sector := 0
 
@@ -48,13 +67,22 @@ var banner_title: Label
 var banner_sub: Label
 var banner_timer := 0.0
 
+var sector_tints: Array[Color] = [
+	Color(0.88, 0.95, 1.0), # Sector 1: Cyan Calibration
+	Color(1.0, 0.92, 0.82), # Sector 2: Industrial Amber
+	Color(0.85, 1.0, 0.90), # Sector 3: Toxic Emerald
+	Color(0.92, 0.85, 1.0), # Sector 4: Hyper Violet
+	Color(1.0, 0.86, 0.78), # Sector 5: Overload Horde
+	Color(1.0, 0.78, 0.82), # Sector 6: Nexus Core
+]
+
 
 func _ready() -> void:
-	tracker = BehaviorTracker.new()
-	director = AdaptiveDirector.new()
+	tracker = BEHAVIOR_TRACKER_SCRIPT.new()
+	director = ADAPTIVE_DIRECTOR_SCRIPT.new()
 
 	if OS.is_debug_build():
-		DirectorTests.run_all_tests()
+		DIRECTOR_TESTS_SCRIPT.run_all_tests()
 
 	if not Engine.has_singleton("RunState") and get_node_or_null("/root/RunState") == null:
 		push_error("RunState singleton not found!")
@@ -85,10 +113,11 @@ func _process(delta: float) -> void:
 	if not get_tree().paused and is_instance_valid(player) and tracker:
 		tracker.update(delta, player.global_position, player.velocity, active_enemies, player.is_firing, rs.run_time)
 
-	# Update Top HUD
+	# Update Top HUD Hearts & Badges
 	if is_instance_valid(player):
-		status_label.text = "HP  %d / %d   |   ELIMS  %d" % [player.health, player.max_health, rs.score]
-		sector_label.text = "SECTOR %d / %d" % [rs.current_room_index + 1, rs.TOTAL_ROOMS]
+		_update_hud_hearts()
+		elims_label.text = "ELIMS  %02d" % rs.score
+		sector_label.text = "SECTOR  %d / %d" % [rs.current_room_index + 1, rs.TOTAL_ROOMS]
 
 	# Update Boss Bar if in Boss room
 	if boss_active and is_instance_valid(boss_ref):
@@ -97,28 +126,100 @@ func _process(delta: float) -> void:
 	elif boss_active and not is_instance_valid(boss_ref):
 		boss_bar_bg.visible = false
 
+	# Redraw arena for animated obstacle lights and effects
+	queue_redraw()
+
+
+func _update_hud_hearts() -> void:
+	if not is_instance_valid(hearts_box) or not is_instance_valid(player):
+		return
+
+	# Rebuild heart slots if max health changed
+	while hearts_box.get_child_count() < player.max_health:
+		var tr := TextureRect.new()
+		tr.custom_minimum_size = Vector2(28, 28)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		hearts_box.add_child(tr)
+
+	while hearts_box.get_child_count() > player.max_health:
+		var ch = hearts_box.get_child(hearts_box.get_child_count() - 1)
+		hearts_box.remove_child(ch)
+		ch.queue_free()
+
+	for i in range(hearts_box.get_child_count()):
+		var tr: TextureRect = hearts_box.get_child(i)
+		tr.texture = full_heart_tex if i < player.health else empty_heart_tex
+
 
 func _draw() -> void:
-	# Subtle grid
+	var rs = get_node_or_null("/root/RunState")
+	var sec_idx: int = rs.current_room_index if rs else 0
+	var tint: Color = sector_tints[clampi(sec_idx, 0, sector_tints.size() - 1)]
+
+	# 1. Modular Floor Panels from tileset x1.png
 	for x in range(int(ROOM_RECT.position.x), int(ROOM_RECT.end.x), 32):
-		draw_line(Vector2(x, ROOM_RECT.position.y), Vector2(x, ROOM_RECT.end.y), Color("121b36"), 1.0)
-	for y in range(int(ROOM_RECT.position.y), int(ROOM_RECT.end.y), 32):
-		draw_line(Vector2(ROOM_RECT.position.x, y), Vector2(ROOM_RECT.end.x, y), Color("121b36"), 1.0)
+		for y in range(int(ROOM_RECT.position.y), int(ROOM_RECT.end.y), 32):
+			var w := minf(32.0, ROOM_RECT.end.x - float(x))
+			var h := minf(32.0, ROOM_RECT.end.y - float(y))
+			var dest := Rect2(float(x), float(y), w, h)
 
-	# Room boundary neon wireframe
-	draw_rect(ROOM_RECT, Color("38bdf8"), false, 2.0)
+			# Deterministic pattern hash based on coordinates
+			var hash_val := ((x * 73856093) ^ (y * 19349663) ^ (sec_idx * 83492791)) % 100
+			var src := FLOOR_TILE_BASE
+			if hash_val < 8:
+				src = FLOOR_TILE_VENT
+			elif hash_val < 18:
+				src = FLOOR_TILE_GRID
+			elif hash_val < 24:
+				src = FLOOR_TILE_HATCH
 
-	# Hand-authored obstacles
+			draw_texture_rect_region(TILESET_TEX, dest, Rect2(src.position.x, src.position.y, w, h), tint)
+
+	# 2. Outer arena perimeter & neon hazard rails
+	draw_rect(ROOM_RECT.grow(4.0), Color(0.01, 0.02, 0.04, 0.95), false, 4.0)
+	draw_rect(ROOM_RECT, Color("38bdf8"), false, 2.5)
+	draw_rect(ROOM_RECT.grow(-3.0), Color(0.05, 0.5, 0.9, 0.35), false, 1.5)
+
+	# Corner indicator brackets
+	var corners := [
+		ROOM_RECT.position,
+		Vector2(ROOM_RECT.end.x, ROOM_RECT.position.y),
+		Vector2(ROOM_RECT.position.x, ROOM_RECT.end.y),
+		ROOM_RECT.end
+	]
+	for c_pos in corners:
+		draw_circle(c_pos, 4.0, Color("38bdf8"))
+		draw_circle(c_pos, 2.0, Color("e0f2fe"))
+
+	# 3. Hand-authored obstacles with server/terminal textures and telemetry LEDs
+	var ticks := Time.get_ticks_msec()
 	for r in obstacle_rects:
-		draw_rect(r, Color("1e293b"), true)
-		draw_rect(r, Color("475569"), false, 1.5)
+		# Drop shadow beneath obstacles
+		draw_rect(Rect2(r.position.x + 3.0, r.position.y + 4.0, r.size.x, r.size.y), Color(0.0, 0.0, 0.0, 0.55), true)
+
+		# Textured server body
+		for ox in range(int(r.position.x), int(r.end.x), 32):
+			for oy in range(int(r.position.y), int(r.end.y), 32):
+				var ow := minf(32.0, r.end.x - float(ox))
+				var oh := minf(32.0, r.end.y - float(oy))
+				draw_texture_rect_region(TILESET_TEX, Rect2(float(ox), float(oy), ow, oh), Rect2(OBSTACLE_TILE.position.x, OBSTACLE_TILE.position.y, ow, oh), Color(0.85, 0.92, 1.0))
+
+		# Reinforced neon cyber rim
+		draw_rect(r, Color("1e293b"), false, 2.0)
+		draw_line(r.position, Vector2(r.end.x, r.position.y), Color("38bdf8"), 2.0)
+
+		# Blinking telemetry status LEDs on terminal
+		var blink_g := (ticks / 350) % 2 == 0
+		var blink_r := (ticks / 550) % 2 == 0
+		draw_circle(r.position + Vector2(6, 6), 2.0, Color("22c55e") if blink_g else Color("14532d"))
+		draw_circle(r.position + Vector2(13, 6), 2.0, Color("ef4444") if blink_r else Color("7f1d1d"))
 
 
 func _create_walls() -> void:
 	var center_x := ROOM_RECT.position.x + ROOM_RECT.size.x * 0.5
 	var center_y := ROOM_RECT.position.y + ROOM_RECT.size.y * 0.5
 
-	# Fixed: All walls accurately positioned at segment midpoints
 	_add_wall(Vector2(center_x, ROOM_RECT.position.y - 10.0), Vector2(ROOM_RECT.size.x, 20.0))
 	_add_wall(Vector2(center_x, ROOM_RECT.end.y + 10.0), Vector2(ROOM_RECT.size.x, 20.0))
 	_add_wall(Vector2(ROOM_RECT.position.x - 10.0, center_y), Vector2(20.0, ROOM_RECT.size.y))
@@ -172,7 +273,6 @@ func _create_player() -> void:
 	touch_controls.connect("fire_changed", Callable(player, "set_touch_fire"))
 	touch_controls.connect("dash_pressed", Callable(player, "try_dash"))
 	ui_layer.add_child(touch_controls)
-	# Ensure touch controls sit beneath interactive menus
 	ui_layer.move_child(touch_controls, 0)
 
 
@@ -347,7 +447,6 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 
 func _on_room_cleared() -> void:
 	var rs = get_node("/root/RunState")
-	# If this was the Boss room, victory!
 	if rs.current_room_index >= rs.TOTAL_ROOMS - 1:
 		_show_end_screen(true)
 	else:
@@ -361,7 +460,6 @@ func _show_upgrade_draft() -> void:
 	var rs = get_node("/root/RunState")
 	var choices: Array = rs.get_random_upgrade_choices(3)
 
-	# Clean children of upgrade cards container
 	for child in upgrade_cards_box.get_children():
 		child.queue_free()
 
@@ -434,33 +532,68 @@ func _create_ui() -> void:
 	ui_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(ui_layer)
 
-	# Top Status Bar
-	status_label = Label.new()
-	status_label.position = Vector2(44, 18)
-	status_label.add_theme_color_override("font_color", Color("e0f2fe"))
-	status_label.add_theme_font_size_override("font_size", 20)
-	ui_layer.add_child(status_label)
+	# Full and Empty Heart textures from UI/ui x1.png
+	full_heart_tex = AtlasTexture.new()
+	full_heart_tex.atlas = UI_TEX
+	full_heart_tex.region = Rect2(0, 0, 32, 32)
 
+	empty_heart_tex = AtlasTexture.new()
+	empty_heart_tex.atlas = UI_TEX
+	empty_heart_tex.region = Rect2(32, 0, 32, 32)
+
+	# Top Status Bar Container
+	var top_bar := HBoxContainer.new()
+	top_bar.position = Vector2(44, 16)
+	top_bar.add_theme_constant_override("separation", 24)
+	ui_layer.add_child(top_bar)
+
+	# Heart Icons Container
+	hearts_box = HBoxContainer.new()
+	hearts_box.add_theme_constant_override("separation", 4)
+	top_bar.add_child(hearts_box)
+
+	# Elims Counter Badge
+	elims_label = Label.new()
+	elims_label.text = "ELIMS  00"
+	elims_label.add_theme_color_override("font_color", Color("38bdf8"))
+	elims_label.add_theme_font_size_override("font_size", 16)
+	top_bar.add_child(elims_label)
+
+	# Sector Badge (Top Right)
 	sector_label = Label.new()
-	sector_label.position = Vector2(770, 18)
+	sector_label.position = Vector2(760, 16)
+	sector_label.text = "SECTOR  1 / 6"
 	sector_label.add_theme_color_override("font_color", Color("38bdf8"))
-	sector_label.add_theme_font_size_override("font_size", 20)
+	sector_label.add_theme_font_size_override("font_size", 16)
 	ui_layer.add_child(sector_label)
 
 	hint_label = Label.new()
-	hint_label.position = Vector2(44, 42)
+	hint_label.position = Vector2(44, 44)
 	hint_label.text = "WASD/Move   •   Aim + Fire   •   Shift/Space Dash (I-Frames)"
 	hint_label.add_theme_color_override("font_color", Color("64748b"))
-	hint_label.add_theme_font_size_override("font_size", 13)
+	hint_label.add_theme_font_size_override("font_size", 12)
 	ui_layer.add_child(hint_label)
 
 	# Boss Health Bar
 	boss_bar_bg = ColorRect.new()
-	boss_bar_bg.position = Vector2(310, 20)
+	boss_bar_bg.position = Vector2(310, 18)
 	boss_bar_bg.size = Vector2(340, 16)
 	boss_bar_bg.color = Color("271020")
 	boss_bar_bg.visible = false
 	ui_layer.add_child(boss_bar_bg)
+
+	boss_bar_fill = ColorRect.new()
+	boss_bar_fill.position = Vector2.ZERO
+	boss_bar_fill.size = Vector2(340, 16)
+	boss_bar_fill.color = Color("f43f5e")
+	boss_bar_bg.add_child(boss_bar_fill)
+
+	boss_label = Label.new()
+	boss_label.text = "NEXUS // OVERLORD"
+	boss_label.position = Vector2(0, -18)
+	boss_label.add_theme_font_size_override("font_size", 12)
+	boss_label.add_theme_color_override("font_color", Color("fda4af"))
+	boss_bar_bg.add_child(boss_label)
 
 	# Adaptive Director Notification Banner
 	director_banner = PanelContainer.new()
@@ -484,28 +617,6 @@ func _create_ui() -> void:
 	banner_sub.add_theme_color_override("font_color", Color("94a3b8"))
 	banner_sub.add_theme_font_size_override("font_size", 11)
 	banner_box.add_child(banner_sub)
-
-
-func _show_director_banner(title: String, sub: String) -> void:
-	if not is_instance_valid(director_banner):
-		return
-	banner_title.text = title
-	banner_sub.text = sub
-	director_banner.visible = true
-	banner_timer = 4.0
-
-	boss_bar_fill = ColorRect.new()
-	boss_bar_fill.position = Vector2.ZERO
-	boss_bar_fill.size = Vector2(340, 16)
-	boss_bar_fill.color = Color("f43f5e")
-	boss_bar_bg.add_child(boss_bar_fill)
-
-	boss_label = Label.new()
-	boss_label.text = "NEXUS // OVERLORD"
-	boss_label.position = Vector2(0, -18)
-	boss_label.add_theme_font_size_override("font_size", 12)
-	boss_label.add_theme_color_override("font_color", Color("fda4af"))
-	boss_bar_bg.add_child(boss_label)
 
 	# Upgrade Selection Modal
 	upgrade_container = Control.new()
@@ -581,3 +692,12 @@ func _show_director_banner(title: String, sub: String) -> void:
 	end_button.custom_minimum_size = Vector2(200, 48)
 	end_button.pressed.connect(_restart_run)
 	end_vbox.add_child(end_button)
+
+
+func _show_director_banner(title: String, sub: String) -> void:
+	if not is_instance_valid(director_banner):
+		return
+	banner_title.text = title
+	banner_sub.text = sub
+	director_banner.visible = true
+	banner_timer = 4.0
