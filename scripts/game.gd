@@ -65,7 +65,7 @@ func _process(delta: float) -> void:
 
 	# Update Boss Bar if in Boss room
 	if boss_active and is_instance_valid(boss_ref):
-		var pct := float(boss_ref.health) / float(boss_ref.max_health)
+		var pct: float = float(boss_ref.health) / float(boss_ref.max_health)
 		boss_bar_fill.size.x = 340.0 * pct
 	elif boss_active and not is_instance_valid(boss_ref):
 		boss_bar_bg.visible = false
@@ -225,7 +225,7 @@ func _load_room(index: int) -> void:
 			_add_obstacle(Vector2(180, 400), Vector2(36, 36))
 			_add_obstacle(Vector2(780, 400), Vector2(36, 36))
 
-			var boss := BOSS_SCENE.instantiate()
+			var boss: Node2D = BOSS_SCENE.instantiate()
 			boss.position = Vector2(680, 276)
 			boss.target = player
 			boss.connect("defeated", Callable(self, "_on_enemy_defeated").bind(boss))
@@ -277,7 +277,7 @@ func _show_upgrade_draft() -> void:
 	if touch_controls:
 		touch_controls.enabled = false
 	var rs = get_node("/root/RunState")
-	var choices := rs.get_random_upgrade_choices(3)
+	var choices: Array = rs.get_random_upgrade_choices(3)
 
 	# Clean children of upgrade cards container
 	for child in upgrade_cards_box.get_children():
