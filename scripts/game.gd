@@ -37,8 +37,25 @@ var end_title: Label
 var end_stats: Label
 var end_button: Button
 
+# Milestone 2: Adaptive Director & Behavior Tracker
+var tracker: BehaviorTracker
+var director: AdaptiveDirector
+var current_sector_tactic := "DEFAULT"
+var damage_taken_this_sector := 0
+
+var director_banner: PanelContainer
+var banner_title: Label
+var banner_sub: Label
+var banner_timer := 0.0
+
 
 func _ready() -> void:
+	tracker = BehaviorTracker.new()
+	director = AdaptiveDirector.new()
+
+	if OS.is_debug_build():
+		DirectorTests.run_all_tests()
+
 	if not Engine.has_singleton("RunState") and get_node_or_null("/root/RunState") == null:
 		push_error("RunState singleton not found!")
 	var rs = get_node("/root/RunState")
@@ -57,6 +74,16 @@ func _process(delta: float) -> void:
 		return
 
 	rs.run_time += delta
+
+	# Manage Director Banner timer
+	if banner_timer > 0.0:
+		banner_timer -= delta
+		if banner_timer <= 0.0:
+			director_banner.visible = false
+
+	# Track player combat behavior for adaptive director
+	if not get_tree().paused and is_instance_valid(player) and tracker:
+		tracker.update(delta, player.global_position, player.velocity, active_enemies, player.is_firing, rs.run_time)
 
 	# Update Top HUD
 	if is_instance_valid(player):
@@ -133,6 +160,8 @@ func _create_player() -> void:
 	player = PLAYER_SCENE.instantiate()
 	player.position = ROOM_RECT.get_center()
 	player.connect("died", Callable(self, "_on_player_died"))
+	player.connect("dashed", Callable(self, "_on_player_dashed"))
+	player.connect("damaged", Callable(self, "_on_player_damaged"))
 	add_child(player)
 
 	touch_controls = Control.new()
@@ -145,6 +174,21 @@ func _create_player() -> void:
 	ui_layer.add_child(touch_controls)
 	# Ensure touch controls sit beneath interactive menus
 	ui_layer.move_child(touch_controls, 0)
+
+
+func _on_player_dashed() -> void:
+	if tracker:
+		var rs = get_node_or_null("/root/RunState")
+		var t: float = rs.run_time if rs else 0.0
+		tracker.record_dash(t)
+
+
+func _on_player_damaged(amount: int) -> void:
+	damage_taken_this_sector += amount
+	if tracker:
+		var rs = get_node_or_null("/root/RunState")
+		var t: float = rs.run_time if rs else 0.0
+		tracker.record_damage_taken(amount, t)
 
 
 func _load_room(index: int) -> void:
@@ -171,21 +215,48 @@ func _load_room(index: int) -> void:
 
 	active_enemies.clear()
 
+	# Adaptive Director evaluation
+	var speed_mult := 1.0
+	var telegraph_mult := 1.0
+
+	if index > 0 and tracker and director:
+		director.record_tactic_result(current_sector_tactic, damage_taken_this_sector)
+		var decision: Dictionary = director.evaluate_sector_tactics(
+			tracker.get_profile(),
+			index,
+			player.health,
+			player.max_health
+		)
+		current_sector_tactic = decision.tactic
+		speed_mult = decision.enemy_speed_mult
+		telegraph_mult = decision.enemy_telegraph_mult
+		_show_director_banner(decision.banner_title, decision.banner_sub)
+
+		# Spawn tactical counter reinforcements based on player profile
+		if decision.extra_dashers > 0:
+			_spawn_enemy(DASHER_SCENE, Vector2(620, 150), speed_mult, telegraph_mult)
+		if decision.extra_shooters > 0:
+			_spawn_enemy(SHOOTER_SCENE, Vector2(760, 276), speed_mult, telegraph_mult)
+		if decision.extra_chasers > 0:
+			_spawn_enemy(CHASER_SCENE, Vector2(480, 276), speed_mult, telegraph_mult)
+
+	damage_taken_this_sector = 0
+
 	# Hand-authored room layouts & encounters
 	match index:
 		0:
 			# Room 1: Calibration (Open room, 3 Chasers)
-			_spawn_enemy(CHASER_SCENE, Vector2(620, 200))
-			_spawn_enemy(CHASER_SCENE, Vector2(740, 276))
-			_spawn_enemy(CHASER_SCENE, Vector2(620, 360))
+			_spawn_enemy(CHASER_SCENE, Vector2(620, 200), speed_mult, telegraph_mult)
+			_spawn_enemy(CHASER_SCENE, Vector2(740, 276), speed_mult, telegraph_mult)
+			_spawn_enemy(CHASER_SCENE, Vector2(620, 360), speed_mult, telegraph_mult)
 
 		1:
 			# Room 2: Firing Line (2 Cover barriers, 2 Chasers, 1 Shooter)
 			_add_obstacle(Vector2(380, 276), Vector2(24, 150))
 			_add_obstacle(Vector2(620, 276), Vector2(24, 150))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(740, 276))
-			_spawn_enemy(CHASER_SCENE, Vector2(520, 180))
-			_spawn_enemy(CHASER_SCENE, Vector2(520, 370))
+			_spawn_enemy(SHOOTER_SCENE, Vector2(740, 276), speed_mult, telegraph_mult)
+			_spawn_enemy(CHASER_SCENE, Vector2(520, 180), speed_mult, telegraph_mult)
+			_spawn_enemy(CHASER_SCENE, Vector2(520, 370), speed_mult, telegraph_mult)
 
 		2:
 			# Room 3: Vector Ambush (4 Pillar obstacles, 2 Dashers, 2 Chasers)
@@ -193,18 +264,18 @@ func _load_room(index: int) -> void:
 			_add_obstacle(Vector2(640, 180), Vector2(40, 40))
 			_add_obstacle(Vector2(320, 370), Vector2(40, 40))
 			_add_obstacle(Vector2(640, 370), Vector2(40, 40))
-			_spawn_enemy(DASHER_SCENE, Vector2(680, 200))
-			_spawn_enemy(DASHER_SCENE, Vector2(680, 350))
-			_spawn_enemy(CHASER_SCENE, Vector2(520, 276))
-			_spawn_enemy(CHASER_SCENE, Vector2(760, 276))
+			_spawn_enemy(DASHER_SCENE, Vector2(680, 200), speed_mult, telegraph_mult)
+			_spawn_enemy(DASHER_SCENE, Vector2(680, 350), speed_mult, telegraph_mult)
+			_spawn_enemy(CHASER_SCENE, Vector2(520, 276), speed_mult, telegraph_mult)
+			_spawn_enemy(CHASER_SCENE, Vector2(760, 276), speed_mult, telegraph_mult)
 
 		3:
 			# Room 4: Chokepoint (Central divider, 2 Shooters, 2 Dashers)
 			_add_obstacle(Vector2(480, 276), Vector2(280, 26))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(680, 180))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(680, 370))
-			_spawn_enemy(DASHER_SCENE, Vector2(480, 140))
-			_spawn_enemy(DASHER_SCENE, Vector2(480, 410))
+			_spawn_enemy(SHOOTER_SCENE, Vector2(680, 180), speed_mult, telegraph_mult)
+			_spawn_enemy(SHOOTER_SCENE, Vector2(680, 370), speed_mult, telegraph_mult)
+			_spawn_enemy(DASHER_SCENE, Vector2(480, 140), speed_mult, telegraph_mult)
+			_spawn_enemy(DASHER_SCENE, Vector2(480, 410), speed_mult, telegraph_mult)
 
 		4:
 			# Room 5: Overload Horde (Fortress blocks, mixed wave)
@@ -212,11 +283,11 @@ func _load_room(index: int) -> void:
 			_add_obstacle(Vector2(610, 190), Vector2(64, 28))
 			_add_obstacle(Vector2(350, 360), Vector2(64, 28))
 			_add_obstacle(Vector2(610, 360), Vector2(64, 28))
-			_spawn_enemy(CHASER_SCENE, Vector2(740, 276))
-			_spawn_enemy(CHASER_SCENE, Vector2(600, 276))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(760, 160))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(760, 390))
-			_spawn_enemy(DASHER_SCENE, Vector2(480, 276))
+			_spawn_enemy(CHASER_SCENE, Vector2(740, 276), speed_mult, telegraph_mult)
+			_spawn_enemy(CHASER_SCENE, Vector2(600, 276), speed_mult, telegraph_mult)
+			_spawn_enemy(SHOOTER_SCENE, Vector2(760, 160), speed_mult, telegraph_mult)
+			_spawn_enemy(SHOOTER_SCENE, Vector2(760, 390), speed_mult, telegraph_mult)
+			_spawn_enemy(DASHER_SCENE, Vector2(480, 276), speed_mult, telegraph_mult)
 
 		5:
 			# Room 6: Boss Room (Corner cover blocks, NEXUS OVERLORD)
@@ -238,15 +309,25 @@ func _load_room(index: int) -> void:
 	queue_redraw()
 
 
-func _spawn_enemy(packed_scene: PackedScene, pos: Vector2) -> void:
+func _spawn_enemy(packed_scene: PackedScene, pos: Vector2, speed_mult: float = 1.0, telegraph_mult: float = 1.0) -> Node2D:
 	if not is_instance_valid(player):
-		return
-	var enemy = packed_scene.instantiate()
+		return null
+	var enemy: Node2D = packed_scene.instantiate()
 	enemy.position = pos
-	enemy.target = player
+	if "target" in enemy:
+		enemy.target = player
+	if "move_speed" in enemy:
+		enemy.move_speed *= speed_mult
+	if "patrol_speed" in enemy:
+		enemy.patrol_speed *= speed_mult
+	if "lunge_speed" in enemy:
+		enemy.lunge_speed *= speed_mult
+	if "state_timer" in enemy:
+		enemy.state_timer *= telegraph_mult
 	enemy.connect("defeated", Callable(self, "_on_enemy_defeated").bind(enemy))
 	add_child(enemy)
 	active_enemies.append(enemy)
+	return enemy
 
 
 func _on_enemy_defeated(enemy_node: Node2D) -> void:
@@ -380,6 +461,38 @@ func _create_ui() -> void:
 	boss_bar_bg.color = Color("271020")
 	boss_bar_bg.visible = false
 	ui_layer.add_child(boss_bar_bg)
+
+	# Adaptive Director Notification Banner
+	director_banner = PanelContainer.new()
+	director_banner.position = Vector2(180, 68)
+	director_banner.custom_minimum_size = Vector2(600, 44)
+	director_banner.visible = false
+	ui_layer.add_child(director_banner)
+
+	var banner_box := VBoxContainer.new()
+	banner_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	director_banner.add_child(banner_box)
+
+	banner_title = Label.new()
+	banner_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	banner_title.add_theme_color_override("font_color", Color("38bdf8"))
+	banner_title.add_theme_font_size_override("font_size", 13)
+	banner_box.add_child(banner_title)
+
+	banner_sub = Label.new()
+	banner_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	banner_sub.add_theme_color_override("font_color", Color("94a3b8"))
+	banner_sub.add_theme_font_size_override("font_size", 11)
+	banner_box.add_child(banner_sub)
+
+
+func _show_director_banner(title: String, sub: String) -> void:
+	if not is_instance_valid(director_banner):
+		return
+	banner_title.text = title
+	banner_sub.text = sub
+	director_banner.visible = true
+	banner_timer = 4.0
 
 	boss_bar_fill = ColorRect.new()
 	boss_bar_fill.position = Vector2.ZERO

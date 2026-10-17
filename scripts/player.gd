@@ -3,6 +3,10 @@ extends CharacterBody2D
 
 signal health_changed(current: int, maximum: int)
 signal died
+signal dashed
+signal damaged(amount: int)
+
+var is_firing := false
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/projectile.tscn")
 const MOVE_SPEED := 245.0
@@ -82,6 +86,7 @@ func _physics_process(delta: float) -> void:
 	if (Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_SPACE)) and dash_cooldown <= 0.0:
 		try_dash()
 	var firing := touch_fire or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_key_pressed(KEY_J)
+	is_firing = firing
 	if firing and fire_cooldown <= 0.0:
 		_fire()
 
@@ -114,6 +119,7 @@ func try_dash() -> void:
 	if rs:
 		cd_mult = rs.dash_cooldown_mult
 	dash_cooldown = DASH_COOLDOWN * cd_mult
+	dashed.emit()
 
 
 func _apply_dash_damage() -> void:
@@ -130,6 +136,7 @@ func take_damage(amount: int) -> void:
 		return
 	health = maxi(0, health - amount)
 	damage_cooldown = 0.75
+	damaged.emit(amount)
 	health_changed.emit(health, max_health)
 	var rs = get_node_or_null("/root/RunState")
 	if rs:

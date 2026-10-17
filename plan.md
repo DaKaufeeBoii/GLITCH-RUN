@@ -50,7 +50,10 @@ The project currently uses simple drawn shapes. Keep placeholder visuals until c
 - [x] Milestone 1: Add 3-card upgrade drafting on sector clearance.
 - [x] Milestone 1: Add 7 distinct upgrades affecting fire rate, damage, spread, speed, HP, and dash.
 - [x] Milestone 1: Add Boss encounter (Nexus Overlord) with radial burst and charge telegraphs.
-- [x] Milestone 1: Add victory & defeat summary screens with restart loop.
+- [x] Milestone 2: Implement `BehaviorTracker` recording rolling window dashes, ranged vs close, turret firing, and damage taken.
+- [x] Milestone 2: Implement `AdaptiveDirector` with weighted tactical counters (Mobility, Ranged, Turret), cooldowns, and fairness adjustments.
+- [x] Milestone 2: Add on-screen Cyberpunk Director Adaptation alert banner.
+- [x] Milestone 2: Add deterministic scenario test suite (`test_director.gd`) validating all 6 core scenarios.
 - [ ] Open in Godot 4.7.2, run the main scene, and playtest/tune.
 - [ ] Install the first Android build on a physical device and tune touch controls.
 
@@ -92,30 +95,30 @@ The project currently uses simple drawn shapes. Keep placeholder visuals until c
 
 ### Track player behavior
 
-1. Add a `BehaviorTracker` that records recent combat behavior in a rolling 30–60 second window.
-2. Track only the signals needed for the first tactics:
+- [x] 1. Add a `BehaviorTracker` that records recent combat behavior in a rolling 30–60 second window.
+- [x] 2. Track only the signals needed for the first tactics:
    - Dashes per minute.
    - Ranged damage divided by total damage.
    - Time spent close to enemies divided by combat time.
    - Time spent firing while mostly stationary.
    - Damage received per minute, for difficulty and fairness checks.
-3. Normalize mobility, ranged, and aggression scores to values from 0 to 1.
-4. Treat insufficient data as unknown; do not interpret a zero as proof of a different preferred style.
-5. Reset run-scoped observations when a new run begins.
+- [x] 3. Normalize mobility, ranged, and aggression scores to values from 0 to 1.
+- [x] 4. Treat insufficient data as unknown; do not interpret a zero as proof of a different preferred style.
+- [x] 5. Reset run-scoped observations when a new run begins.
 
 ### Select and apply tactics
 
-1. Add an `AdaptiveDirector` that receives the current behavior profile, room difficulty, enemy budget, and recent tactics.
-2. Start with three authored counters:
+- [x] 1. Add an `AdaptiveDirector` that receives the current behavior profile, room difficulty, enemy budget, and recent tactics.
+- [x] 2. Start with three authored counters:
    - High mobility: delayed predictive attacks or attacks that limit escape routes.
    - High ranged reliance: a flanker or a slowly advancing shielded enemy.
    - High close-range aggression: marked area-denial zones and repositioning pressure.
-3. Select tactics with weighted choice rather than a rigid profile-to-counter mapping.
-4. Give tactics cooldowns and limits so the same response does not repeat every room.
-5. Validate each selection against room space, difficulty limits, warning time, and available escape routes.
-6. Show a brief on-screen adaptation message when the director changes tactics.
-7. Record whether a tactic repeatedly causes unavoidable hits; lower its future selection weight when its outcomes are unfair.
-8. Add deterministic test scenarios for high-mobility, ranged, aggressive, mixed, and insufficient-data profiles.
+- [x] 3. Select tactics with weighted choice rather than a rigid profile-to-counter mapping.
+- [x] 4. Give tactics cooldowns and limits so the same response does not repeat every room.
+- [x] 5. Validate each selection against room space, difficulty limits, warning time, and available escape routes.
+- [x] 6. Show a brief on-screen adaptation message when the director changes tactics.
+- [x] 7. Record whether a tactic repeatedly causes unavoidable hits; lower its future selection weight when its outcomes are unfair.
+- [x] 8. Add deterministic test scenarios for high-mobility, ranged, aggressive, mixed, and insufficient-data profiles.
 
 **Exit condition:** Deliberately different play styles trigger different tactics, each tactic is telegraphed, and no tactic changes an encounter instantly or removes counterplay.
 
