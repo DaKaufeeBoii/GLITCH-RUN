@@ -29,7 +29,7 @@ var boss_bar_bg: ColorRect
 var boss_bar_fill: ColorRect
 var boss_label: Label
 
-var upgrade_container: PanelContainer
+var upgrade_container: Control
 var upgrade_cards_box: HBoxContainer
 
 var end_panel: Control
