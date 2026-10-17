@@ -26,7 +26,20 @@ var dead := false
 
 
 func _ready() -> void:
-	health = max_health
+	if Engine.has_singleton("RunState") or get_node_or_null("/root/RunState") != null:
+		var rs = get_node("/root/RunState")
+		max_health = rs.max_health
+		health = rs.current_health
+		rs.health_updated.connect(_on_runstate_health_updated)
+	else:
+		health = max_health
+	queue_redraw()
+
+
+func _on_runstate_health_updated(curr: int, max_h: int) -> void:
+	health = curr
+	max_health = max_h
+	health_changed.emit(health, max_health)
 	queue_redraw()
 
 
@@ -36,6 +49,11 @@ func _physics_process(delta: float) -> void:
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
 	damage_cooldown = maxf(0.0, damage_cooldown - delta)
 	fire_cooldown = maxf(0.0, fire_cooldown - delta)
+
+	var move_mult := 1.0
+	var rs = get_node_or_null("/root/RunState")
+	if rs:
+		move_mult = rs.move_speed_mult
 
 	var keyboard_move := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
 	keyboard_move += Vector2(
@@ -48,8 +66,10 @@ func _physics_process(delta: float) -> void:
 	if dash_time > 0.0:
 		dash_time -= delta
 		velocity = aim_direction * DASH_SPEED
+		if rs and rs.dash_damage:
+			_apply_dash_damage()
 	else:
-		velocity = move_input * MOVE_SPEED
+		velocity = move_input * (MOVE_SPEED * move_mult)
 		if not touch_aim.is_zero_approx():
 			aim_direction = touch_aim.normalized()
 		else:
@@ -89,15 +109,31 @@ func try_dash() -> void:
 	if not current_move_direction.is_zero_approx():
 		aim_direction = current_move_direction.normalized()
 	dash_time = DASH_DURATION
-	dash_cooldown = DASH_COOLDOWN
+	var cd_mult := 1.0
+	var rs = get_node_or_null("/root/RunState")
+	if rs:
+		cd_mult = rs.dash_cooldown_mult
+	dash_cooldown = DASH_COOLDOWN * cd_mult
+
+
+func _apply_dash_damage() -> void:
+	# Deal contact shock damage to nearby enemies during static blink
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if is_instance_valid(enemy) and global_position.distance_to(enemy.global_position) < 38.0:
+			if enemy.has_method("take_damage"):
+				enemy.take_damage(2)
 
 
 func take_damage(amount: int) -> void:
-	if dead or damage_cooldown > 0.0:
+	# i-frames during dash or invulnerability cooldown
+	if dead or damage_cooldown > 0.0 or dash_time > 0.0:
 		return
 	health = maxi(0, health - amount)
 	damage_cooldown = 0.75
 	health_changed.emit(health, max_health)
+	var rs = get_node_or_null("/root/RunState")
+	if rs:
+		rs.current_health = health
 	queue_redraw()
 	if health == 0:
 		dead = true
@@ -106,15 +142,37 @@ func take_damage(amount: int) -> void:
 
 
 func _fire() -> void:
-	fire_cooldown = FIRE_INTERVAL
+	var interval_mult := 1.0
+	var extra_dmg := 0
+	var count := 1
+	var rs = get_node_or_null("/root/RunState")
+	if rs:
+		interval_mult = rs.fire_interval_mult
+		extra_dmg = rs.damage_bonus
+		count = rs.projectile_count
+
+	fire_cooldown = FIRE_INTERVAL * interval_mult
+
+	if count == 1:
+		_spawn_bullet(aim_direction, extra_dmg)
+	else:
+		# Twin spread shot
+		_spawn_bullet(aim_direction.rotated(-0.08), extra_dmg)
+		_spawn_bullet(aim_direction.rotated(0.08), extra_dmg)
+
+
+func _spawn_bullet(dir: Vector2, extra_dmg: int) -> void:
 	var projectile = PROJECTILE_SCENE.instantiate()
-	projectile.position = global_position + aim_direction * 20.0
-	projectile.direction = aim_direction
+	projectile.position = global_position + dir * 20.0
+	projectile.direction = dir
+	projectile.damage = 1 + extra_dmg
 	get_parent().add_child(projectile)
 
 
 func _draw() -> void:
 	var body_color := Color("42d9ec") if damage_cooldown <= 0.0 or int(damage_cooldown * 14.0) % 2 == 0 else Color("f4fbff")
+	if dash_time > 0.0:
+		body_color = Color("c084fc") # Purple shift during invulnerable dash
 	draw_colored_polygon(PackedVector2Array([Vector2(17, 0), Vector2(-11, -11), Vector2(-7, 0), Vector2(-11, 11)]), body_color)
 	draw_circle(Vector2.ZERO, 3.0, Color("f4fbff"))
 

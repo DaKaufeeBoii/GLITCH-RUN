@@ -1,19 +1,28 @@
 # GLITCH//RUN
 
-An offline-first top-down action roguelite prototype built with Godot 4.7.2 and GDScript.
+An offline-first top-down action roguelite built with Godot 4.7.2 and GDScript.
 
-## First playable slice
+## Gameplay Loop
 
-- Move with **WASD** or the arrow keys.
-- Aim with the mouse and hold the left mouse button (or **J**) to fire.
-- Dash with **Shift** or **Space**.
-- On a touchscreen, drag the left virtual stick to move, hold the right side to aim and fire, and tap **DASH**.
-- Defeat the chasing enemy, avoid contact damage, and see how long you can survive. The run ends at zero health; use **RESTART RUN** to begin again.
+- **Sectors 1 to 5:** Clear escalating combat sectors featuring varied obstacle configurations and enemy rosters.
+- **Sector Clear & Upgrade Draft:** Defeating all hostiles opens a 3-card upgrade draft to reconfigure your weapon, mobility, or chassis.
+- **Sector 6 (Boss Chamber):** Face the **NEXUS // OVERLORD**, featuring telegraphed radial projectile bursts and heavy kinetic surges.
+- **Victory & Defeat Screens:** Complete stats breakdown (time, eliminations, upgrades chosen) with instant restart.
 
-This build uses placeholder vector shapes so combat and controls can be tuned before pixel art. It has no network, ads, or machine-learning dependency.
+## Hostile Roster
 
-## Open the project
+- **Chaser (Red Diamond):** Relentless pursuit with contact damage.
+- **Shooter (Amber Hexagon):** Maintains distance, traces a telegraphed warning laser, and fires energy bolts.
+- **Dasher (Magenta Chevron):** Stalks at range, locks trajectory with a flashing telegraph, and lunges at high speed.
+- **Nexus Overlord (Boss):** Massive core guarded by orbital nodes, deploying radial projectile barrages and charge slams.
 
-Open this folder in **Godot 4.7.2 stable** and run `scenes/main.tscn` (or press F6 after opening the main scene). The project entry point is already set to `res://scenes/main.tscn`.
+## Controls
 
-For Android export, install the matching Godot export templates and configure the Android SDK and Java SDK paths in Editor Settings. Export and try the first build on a physical phone before tuning the touch controls further.
+- Move with **WASD** or arrow keys.
+- Aim with the mouse and hold **Left Mouse Button** (or **J**) to fire.
+- Dash with **Shift** or **Space** (includes invulnerability frames to dodge through incoming fire).
+- On mobile/touchscreens, use the left virtual joystick to move, hold and drag the right thumb stick to aim & fire in 360°, and tap **DASH**.
+
+## Open & Run
+
+Open this folder in **Godot 4.7.2 stable** and run `res://scenes/main.tscn` (or press F5 / F6). All autoload singletons (`RunState`) and scenes are configured.

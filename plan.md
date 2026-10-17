@@ -43,7 +43,15 @@ The project currently uses simple drawn shapes. Keep placeholder visuals until c
 - [x] Add movement, aiming, firing, dash, health, enemy damage, elimination count, death, and restart.
 - [x] Add keyboard/mouse controls and virtual touch controls for movement, aim/fire, and dash.
 - [x] Add a README with opening instructions and controls.
-- [ ] Open in Godot 4.7.2, run the main scene, and fix any import, parse, or runtime issues.
+- [x] Fix wall coordinate alignment and 360-degree mobile touch aiming.
+- [x] Milestone 1: Implement `RunState` owner for health, room progression, and upgrades.
+- [x] Milestone 1: Add hand-authored room layouts with cover obstacles.
+- [x] Milestone 1: Add Shooter and Dasher enemy types with telegraphed warnings.
+- [x] Milestone 1: Add 3-card upgrade drafting on sector clearance.
+- [x] Milestone 1: Add 7 distinct upgrades affecting fire rate, damage, spread, speed, HP, and dash.
+- [x] Milestone 1: Add Boss encounter (Nexus Overlord) with radial burst and charge telegraphs.
+- [x] Milestone 1: Add victory & defeat summary screens with restart loop.
+- [ ] Open in Godot 4.7.2, run the main scene, and playtest/tune.
 - [ ] Install the first Android build on a physical device and tune touch controls.
 
 ## Milestone 0 — Confirm the first playable slice
@@ -66,15 +74,15 @@ The project currently uses simple drawn shapes. Keep placeholder visuals until c
 
 **Purpose:** Turn the single-room prototype into a small roguelite loop without procedural-generation complexity.
 
-1. Add a `RunState` owner for current health, score, room index, upgrades, and run completion.
-2. Create six to eight hand-authored room templates with clear boundaries and spawn points.
-3. Add room transitions and a fixed or shuffled sequence of rooms.
-4. Add two more basic enemy types. Give each one a distinct attack pattern and a readable warning.
-5. Add reward selection after a cleared room, initially choosing from two or three upgrade cards.
-6. Create six to nine upgrades that meaningfully change weapons, movement, survivability, or damage.
-7. Add one boss with a small number of telegraphed attacks.
-8. Add run results that distinguish defeat from boss victory and allow instant restart.
-9. Ensure every transition clears temporary projectiles, timers, and enemy state and preserves only intended run data.
+- [x] 1. Add a `RunState` owner for current health, score, room index, upgrades, and run completion.
+- [x] 2. Create six to eight hand-authored room templates with clear boundaries and spawn points.
+- [x] 3. Add room transitions and a fixed or shuffled sequence of rooms.
+- [x] 4. Add two more basic enemy types. Give each one a distinct attack pattern and a readable warning.
+- [x] 5. Add reward selection after a cleared room, initially choosing from two or three upgrade cards.
+- [x] 6. Create six to nine upgrades that meaningfully change weapons, movement, survivability, or damage.
+- [x] 7. Add one boss with a small number of telegraphed attacks.
+- [x] 8. Add run results that distinguish defeat from boss victory and allow instant restart.
+- [x] 9. Ensure every transition clears temporary projectiles, timers, and enemy state and preserves only intended run data.
 
 **Exit condition:** A run has multiple rooms, a reward choice, a boss, a win/loss result, and a clean restart.
 
