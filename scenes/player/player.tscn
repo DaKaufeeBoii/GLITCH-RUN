@@ -1,50 +1,15 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1_player"]
 
-[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
-radius = 0.45
-height = 1.6
+[sub_resource type="CircleShape2D" id="CircleShape_player"]
+radius = 13.0
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_body"]
-albedo_color = Color(0.12, 0.16, 0.25, 1)
-metallic = 0.8
-roughness = 0.35
-
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_body"]
-material = SubResource("StandardMaterial3D_body")
-radius = 0.45
-height = 1.5
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_visor"]
-albedo_color = Color(0.22, 0.74, 0.97, 1)
-emission_enabled = true
-emission = Color(0.22, 0.74, 0.97, 1)
-emission_energy_multiplier = 3.5
-
-[sub_resource type="BoxMesh" id="BoxMesh_visor"]
-material = SubResource("StandardMaterial3D_visor")
-size = Vector3(0.4, 0.14, 0.22)
-
-[node name="Player" type="CharacterBody3D"]
+[node name="Player" type="CharacterBody2D"]
 collision_layer = 1
 collision_mask = 3
 script = ExtResource("1_player")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, 0)
-shape = SubResource("CapsuleShape3D_player")
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape_player")
 
-[node name="MeshBody" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
-mesh = SubResource("CapsuleMesh_body")
-
-[node name="MeshVisor" type="MeshInstance3D" parent="MeshBody"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.38, -0.38)
-mesh = SubResource("BoxMesh_visor")
-
-[node name="OmniLight3D" type="OmniLight3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, 0)
-light_color = Color(0.22, 0.74, 0.97, 1)
-light_energy = 0.9
-omni_range = 3.5

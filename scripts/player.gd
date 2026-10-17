@@ -1,20 +1,20 @@
-extends CharacterBody3D
-## Top-down 3D player controller with twin-stick touch/mouse aiming, dash i-frames, and RunState upgrades.
+extends CharacterBody2D
+## Keyboard/mouse player controls with matching virtual touch controls.
 
 signal health_changed(current: int, maximum: int)
 signal died
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/projectile.tscn")
-const MOVE_SPEED := 11.0
-const DASH_SPEED := 32.0
-const DASH_DURATION := 0.16
-const DASH_COOLDOWN := 0.75
+const MOVE_SPEED := 245.0
+const DASH_SPEED := 720.0
+const DASH_DURATION := 0.14
+const DASH_COOLDOWN := 0.8
 const FIRE_INTERVAL := 0.22
 
 @export var max_health := 5
 var health := 5
-var aim_direction := Vector3.FORWARD
-var current_move_direction := Vector3.ZERO
+var aim_direction := Vector2.RIGHT
+var current_move_direction := Vector2.ZERO
 var touch_move := Vector2.ZERO
 var touch_aim := Vector2.ZERO
 var touch_fire := false
@@ -24,11 +24,15 @@ var fire_cooldown := 0.0
 var damage_cooldown := 0.0
 var dead := false
 
-@onready var mesh_body: MeshInstance3D = $MeshBody
-@onready var mesh_visor: MeshInstance3D = $MeshBody/MeshVisor
+
+const PLAYER_SHEET := preload("res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/Players/players blue x1.png")
+
+var anim_sprite: AnimatedSprite2D
+var gun_sprite: Sprite2D
 
 
 func _ready() -> void:
+	_setup_sprites()
 	if Engine.has_singleton("RunState") or get_node_or_null("/root/RunState") != null:
 		var rs = get_node("/root/RunState")
 		max_health = rs.max_health
@@ -36,6 +40,75 @@ func _ready() -> void:
 		rs.health_updated.connect(_on_runstate_health_updated)
 	else:
 		health = max_health
+
+
+func _setup_sprites() -> void:
+	var sf := SpriteFrames.new()
+
+	# Idle animation (1 frame)
+	sf.add_animation("idle")
+	sf.set_animation_loop("idle", true)
+	sf.set_animation_speed("idle", 4.0)
+	var idle_tex := AtlasTexture.new()
+	idle_tex.atlas = PLAYER_SHEET
+	idle_tex.region = Rect2(0, 0, 32, 32)
+	sf.add_frame("idle", idle_tex)
+
+	# Run animation (5 frames)
+	sf.add_animation("run")
+	sf.set_animation_loop("run", true)
+	sf.set_animation_speed("run", 10.0)
+	for c in range(5):
+		var run_tex := AtlasTexture.new()
+		run_tex.atlas = PLAYER_SHEET
+		run_tex.region = Rect2(c * 32, 2 * 32, 32, 32)
+		sf.add_frame("run", run_tex)
+
+	# Dash / Dodge roll animation (4 frames)
+	sf.add_animation("dash")
+	sf.set_animation_loop("dash", true)
+	sf.set_animation_speed("dash", 14.0)
+	for c in range(4):
+		var dash_tex := AtlasTexture.new()
+		dash_tex.atlas = PLAYER_SHEET
+		dash_tex.region = Rect2(c * 32, 3 * 32, 32, 32)
+		sf.add_frame("dash", dash_tex)
+
+	# Hurt / Hit animation (3 frames)
+	sf.add_animation("hurt")
+	sf.set_animation_loop("hurt", false)
+	sf.set_animation_speed("hurt", 9.0)
+	for c in range(3):
+		var hurt_tex := AtlasTexture.new()
+		hurt_tex.atlas = PLAYER_SHEET
+		hurt_tex.region = Rect2(c * 32, 4 * 32, 32, 32)
+		sf.add_frame("hurt", hurt_tex)
+
+	# Death / Dissolve animation (7 frames)
+	sf.add_animation("death")
+	sf.set_animation_loop("death", false)
+	sf.set_animation_speed("death", 11.0)
+	for c in range(7):
+		var death_tex := AtlasTexture.new()
+		death_tex.atlas = PLAYER_SHEET
+		death_tex.region = Rect2(c * 32, 5 * 32, 32, 32)
+		sf.add_frame("death", death_tex)
+
+	anim_sprite = AnimatedSprite2D.new()
+	anim_sprite.sprite_frames = sf
+	anim_sprite.animation = "idle"
+	anim_sprite.position = Vector2(0, -2)
+	add_child(anim_sprite)
+	anim_sprite.play("idle")
+
+	# Rotating blaster weapon
+	var gun_tex := AtlasTexture.new()
+	gun_tex.atlas = PLAYER_SHEET
+	gun_tex.region = Rect2(32, 0, 32, 32)
+	gun_sprite = Sprite2D.new()
+	gun_sprite.texture = gun_tex
+	gun_sprite.offset = Vector2(10, 0)
+	add_child(gun_sprite)
 
 
 func _on_runstate_health_updated(curr: int, max_h: int) -> void:
@@ -56,62 +129,62 @@ func _physics_process(delta: float) -> void:
 	if rs:
 		move_mult = rs.move_speed_mult
 
-	# Keyboard move (WASD / Arrows)
 	var keyboard_move := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
 	keyboard_move += Vector2(
 		float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)),
 		float(Input.is_key_pressed(KEY_S)) - float(Input.is_key_pressed(KEY_W))
 	)
 	keyboard_move = keyboard_move.limit_length(1.0)
-	var move_2d := (keyboard_move + touch_move).limit_length(1.0)
-	var move_3d := Vector3(move_2d.x, 0.0, move_2d.y)
-	current_move_direction = move_3d
-
+	var move_input := (keyboard_move + touch_move).limit_length(1.0)
+	current_move_direction = move_input
 	if dash_time > 0.0:
 		dash_time -= delta
 		velocity = aim_direction * DASH_SPEED
 		if rs and rs.dash_damage:
 			_apply_dash_damage()
 	else:
-		velocity = move_3d * (MOVE_SPEED * move_mult)
-		# Aim calculation
+		velocity = move_input * (MOVE_SPEED * move_mult)
 		if not touch_aim.is_zero_approx():
-			aim_direction = Vector3(touch_aim.x, 0.0, touch_aim.y).normalized()
+			aim_direction = touch_aim.normalized()
 		else:
-			_update_mouse_aim()
-
-	# Rotate body to face aim direction
-	if not aim_direction.is_zero_approx():
-		var look_target := global_position + aim_direction
-		look_target.y = global_position.y
-		look_at(look_target, Vector3.UP)
+			var mouse_direction := get_global_mouse_position() - global_position
+			if not mouse_direction.is_zero_approx():
+				aim_direction = mouse_direction.normalized()
 
 	move_and_slide()
 
-	# Dash input
+	# Keep character upright and flip sprite based on aiming
+	anim_sprite.flip_h = (aim_direction.x < 0)
+	gun_sprite.rotation = aim_direction.angle()
+	gun_sprite.flip_v = (aim_direction.x < 0)
+
+	# Animation selection
+	if dash_time > 0.0:
+		if anim_sprite.animation != "dash":
+			anim_sprite.play("dash")
+	elif damage_cooldown > 0.45:
+		if anim_sprite.animation != "hurt":
+			anim_sprite.play("hurt")
+	elif current_move_direction.length_squared() > 0.05:
+		if anim_sprite.animation != "run":
+			anim_sprite.play("run")
+	else:
+		if anim_sprite.animation != "idle":
+			anim_sprite.play("idle")
+
+	# Visual effects during dash / hurt
+	if damage_cooldown > 0.0:
+		anim_sprite.modulate = Color(1.0, 0.4, 0.4, 0.7) if int(damage_cooldown * 14.0) % 2 == 0 else Color.WHITE
+	elif dash_time > 0.0:
+		anim_sprite.modulate = Color(0.7, 0.9, 1.0, 0.8)
+	else:
+		anim_sprite.modulate = Color.WHITE
+
 	if (Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_SPACE)) and dash_cooldown <= 0.0:
 		try_dash()
-
-	# Fire input
 	var firing := touch_fire or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_key_pressed(KEY_J)
 	if firing and fire_cooldown <= 0.0:
 		_fire()
-
-
-func _update_mouse_aim() -> void:
-	var camera := get_viewport().get_camera_3d()
-	if not camera:
-		return
-	var mouse_pos := get_viewport().get_mouse_position()
-	var ray_origin := camera.project_ray_origin(mouse_pos)
-	var ray_dir := camera.project_ray_normal(mouse_pos)
-	if abs(ray_dir.y) > 0.001:
-		var t := (global_position.y - ray_origin.y) / ray_dir.y
-		var hit_pos := ray_origin + ray_dir * t
-		var to_hit := hit_pos - global_position
-		to_hit.y = 0.0
-		if to_hit.length_squared() > 0.04:
-			aim_direction = to_hit.normalized()
 
 
 func set_touch_move(value: Vector2) -> void:
@@ -122,7 +195,7 @@ func set_touch_aim(value: Vector2) -> void:
 	if not value.is_zero_approx():
 		touch_aim = value.normalized()
 		if dash_time <= 0.0:
-			aim_direction = Vector3(touch_aim.x, 0.0, touch_aim.y).normalized()
+			aim_direction = touch_aim
 
 
 func set_touch_fire(value: bool) -> void:
@@ -145,13 +218,15 @@ func try_dash() -> void:
 
 
 func _apply_dash_damage() -> void:
+	# Deal contact shock damage to nearby enemies during static blink
 	for enemy in get_tree().get_nodes_in_group("enemies"):
-		if is_instance_valid(enemy) and global_position.distance_to(enemy.global_position) < 2.0:
+		if is_instance_valid(enemy) and global_position.distance_to(enemy.global_position) < 38.0:
 			if enemy.has_method("take_damage"):
 				enemy.take_damage(2)
 
 
 func take_damage(amount: int) -> void:
+	# i-frames during dash or invulnerability cooldown
 	if dead or damage_cooldown > 0.0 or dash_time > 0.0:
 		return
 	health = maxi(0, health - amount)
@@ -162,6 +237,8 @@ func take_damage(amount: int) -> void:
 		rs.current_health = health
 	if health == 0:
 		dead = true
+		anim_sprite.play("death")
+		gun_sprite.visible = false
 		set_physics_process(false)
 		died.emit()
 
@@ -181,13 +258,15 @@ func _fire() -> void:
 	if count == 1:
 		_spawn_bullet(aim_direction, extra_dmg)
 	else:
-		_spawn_bullet(aim_direction.rotated(Vector3.UP, -0.09), extra_dmg)
-		_spawn_bullet(aim_direction.rotated(Vector3.UP, 0.09), extra_dmg)
+		# Twin spread shot
+		_spawn_bullet(aim_direction.rotated(-0.08), extra_dmg)
+		_spawn_bullet(aim_direction.rotated(0.08), extra_dmg)
 
 
-func _spawn_bullet(dir: Vector3, extra_dmg: int) -> void:
+func _spawn_bullet(dir: Vector2, extra_dmg: int) -> void:
 	var projectile = PROJECTILE_SCENE.instantiate()
-	projectile.global_position = global_position + Vector3(0.0, 0.8, 0.0) + dir * 0.9
+	projectile.position = global_position + dir * 22.0
 	projectile.direction = dir
 	projectile.damage = 1 + extra_dmg
 	get_parent().add_child(projectile)
+

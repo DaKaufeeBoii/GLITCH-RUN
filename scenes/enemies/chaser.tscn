@@ -1,36 +1,15 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/chaser.gd" id="1_chaser"]
 
-[sub_resource type="CylinderShape3D" id="CylinderShape3D_chaser"]
-radius = 0.45
-height = 1.2
+[sub_resource type="CircleShape2D" id="CircleShape_enemy"]
+radius = 15.0
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_chaser"]
-albedo_color = Color(0.88, 0.2, 0.32, 1)
-emission_enabled = true
-emission = Color(0.88, 0.2, 0.32, 1)
-emission_energy_multiplier = 1.5
-
-[sub_resource type="BoxMesh" id="BoxMesh_chaser"]
-material = SubResource("StandardMaterial3D_chaser")
-size = Vector3(0.8, 0.8, 0.8)
-
-[node name="Chaser" type="CharacterBody3D"]
+[node name="Chaser" type="CharacterBody2D"]
 collision_layer = 2
 collision_mask = 1
 script = ExtResource("1_chaser")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
-shape = SubResource("CylinderShape3D_chaser")
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape_enemy")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
-transform = Transform3D(0.707107, 0, 0.707107, 0, 1, 0, -0.707107, 0, 0.707107, 0, 0.6, 0)
-mesh = SubResource("BoxMesh_chaser")
-
-[node name="OmniLight3D" type="OmniLight3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
-light_color = Color(0.88, 0.2, 0.32, 1)
-light_energy = 0.7
-omni_range = 2.5

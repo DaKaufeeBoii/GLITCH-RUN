@@ -1,52 +1,14 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/shooter.gd" id="1_shooter"]
 
-[sub_resource type="CylinderShape3D" id="CylinderShape3D_shooter"]
-radius = 0.5
-height = 1.4
+[sub_resource type="CircleShape2D" id="CircleShape_shooter"]
+radius = 14.0
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_shooter"]
-albedo_color = Color(0.95, 0.55, 0.15, 1)
-emission_enabled = true
-emission = Color(0.95, 0.55, 0.15, 1)
-emission_energy_multiplier = 1.5
-
-[sub_resource type="CylinderMesh" id="CylinderMesh_shooter"]
-material = SubResource("StandardMaterial3D_shooter")
-top_radius = 0.4
-bottom_radius = 0.5
-height = 1.2
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_laser"]
-albedo_color = Color(1, 0.2, 0.2, 0.8)
-emission_enabled = true
-emission = Color(1, 0.2, 0.2, 1)
-emission_energy_multiplier = 4.0
-
-[sub_resource type="BoxMesh" id="BoxMesh_laser"]
-material = SubResource("StandardMaterial3D_laser")
-size = Vector3(0.06, 0.06, 12.0)
-
-[node name="Shooter" type="CharacterBody3D"]
+[node name="Shooter" type="CharacterBody2D"]
 collision_layer = 2
 collision_mask = 1
 script = ExtResource("1_shooter")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
-shape = SubResource("CylinderShape3D_shooter")
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
-mesh = SubResource("CylinderMesh_shooter")
-
-[node name="LaserSight" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, -6.0)
-mesh = SubResource("BoxMesh_laser")
-
-[node name="OmniLight3D" type="OmniLight3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, 0)
-light_color = Color(0.95, 0.55, 0.15, 1)
-light_energy = 0.8
-omni_range = 3.0
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape_shooter")
