@@ -9,6 +9,4 @@ export_presets.cfg
 Thumbs.db
 *.tmp
 
-*.zip
-assets/dungeon/*.import
-assets/dungeon/**/*.import
+KayKit_Dungeon_Pack_1.1_FREE.zip

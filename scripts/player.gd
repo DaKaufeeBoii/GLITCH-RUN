@@ -25,14 +25,7 @@ var damage_cooldown := 0.0
 var dead := false
 
 
-const PLAYER_SHEET := preload("res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/Players/players blue x1.png")
-
-var anim_sprite: AnimatedSprite2D
-var gun_sprite: Sprite2D
-
-
 func _ready() -> void:
-	_setup_sprites()
 	if Engine.has_singleton("RunState") or get_node_or_null("/root/RunState") != null:
 		var rs = get_node("/root/RunState")
 		max_health = rs.max_health
@@ -40,81 +33,14 @@ func _ready() -> void:
 		rs.health_updated.connect(_on_runstate_health_updated)
 	else:
 		health = max_health
-
-
-func _setup_sprites() -> void:
-	var sf := SpriteFrames.new()
-
-	# Idle animation (1 frame)
-	sf.add_animation("idle")
-	sf.set_animation_loop("idle", true)
-	sf.set_animation_speed("idle", 4.0)
-	var idle_tex := AtlasTexture.new()
-	idle_tex.atlas = PLAYER_SHEET
-	idle_tex.region = Rect2(0, 0, 32, 32)
-	sf.add_frame("idle", idle_tex)
-
-	# Run animation (5 frames)
-	sf.add_animation("run")
-	sf.set_animation_loop("run", true)
-	sf.set_animation_speed("run", 10.0)
-	for c in range(5):
-		var run_tex := AtlasTexture.new()
-		run_tex.atlas = PLAYER_SHEET
-		run_tex.region = Rect2(c * 32, 2 * 32, 32, 32)
-		sf.add_frame("run", run_tex)
-
-	# Dash / Dodge roll animation (4 frames)
-	sf.add_animation("dash")
-	sf.set_animation_loop("dash", true)
-	sf.set_animation_speed("dash", 14.0)
-	for c in range(4):
-		var dash_tex := AtlasTexture.new()
-		dash_tex.atlas = PLAYER_SHEET
-		dash_tex.region = Rect2(c * 32, 3 * 32, 32, 32)
-		sf.add_frame("dash", dash_tex)
-
-	# Hurt / Hit animation (3 frames)
-	sf.add_animation("hurt")
-	sf.set_animation_loop("hurt", false)
-	sf.set_animation_speed("hurt", 9.0)
-	for c in range(3):
-		var hurt_tex := AtlasTexture.new()
-		hurt_tex.atlas = PLAYER_SHEET
-		hurt_tex.region = Rect2(c * 32, 4 * 32, 32, 32)
-		sf.add_frame("hurt", hurt_tex)
-
-	# Death / Dissolve animation (7 frames)
-	sf.add_animation("death")
-	sf.set_animation_loop("death", false)
-	sf.set_animation_speed("death", 11.0)
-	for c in range(7):
-		var death_tex := AtlasTexture.new()
-		death_tex.atlas = PLAYER_SHEET
-		death_tex.region = Rect2(c * 32, 5 * 32, 32, 32)
-		sf.add_frame("death", death_tex)
-
-	anim_sprite = AnimatedSprite2D.new()
-	anim_sprite.sprite_frames = sf
-	anim_sprite.animation = "idle"
-	anim_sprite.position = Vector2(0, -2)
-	add_child(anim_sprite)
-	anim_sprite.play("idle")
-
-	# Rotating blaster weapon
-	var gun_tex := AtlasTexture.new()
-	gun_tex.atlas = PLAYER_SHEET
-	gun_tex.region = Rect2(32, 0, 32, 32)
-	gun_sprite = Sprite2D.new()
-	gun_sprite.texture = gun_tex
-	gun_sprite.offset = Vector2(10, 0)
-	add_child(gun_sprite)
+	queue_redraw()
 
 
 func _on_runstate_health_updated(curr: int, max_h: int) -> void:
 	health = curr
 	max_health = max_h
 	health_changed.emit(health, max_health)
+	queue_redraw()
 
 
 func _physics_process(delta: float) -> void:
@@ -150,35 +76,8 @@ func _physics_process(delta: float) -> void:
 			var mouse_direction := get_global_mouse_position() - global_position
 			if not mouse_direction.is_zero_approx():
 				aim_direction = mouse_direction.normalized()
-
+	rotation = aim_direction.angle()
 	move_and_slide()
-
-	# Keep character upright and flip sprite based on aiming
-	anim_sprite.flip_h = (aim_direction.x < 0)
-	gun_sprite.rotation = aim_direction.angle()
-	gun_sprite.flip_v = (aim_direction.x < 0)
-
-	# Animation selection
-	if dash_time > 0.0:
-		if anim_sprite.animation != "dash":
-			anim_sprite.play("dash")
-	elif damage_cooldown > 0.45:
-		if anim_sprite.animation != "hurt":
-			anim_sprite.play("hurt")
-	elif current_move_direction.length_squared() > 0.05:
-		if anim_sprite.animation != "run":
-			anim_sprite.play("run")
-	else:
-		if anim_sprite.animation != "idle":
-			anim_sprite.play("idle")
-
-	# Visual effects during dash / hurt
-	if damage_cooldown > 0.0:
-		anim_sprite.modulate = Color(1.0, 0.4, 0.4, 0.7) if int(damage_cooldown * 14.0) % 2 == 0 else Color.WHITE
-	elif dash_time > 0.0:
-		anim_sprite.modulate = Color(0.7, 0.9, 1.0, 0.8)
-	else:
-		anim_sprite.modulate = Color.WHITE
 
 	if (Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_SPACE)) and dash_cooldown <= 0.0:
 		try_dash()
@@ -235,10 +134,9 @@ func take_damage(amount: int) -> void:
 	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		rs.current_health = health
+	queue_redraw()
 	if health == 0:
 		dead = true
-		anim_sprite.play("death")
-		gun_sprite.visible = false
 		set_physics_process(false)
 		died.emit()
 
@@ -265,8 +163,16 @@ func _fire() -> void:
 
 func _spawn_bullet(dir: Vector2, extra_dmg: int) -> void:
 	var projectile = PROJECTILE_SCENE.instantiate()
-	projectile.position = global_position + dir * 22.0
+	projectile.position = global_position + dir * 20.0
 	projectile.direction = dir
 	projectile.damage = 1 + extra_dmg
 	get_parent().add_child(projectile)
+
+
+func _draw() -> void:
+	var body_color := Color("42d9ec") if damage_cooldown <= 0.0 or int(damage_cooldown * 14.0) % 2 == 0 else Color("f4fbff")
+	if dash_time > 0.0:
+		body_color = Color("c084fc") # Purple shift during invulnerable dash
+	draw_colored_polygon(PackedVector2Array([Vector2(17, 0), Vector2(-11, -11), Vector2(-7, 0), Vector2(-11, 11)]), body_color)
+	draw_circle(Vector2.ZERO, 3.0, Color("f4fbff"))
 

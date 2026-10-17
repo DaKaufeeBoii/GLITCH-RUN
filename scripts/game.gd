@@ -8,10 +8,7 @@ const DASHER_SCENE := preload("res://scenes/enemies/dasher.tscn")
 const BOSS_SCENE := preload("res://scenes/enemies/boss.tscn")
 const TOUCH_CONTROLS := preload("res://scripts/mobile_controls.gd")
 
-const TILESET_TEX := preload("res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/tileset x1.png")
-const UI_TEX := preload("res://assets/Tech Dungeon Roguelite - Asset Pack (DEMO)/UI/ui x1.png")
-
-const ROOM_RECT := Rect2(48.0, 64.0, 864.0, 416.0)
+const ROOM_RECT := Rect2(42.0, 64.0, 876.0, 424.0)
 
 var player: CharacterBody2D
 var active_enemies: Array[Node2D] = []
@@ -25,8 +22,6 @@ var boss_ref: Node2D = null
 
 # UI Elements
 var ui_layer: CanvasLayer
-var hearts_box: HBoxContainer
-var heart_icons: Array[TextureRect] = []
 var status_label: Label
 var hint_label: Label
 var sector_label: Label
@@ -65,31 +60,8 @@ func _process(delta: float) -> void:
 
 	# Update Top HUD
 	if is_instance_valid(player):
-		status_label.text = "ELIMS  %d" % [rs.score]
+		status_label.text = "HP  %d / %d   |   ELIMS  %d" % [player.health, player.max_health, rs.score]
 		sector_label.text = "SECTOR %d / %d" % [rs.current_room_index + 1, rs.TOTAL_ROOMS]
-
-		# Synchronize heart icons with max_health and current health
-		while heart_icons.size() < player.max_health:
-			var heart_tex := AtlasTexture.new()
-			heart_tex.atlas = UI_TEX
-			heart_tex.region = Rect2(0, 0, 32, 32)
-			var tr := TextureRect.new()
-			tr.texture = heart_tex
-			tr.custom_minimum_size = Vector2(32, 32)
-			tr.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
-			hearts_box.add_child(tr)
-			heart_icons.append(tr)
-
-		while heart_icons.size() > player.max_health:
-			var tr = heart_icons.pop_back()
-			tr.queue_free()
-
-		for i in range(heart_icons.size()):
-			if i < player.health:
-				heart_icons[i].modulate = Color.WHITE
-			else:
-				# Darkened/hollow heart indicator
-				heart_icons[i].modulate = Color(0.25, 0.28, 0.38, 0.45)
 
 	# Update Boss Bar if in Boss room
 	if boss_active and is_instance_valid(boss_ref):
@@ -100,39 +72,19 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
-	# Tiled sci-fi dungeon floor (metal plate variations)
-	var floor_regions := [
-		Rect2(32 * 32, 1 * 32, 32, 32),
-		Rect2(33 * 32, 1 * 32, 32, 32),
-		Rect2(34 * 32, 1 * 32, 32, 32),
-		Rect2(32 * 32, 2 * 32, 32, 32)
-	]
-	var cols := int(ROOM_RECT.size.x / 32.0)
-	var rows := int(ROOM_RECT.size.y / 32.0)
-	for r in range(rows):
-		for c in range(cols):
-			var dest := Rect2(ROOM_RECT.position.x + c * 32.0, ROOM_RECT.position.y + r * 32.0, 32.0, 32.0)
-			var idx := (c * 3 + r * 7) % 4
-			draw_texture_rect_region(TILESET_TEX, dest, floor_regions[idx])
+	# Subtle grid
+	for x in range(int(ROOM_RECT.position.x), int(ROOM_RECT.end.x), 32):
+		draw_line(Vector2(x, ROOM_RECT.position.y), Vector2(x, ROOM_RECT.end.y), Color("121b36"), 1.0)
+	for y in range(int(ROOM_RECT.position.y), int(ROOM_RECT.end.y), 32):
+		draw_line(Vector2(ROOM_RECT.position.x, y), Vector2(ROOM_RECT.end.x, y), Color("121b36"), 1.0)
 
-	# Perimeter border with neon sci-fi edge
-	draw_rect(ROOM_RECT, Color("202e4c"), false, 4.0)
-	draw_rect(ROOM_RECT, Color("38bdf8"), false, 1.5)
+	# Room boundary neon wireframe
+	draw_rect(ROOM_RECT, Color("38bdf8"), false, 2.0)
 
-	# Hand-authored obstacles using tech terminal tiles
-	var obstacle_tex_region := Rect2(12 * 32, 1 * 32, 32, 32)
+	# Hand-authored obstacles
 	for r in obstacle_rects:
-		var tile_cols := int(ceil(r.size.x / 32.0))
-		var tile_rows := int(ceil(r.size.y / 32.0))
-		for ox in range(tile_cols):
-			for oy in range(tile_rows):
-				var piece_pos := Vector2(r.position.x + ox * 32.0, r.position.y + oy * 32.0)
-				var piece_w := minf(32.0, r.end.x - piece_pos.x)
-				var piece_h := minf(32.0, r.end.y - piece_pos.y)
-				var piece_dest := Rect2(piece_pos, Vector2(piece_w, piece_h))
-				var piece_src := Rect2(obstacle_tex_region.position, Vector2(piece_w, piece_h))
-				draw_texture_rect_region(TILESET_TEX, piece_dest, piece_src)
-		draw_rect(r, Color("38bdf8"), false, 1.5)
+		draw_rect(r, Color("1e293b"), true)
+		draw_rect(r, Color("475569"), false, 1.5)
 
 
 func _create_walls() -> void:
@@ -401,16 +353,11 @@ func _create_ui() -> void:
 	ui_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(ui_layer)
 
-	# Top Status Bar: Pixel Art Hearts
-	hearts_box = HBoxContainer.new()
-	hearts_box.position = Vector2(44, 12)
-	hearts_box.add_theme_constant_override("separation", 2)
-	ui_layer.add_child(hearts_box)
-
+	# Top Status Bar
 	status_label = Label.new()
-	status_label.position = Vector2(240, 18)
+	status_label.position = Vector2(44, 18)
 	status_label.add_theme_color_override("font_color", Color("e0f2fe"))
-	status_label.add_theme_font_size_override("font_size", 18)
+	status_label.add_theme_font_size_override("font_size", 20)
 	ui_layer.add_child(status_label)
 
 	sector_label = Label.new()
