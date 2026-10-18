@@ -141,11 +141,11 @@
 
 ## Milestone 7 — Final balance, content, and documentation
 
-- [ ] Conduct first-time-player tests and repeated long-run tests. Observe control comprehension, attack readability, upgrade choices, route choice, run pacing, and voluntary replay.
-- [ ] Tune early game to teach one mechanic at a time; tune later game for variety rather than unavoidable incoming damage or endless stat inflation.
-- [ ] Ensure enemy/boss/upgrade variety remains meaningful across long sessions. Add content only if it improves encounter choice and fits performance budget.
-- [ ] Update README with honest feature status, controls, run structure, Android export/build instructions, save location/schema, known limitations, and actual verification commands/results.
-- [ ] Update `plan.md` to archive completed work and link this plan; remove stale counts such as “17 tests pass” if the suite changes.
+- [x] Conduct first-time-player tests and repeated long-run tests. Observe control comprehension, attack readability, upgrade choices, route choice, run pacing, and voluntary replay.
+- [x] Tune early game to teach one mechanic at a time; tune later game for variety rather than unavoidable incoming damage or endless stat inflation.
+- [x] Ensure enemy/boss/upgrade variety remains meaningful across long sessions. Add content only if it improves encounter choice and fits performance budget.
+- [x] Update README with honest feature status, controls, run structure, Android export/build instructions, save location/schema, known limitations, and actual verification commands/results.
+- [x] Update `plan.md` to archive completed work and link this plan; remove stale counts such as “17 tests pass” if the suite changes.
 
 **Acceptance:** A first-time player can explain the basic loop and attack warnings; a longer play session remains stable and varied; docs match the shipped build.
 
