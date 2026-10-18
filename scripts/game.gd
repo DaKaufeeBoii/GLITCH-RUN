@@ -63,6 +63,14 @@ var glitch_rect: ColorRect
 var glitch_material: ShaderMaterial
 var glitch_pulse := 0.0
 
+var vignette_layer: CanvasLayer
+var vignette_rect: ColorRect
+var vignette_material: ShaderMaterial
+var vignette_intensity := 0.0
+var vignette_target_intensity := 0.0
+var vignette_pulse_speed := 4.0
+var heartbeat_timer := 0.0
+
 # UI Elements
 var ui_layer: CanvasLayer
 var hearts_box: HBoxContainer
@@ -157,8 +165,9 @@ func _ready() -> void:
 	add_child(camera)
 	camera.make_current()
 
-	# Initialize Glitch Post-Processing Layer
+	# Initialize Glitch Post-Processing & Danger Vignette Layers
 	_init_glitch_layer()
+	_init_vignette_layer()
 
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play_music("theme_loop")
@@ -215,12 +224,19 @@ func trigger_glitch(intensity: float = 0.75) -> void:
 
 func _init_glitch_layer() -> void:
 	glitch_layer = CanvasLayer.new()
-	glitch_layer.layer = 1
+	glitch_layer.layer = 2
 	glitch_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(glitch_layer)
 
+	var back_buffer := BackBufferCopy.new()
+	back_buffer.copy_mode = BackBufferCopy.COPY_MODE_VIEWPORT
+	back_buffer.rect = Rect2(0, 0, 960, 540)
+	glitch_layer.add_child(back_buffer)
+
 	glitch_rect = ColorRect.new()
 	glitch_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	glitch_rect.custom_minimum_size = Vector2(960, 540)
+	glitch_rect.size = Vector2(960, 540)
 	glitch_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var shader = load("res://shaders/glitch.gdshader")
@@ -228,7 +244,67 @@ func _init_glitch_layer() -> void:
 		glitch_material = ShaderMaterial.new()
 		glitch_material.shader = shader
 		glitch_rect.material = glitch_material
+		glitch_material.set_shader_parameter("glitch_intensity", 0.0)
 	glitch_layer.add_child(glitch_rect)
+
+
+func _init_vignette_layer() -> void:
+	vignette_layer = CanvasLayer.new()
+	vignette_layer.layer = 15 # Above world and glitch, below UI layer (20)
+	vignette_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(vignette_layer)
+
+	vignette_rect = ColorRect.new()
+	vignette_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vignette_rect.custom_minimum_size = Vector2(960, 540)
+	vignette_rect.size = Vector2(960, 540)
+	vignette_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var shader = load("res://shaders/vignette.gdshader")
+	if shader:
+		vignette_material = ShaderMaterial.new()
+		vignette_material.shader = shader
+		vignette_rect.material = vignette_material
+		vignette_material.set_shader_parameter("intensity", 0.0)
+	vignette_layer.add_child(vignette_rect)
+
+
+func _update_low_health_vignette(delta: float) -> void:
+	if not is_instance_valid(player) or not is_instance_valid(vignette_material):
+		return
+
+	var p_health: int = player.health
+
+	# Target intensity based on remaining player health:
+	# >= 3: 0.0 (healthy, clear corners)
+	# == 2: 0.38 (steady warning pulse)
+	# == 1: 0.85 (intense frantic heartbeat pulse!)
+	if p_health >= 3:
+		vignette_target_intensity = 0.0
+		vignette_pulse_speed = 3.5
+	elif p_health == 2:
+		vignette_target_intensity = 0.38
+		vignette_pulse_speed = 3.8
+	elif p_health == 1:
+		vignette_target_intensity = 0.85
+		vignette_pulse_speed = 6.2
+
+	# Smooth decay / lerp toward target
+	if vignette_intensity > vignette_target_intensity:
+		vignette_intensity = maxf(vignette_target_intensity, vignette_intensity - delta * 2.2)
+	else:
+		vignette_intensity = lerpf(vignette_intensity, vignette_target_intensity, delta * 4.5)
+
+	vignette_material.set_shader_parameter("intensity", vignette_intensity)
+	vignette_material.set_shader_parameter("pulse_speed", vignette_pulse_speed)
+
+	# Audio heartbeat rhythm when at critical 1 HP
+	if p_health == 1 and not run_over and not get_tree().paused:
+		heartbeat_timer += delta
+		if heartbeat_timer >= 0.50: # 120 BPM heartbeat rhythm
+			heartbeat_timer = 0.0
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("heartbeat", 0.03, -3.0)
 
 
 func _process(delta: float) -> void:
@@ -250,11 +326,14 @@ func _process(delta: float) -> void:
 		camera.offset = Vector2.ZERO
 		camera.rotation = 0.0
 
-	# Glitch Post-Processing Decay
+	# Glitch Post-Processing Decay (snappy cyber recovery)
 	if glitch_pulse > 0.0:
-		glitch_pulse = maxf(0.0, glitch_pulse - delta * 2.8)
+		glitch_pulse = maxf(0.0, glitch_pulse - delta * 3.4)
 		if is_instance_valid(glitch_material):
 			glitch_material.set_shader_parameter("glitch_intensity", glitch_pulse)
+
+	# Low Health Red Corner Vignette & Pulse Update
+	_update_low_health_vignette(delta)
 
 	# Manage Director Banner timer
 	if banner_timer > 0.0:
@@ -419,6 +498,35 @@ func _draw() -> void:
 					var lbl_text: String = door.get("label", "FORWARD")
 					draw_string(font, tag_rect.position + Vector2(6, 16), lbl_text, HORIZONTAL_ALIGNMENT_LEFT, 140, 10, Color(d_col.r, d_col.g, d_col.b, 1.0))
 
+	# 3. Off-screen hostile radar chevrons at viewport bounds
+	if is_instance_valid(camera) and not active_enemies.is_empty():
+		var half_w := 456.0
+		var half_h := 246.0
+		for enemy in active_enemies:
+			if is_instance_valid(enemy):
+				var delta_pos: Vector2 = enemy.global_position - camera.position
+				if absf(delta_pos.x) > half_w or absf(delta_pos.y) > half_h:
+					var angle: float = delta_pos.angle()
+					var edge_dir := Vector2(cos(angle), sin(angle))
+					var scale_x: float = half_w / maxf(0.001, absf(edge_dir.x))
+					var scale_y: float = half_h / maxf(0.001, absf(edge_dir.y))
+					var scale_factor: float = minf(scale_x, scale_y)
+					var indicator_pos: Vector2 = camera.position + edge_dir * (scale_factor - 14.0)
+
+					var col := Color("f43f5e") # Chaser crimson
+					if enemy.is_in_group("dashers") or "dasher" in enemy.name.to_lower():
+						col = Color("c084fc")
+					elif enemy.is_in_group("shooters") or "shooter" in enemy.name.to_lower():
+						col = Color("facc15")
+					elif enemy.is_in_group("bosses") or "boss" in enemy.name.to_lower():
+						col = Color("ec4899")
+
+					var tip: Vector2 = indicator_pos + edge_dir * 8.0
+					var left_wing: Vector2 = indicator_pos - edge_dir * 6.0 + edge_dir.orthogonal() * 6.0
+					var right_wing: Vector2 = indicator_pos - edge_dir * 6.0 - edge_dir.orthogonal() * 6.0
+					draw_colored_polygon(PackedVector2Array([tip, left_wing, right_wing]), col)
+					draw_polyline(PackedVector2Array([left_wing, tip, right_wing]), Color("ffffff"), 1.2)
+
 
 func _create_walls() -> void:
 	var center_x := ROOM_RECT.position.x + ROOM_RECT.size.x * 0.5
@@ -492,10 +600,13 @@ func _on_player_ammo_changed(current: int, maximum: int, is_reloading: bool) -> 
 	if is_reloading:
 		ammo_label.text = "RELOAD..."
 		ammo_label.add_theme_color_override("font_color", Color("f59e0b"))
+	elif current == 0:
+		ammo_label.text = "EMPTY [TAP RELOAD]"
+		ammo_label.add_theme_color_override("font_color", Color("ef4444"))
 	else:
 		ammo_label.text = "CELLS %02d/%02d" % [current, maximum]
 		if current <= 3:
-			ammo_label.add_theme_color_override("font_color", Color("ef4444"))
+			ammo_label.add_theme_color_override("font_color", Color("f97316"))
 		else:
 			ammo_label.add_theme_color_override("font_color", Color("38bdf8"))
 
@@ -514,15 +625,45 @@ func _on_player_damaged(amount: int) -> void:
 		var t: float = rs.run_time if rs else 0.0
 		tracker.record_damage_taken(amount, t)
 
+	# Glitch triggers ONLY when the player is hurt!
+	trigger_glitch(0.85)
+	add_trauma(0.40)
+
+	# Red glow impact spike on screen corners
+	vignette_intensity = minf(1.0, vignette_intensity + 0.55)
+
+	# Floating damage indicator on player
+	if is_instance_valid(player):
+		spawn_damage_number(player.global_position, "-%d" % amount, Color("f43f5e"))
+
 
 func _on_player_shot_fired() -> void:
 	if tracker:
 		tracker.record_shot_fired()
 
 
-func _on_player_shot_hit(_enemy: Node2D) -> void:
+func _on_player_shot_hit(enemy: Node2D) -> void:
 	if tracker:
 		tracker.record_shot_hit()
+	if is_instance_valid(enemy):
+		var rs = get_node_or_null("/root/RunState")
+		var dmg: int = 1 + (rs.damage_bonus if rs else 0)
+		spawn_damage_number(enemy.global_position, "%d" % dmg, Color("38bdf8"))
+
+
+func spawn_damage_number(pos: Vector2, text: String, col: Color = Color("38bdf8")) -> void:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.global_position = pos + Vector2(randf_range(-12.0, 12.0), randf_range(-18.0, -8.0))
+	lbl.add_theme_font_size_override("font_size", 13)
+	lbl.add_theme_color_override("font_color", col)
+	lbl.z_index = 50
+	add_child(lbl)
+
+	var tween := create_tween().set_parallel(true)
+	tween.tween_property(lbl, "position:y", lbl.position.y - 28.0, 0.45).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	tween.tween_property(lbl, "modulate:a", 0.0, 0.45).set_ease(Tween.EASE_IN).set_delay(0.12)
+	tween.chain().tween_callback(lbl.queue_free)
 
 
 func _load_room(index: int) -> void:
@@ -859,7 +1000,6 @@ func _spawn_boss(pos: Vector2) -> void:
 	if is_instance_valid(boss_bar_container):
 		boss_bar_container.visible = true
 	boss_bar_bg.visible = true
-	trigger_glitch(0.85)
 	add_trauma(0.4)
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("boss_alarm", 0.0, 0.0)
@@ -1013,7 +1153,6 @@ func _on_room_cleared() -> void:
 		var t_num: int = first_adap.get("tier", 1)
 		var m_name: String = first_adap.get("mutation", "OVERCLOCK")
 		var h_mult: String = first_adap.get("health_mult", "2x HP")
-		trigger_glitch(0.70)
 		add_trauma(0.35)
 		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 			get_node("/root/AudioSynth").play("mutation_alert", 0.0, 0.0)
@@ -1112,7 +1251,7 @@ func _enter_door(door: Dictionary) -> void:
 			get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
 		_show_director_banner("DATA CACHE RECOVERED // UNCLAIMED TECH", "Extract 1 complimentary subroutine.")
 	elif ttype == "ELITE":
-		trigger_glitch(0.8)
+		add_trauma(0.25)
 		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 			get_node("/root/AudioSynth").play("boss_alarm", 0.0, 0.0)
 		_show_director_banner("WARNING: ELITE CHAMBER // ENGAGING HIGH THREAT", "Hostile signatures intensified.")
@@ -1491,7 +1630,6 @@ func _show_director_banner(title: String, sub: String) -> void:
 	banner_sub.text = sub
 	director_banner.visible = true
 	banner_timer = 4.0
-	trigger_glitch(0.7)
 	add_trauma(0.28)
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("mutation_alert", 0.05, 0.0)

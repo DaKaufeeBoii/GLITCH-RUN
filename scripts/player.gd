@@ -259,6 +259,9 @@ func _apply_dash_damage() -> void:
 		if is_instance_valid(enemy) and global_position.distance_to(enemy.global_position) < 42.0:
 			if enemy.has_method("take_damage"):
 				enemy.take_damage(2)
+				var game_node = get_parent()
+				if game_node and game_node.has_method("spawn_damage_number"):
+					game_node.spawn_damage_number(enemy.global_position, "2", Color("c084fc"))
 
 
 func take_damage(amount: int) -> void:
@@ -306,6 +309,8 @@ func _fire() -> void:
 	if is_reloading:
 		return
 	if current_ammo <= 0:
+		if is_inside_tree() and (Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth")):
+			get_node("/root/AudioSynth").play("empty_ammo", 0.05, -3.0)
 		start_reload()
 		return
 

@@ -85,9 +85,10 @@ static func run_all_tests() -> bool:
 	all_passed = test_crash_logger_offline_diagnostics() and all_passed
 	all_passed = test_navigation_grid_topological_pathfinding() and all_passed
 	all_passed = test_behavior_driven_learning_and_evidence_switch() and all_passed
+	all_passed = test_glitch_fx_and_low_health_vignette() and all_passed
 
 	if all_passed:
-		print("--- ALL 47 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 48 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -1703,4 +1704,37 @@ static func test_behavior_driven_learning_and_evidence_switch() -> bool:
 	assert(evo_mgr.evolution_history.is_empty(), "Reset clears evolution history")
 
 	print("  [PASS] Behavior-Driven Enemy Learning, Strategy Switch & Isolation Scenario")
+	return true
+
+
+static func test_glitch_fx_and_low_health_vignette() -> bool:
+	# 1. Glitch shader compilation & uniforms
+	var glitch_sh = load("res://shaders/glitch.gdshader")
+	assert(glitch_sh != null, "glitch.gdshader must load successfully")
+	var g_mat := ShaderMaterial.new()
+	g_mat.shader = glitch_sh
+	g_mat.set_shader_parameter("glitch_intensity", 0.85)
+	assert(absf(float(g_mat.get_shader_parameter("glitch_intensity")) - 0.85) < 0.01, "Glitch intensity uniform must accept value")
+
+	# 2. Vignette shader compilation & uniforms
+	var vig_sh = load("res://shaders/vignette.gdshader")
+	assert(vig_sh != null, "vignette.gdshader must load successfully")
+	var v_mat := ShaderMaterial.new()
+	v_mat.shader = vig_sh
+	v_mat.set_shader_parameter("intensity", 0.75)
+	v_mat.set_shader_parameter("pulse_speed", 6.0)
+	assert(absf(float(v_mat.get_shader_parameter("intensity")) - 0.75) < 0.01, "Vignette intensity uniform must accept value")
+	assert(absf(float(v_mat.get_shader_parameter("pulse_speed")) - 6.0) < 0.01, "Vignette pulse_speed uniform must accept value")
+
+	# 3. AudioSynth QoL profiles
+	var synth_script := load("res://scripts/audio_synth.gd")
+	var synth: Node = synth_script.new()
+	synth._ready()
+	assert(synth.sounds.has("empty_ammo"), "AudioSynth must produce empty_ammo sound profile")
+	assert(synth.sounds.has("heartbeat"), "AudioSynth must produce heartbeat sound profile")
+	assert(synth.sounds["empty_ammo"].data.size() > 50, "empty_ammo PCM data must be populated")
+	assert(synth.sounds["heartbeat"].data.size() > 50, "heartbeat PCM data must be populated")
+	synth.free()
+
+	print("  [PASS] Player Hurt Glitch Post-Processing & Low Health Danger Vignette Scenario")
 	return true

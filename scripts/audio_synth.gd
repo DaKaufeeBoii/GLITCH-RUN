@@ -111,6 +111,8 @@ func _synthesize_all_sounds() -> void:
 	sounds["mutation_alert"] = _synth_mutation_alert()
 	sounds["ui_hover"] = _synth_ui_hover()
 	sounds["ui_click"] = _synth_ui_click()
+	sounds["empty_ammo"] = _synth_empty_ammo()
+	sounds["heartbeat"] = _synth_heartbeat()
 	sounds["theme_loop"] = _synth_synthwave_theme()
 
 
@@ -382,4 +384,36 @@ func _synth_synthwave_theme() -> AudioStreamWAV:
 		samples[i] = clampf(mixed, -1.0, 1.0)
 
 	return _create_stream(samples, true)
+
+
+func _synth_empty_ammo() -> AudioStreamWAV:
+	var duration := 0.08
+	var num_samples := int(SAMPLE_RATE * duration)
+	var samples := PackedFloat32Array()
+	samples.resize(num_samples)
+	var phase := 0.0
+	for i in range(num_samples):
+		var progress := float(i) / float(num_samples)
+		var freq := 1150.0 if progress < 0.4 else 620.0
+		phase += freq * (1.0 / SAMPLE_RATE)
+		var sq := 1.0 if fposmod(phase, 1.0) < 0.5 else -1.0
+		var env := exp(-progress * 26.0)
+		samples[i] = sq * env * 0.38
+	return _create_stream(samples)
+
+
+func _synth_heartbeat() -> AudioStreamWAV:
+	var duration := 0.26
+	var num_samples := int(SAMPLE_RATE * duration)
+	var samples := PackedFloat32Array()
+	samples.resize(num_samples)
+	var phase := 0.0
+	for i in range(num_samples):
+		var progress := float(i) / float(num_samples)
+		var freq := lerpf(64.0, 36.0, progress)
+		phase += freq * (1.0 / SAMPLE_RATE)
+		var sine := sin(phase * TAU)
+		var env := sin(progress * PI) * exp(-progress * 4.0)
+		samples[i] = sine * env * 0.55
+	return _create_stream(samples)
 
