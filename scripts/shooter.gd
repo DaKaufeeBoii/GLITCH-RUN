@@ -4,7 +4,6 @@ extends CharacterBody2D
 signal defeated
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/enemy_projectile.tscn")
-const EnemySteering := preload("res://scripts/enemy_steering.gd")
 
 @export var max_health := 3
 @export var move_speed := 82.0
@@ -195,8 +194,15 @@ func _draw() -> void:
 	draw_circle(Vector2(5, 0), 4.0, Color("fffbeb"))
 	draw_circle(Vector2(5, 0), 2.0, Color("f59e0b"))
 
-	# Health bar
-	if health < max_health:
+	# Health bar & Evolution Tier indicator
+	if max_health > 3:
+		var tier_pips := 1 if max_health <= 6 else 2
+		for p in range(tier_pips):
+			draw_circle(Vector2(-4.0 + float(p) * 8.0, -27), 2.2, Color("38bdf8"))
+		draw_rect(Rect2(-16, -22, 32, 4), Color("181a26"))
+		var hp_ratio := float(health) / float(max_health)
+		draw_rect(Rect2(-15, -21, 30.0 * hp_ratio, 2), Color("f59e0b"))
+	elif health < max_health:
 		var hit_points := float(health) / float(max_health)
 		draw_rect(Rect2(-14, -22, 28, 4), Color("181a26"))
 		draw_rect(Rect2(-13, -21, 26.0 * hit_points, 2), Color("f59e0b"))

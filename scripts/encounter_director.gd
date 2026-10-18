@@ -119,13 +119,9 @@ func prepare_encounter(
 		var genome: RefCounted = null
 		if family in ["CHASER", "SHOOTER", "DASHER"]:
 			genome = evolution_manager.get_genome_for_spawn(family)
-			# Apply active tactical mutations
+			# Apply active tactical positioning mutations
 			if pincer_active and family == "CHASER":
 				genome.apply_named_mutation("PINCER_WINGS")
-			if shooter_lead > 0.0 and family == "SHOOTER":
-				genome.apply_named_mutation("PREDICTIVE_OPTICS")
-			if hazard_trail and family == "DASHER":
-				genome.apply_named_mutation("ION_HAZARD_TRAIL")
 
 		final_spawn_list.append({
 			"type": espawn.type,
@@ -153,7 +149,7 @@ func record_encounter_result(
 	combat_time: float,
 	player_profile: Dictionary,
 	chosen_tactic: String
-) -> void:
+) -> Array[Dictionary]:
 	## Reports combat feedback to LearningPolicy, AdaptiveDirector, and EvolutionManager.
 	adaptive_director.record_tactic_result(chosen_tactic, damage_taken)
 
@@ -163,7 +159,7 @@ func record_encounter_result(
 			var reward: float = learning_policy.compute_reward(damage_taken, combat_time, player_profile, act_id)
 			learning_policy.update_policy(reward)
 
-	evolution_manager.process_encounter_end(
+	return evolution_manager.process_encounter_end(
 		sector_index,
 		damage_taken,
 		combat_time,

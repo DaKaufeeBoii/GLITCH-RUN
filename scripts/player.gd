@@ -6,6 +6,7 @@ signal died
 signal dashed
 signal damaged(amount: int)
 signal shot_fired
+@warning_ignore("unused_signal")
 signal shot_hit(enemy: Node2D)
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/projectile.tscn")

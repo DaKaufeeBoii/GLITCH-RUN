@@ -552,13 +552,8 @@ func _load_room(index: int) -> void:
 		rs_node.waves_in_room = rs_node.progression.waves_in_room
 
 	damage_taken_this_sector = 0
-
-	if rs_node and rs_node.progression and rs_node.waves_in_room == 0:
-		# Non-wave room (START, RECOVERY, SHOP, GIFT) - secure chamber!
-		room_cleared = true
-		_handle_non_wave_room(current_room_data.room_type)
-	else:
-		_spawn_wave_enemies(1)
+	room_cleared = false
+	_spawn_wave_enemies(1)
 
 	queue_redraw()
 	_update_debug_overlay()
@@ -928,8 +923,9 @@ func _on_room_cleared() -> void:
 	var rs = get_node("/root/RunState")
 
 	# Report combat outcome to EncounterDirector & EvolutionManager
+	var new_adaptations: Array[Dictionary] = []
 	if encounter_director and tracker and rs:
-		encounter_director.record_encounter_result(
+		new_adaptations = encounter_director.record_encounter_result(
 			rs.current_room_index,
 			damage_taken_this_sector,
 			sector_combat_time,
@@ -938,7 +934,37 @@ func _on_room_cleared() -> void:
 		)
 		rs.set_evolution_log(encounter_director.evolution_manager.evolution_history)
 
-	_show_upgrade_draft()
+	# If hostiles evolved, flash alert banner and play mutation audio
+	if not new_adaptations.is_empty():
+		var first_adap: Dictionary = new_adaptations[0]
+		var f_name: String = first_adap.get("family", "HOSTILE")
+		var t_num: int = first_adap.get("tier", 1)
+		var m_name: String = first_adap.get("mutation", "OVERCLOCK")
+		var h_mult: String = first_adap.get("health_mult", "2x HP")
+		trigger_glitch(0.70)
+		add_trauma(0.35)
+		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+			get_node("/root/AudioSynth").play("mutation_alert", 0.0, 0.0)
+		_show_director_banner(
+			"HOSTILE SPECIES EVOLVED // %s [TIER %d]" % [f_name, t_num],
+			"%s (%s) • %s" % [m_name.replace("_", " "), h_mult, first_adap.get("tradeoff", "Hostiles learned from previous battles.")]
+		)
+
+	# Handle reward presentation based on room type
+	var r_type: String = current_room_data.room_type if current_room_data else "COMBAT"
+	match r_type:
+		"RECOVERY":
+			if rs:
+				rs.heal(2)
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
+			_show_upgrade_draft()
+		"SHOP":
+			_show_shop_interface()
+		"GIFT":
+			_show_gift_interface()
+		_:
+			_show_upgrade_draft()
 
 
 func _show_upgrade_draft() -> void:

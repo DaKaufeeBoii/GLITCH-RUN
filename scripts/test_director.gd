@@ -664,30 +664,21 @@ static func test_run_progression_wave_scaling_and_depth() -> bool:
 	var prog_hard = RUN_PROGRESSION_SCRIPT.new(4242, "HARD")
 	assert(prog_hard.sector_total_waves == 4, "Hard Sector 1 must schedule 4 waves")
 
-	# Non-wave rooms have 0 waves (START, RECOVERY, SHOP, GIFT)
-	assert(prog.calculate_waves_for_current_room("START") == 0, "START room must have 0 combat waves")
-	assert(prog.calculate_waves_for_current_room("RECOVERY") == 0, "RECOVERY room must have 0 combat waves")
-	assert(prog.calculate_waves_for_current_room("SHOP") == 0, "SHOP room must have 0 combat waves")
-	assert(prog.calculate_waves_for_current_room("GIFT") == 0, "GIFT room must have 0 combat waves")
-
-	# Boss room is 1 end-of-sector boss encounter
+	# Every room guarantees combat wave engagement (never 0 waves)
+	assert(prog.calculate_waves_for_current_room("START") == 1, "START room must have 1 introductory wave")
+	assert(prog.calculate_waves_for_current_room("RECOVERY") >= 1, "RECOVERY room must have combat wave")
+	assert(prog.calculate_waves_for_current_room("SHOP") >= 1, "SHOP room must have combat wave")
+	assert(prog.calculate_waves_for_current_room("GIFT") >= 1, "GIFT room must have combat wave")
 	assert(prog.calculate_waves_for_current_room("BOSS") == 1, "BOSS room must have 1 boss wave")
+	assert(prog.calculate_waves_for_current_room("COMBAT") >= 2, "Combat rooms guarantee multiple combat waves")
 
-	# Sector wave consumption across combat rooms
+	# Wave advancement across combat waves
 	prog.reset()
-	assert(prog.calculate_waves_for_current_room("COMBAT") == 1, "Combat room consumes 1 scheduled wave")
+	var w_count := prog.calculate_waves_for_current_room("COMBAT")
+	assert(w_count >= 2, "Early depth combat room has at least 2 waves")
+	assert(prog.advance_wave(), "Must advance to wave 2")
+	assert(prog.current_wave == 2, "Current wave must be 2")
 	prog.complete_current_wave()
-	assert(prog.sector_waves_completed == 1, "1 sector wave completed")
-	prog.calculate_waves_for_current_room("COMBAT")
-	prog.complete_current_wave()
-	assert(prog.sector_waves_completed == 2, "2 sector waves completed")
-	prog.calculate_waves_for_current_room("COMBAT")
-	prog.complete_current_wave()
-	assert(prog.sector_waves_completed == 3, "All 3 sector waves completed")
-	assert(prog.is_sector_regular_waves_complete(), "Sector regular waves must be complete")
-
-	# Visiting extra combat rooms after regular waves completed yields 0 waves
-	assert(prog.calculate_waves_for_current_room("COMBAT") == 0, "Extra combat rooms after sector quota return 0 waves")
 
 	# Room & Sector advancement
 	prog.reset()
@@ -1543,4 +1534,3 @@ static func test_dungeon_shops_gifts_and_sector_schedule() -> bool:
 
 	print("  [PASS] Explorable Sector Graphs, Shop Kiosks & Gift Caches Scenario")
 	return true
-

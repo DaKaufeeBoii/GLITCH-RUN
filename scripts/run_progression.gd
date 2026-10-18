@@ -13,6 +13,7 @@ signal sector_waves_cleared()
 const DEFAULT_ROOMS_PER_SECTOR := 5
 const MIN_SECTOR_WAVES := 3
 const MAX_SECTOR_WAVES := 5
+const MAX_WAVES_PER_ROOM := 5
 
 var run_depth: int = 1 # Monotonically increasing room steps taken across entire run
 var sector_index: int = 1
@@ -83,29 +84,27 @@ func is_sector_regular_waves_complete() -> bool:
 
 
 func calculate_waves_for_current_room(room_type: String) -> int:
-	## Distributes scheduled sector waves to combat rooms.
-	## Non-wave rooms (START, RECOVERY, SHOP, GIFT) have 0 waves.
-	## Boss is a separate end-of-sector encounter (1 boss wave).
+	## Calculates combat wave count for each chamber.
+	## Every chamber guarantees enemy combat engagements (never 0 waves).
 	match room_type:
-		"START", "RECOVERY", "SHOP", "GIFT":
-			waves_in_room = 0
-			current_wave = 0
-			return 0
+		"START":
+			waves_in_room = 1
 		"BOSS":
 			waves_in_room = 1
-			current_wave = 1
-			return 1
-		_: # COMBAT, ELITE
-			var remaining_sector_waves: int = sector_total_waves - sector_waves_completed
-			if remaining_sector_waves <= 0:
-				# All scheduled regular waves for this sector have already been cleared!
-				waves_in_room = 0
-				current_wave = 0
-				return 0
-			# Combat room consumes scheduled wave (1 wave per room visit)
+		"RECOVERY", "SHOP", "GIFT":
 			waves_in_room = 1
-			current_wave = 1
-			return waves_in_room
+		_: # COMBAT, ELITE
+			if difficulty == "EASY":
+				waves_in_room = 2
+			elif run_depth <= 3:
+				waves_in_room = 2
+			elif run_depth <= 7:
+				waves_in_room = 3
+			else:
+				waves_in_room = clampi(3 + int(float(run_depth) / 4.0), 3, MAX_WAVES_PER_ROOM)
+
+	current_wave = 1
+	return waves_in_room
 
 
 func calculate_spawn_budget(wave: int) -> int:

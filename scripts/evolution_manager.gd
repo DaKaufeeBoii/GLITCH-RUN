@@ -108,7 +108,7 @@ func get_species_health_multiplier(family: String) -> int:
 
 func process_encounter_end(
 	sector_index: int,
-	damage_taken_by_player: int,
+	_damage_taken_by_player: int,
 	combat_duration: float,
 	player_profile: Dictionary,
 	_selected_tactic: String
@@ -149,7 +149,7 @@ func process_encounter_end(
 			ev.player_kited_count += 1
 
 		# Tier 0 -> Tier 1: Enhanced Pursuit Speed (+35%) & 2x Health
-		if ev.tier == 0 and ev.encounters_fought >= 1 and ev.player_kited_count >= 1:
+		if ev.tier == 0 and ev.encounters_fought >= 1:
 			ev.tier = 1
 			for g in active_genomes["CHASER"]:
 				g.tier = 1
