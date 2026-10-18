@@ -141,6 +141,16 @@ const UPGRADE_CATALOG: Array[Dictionary] = [
 	}
 ]
 
+const UPGRADE_STACK_CAPS := {
+	"OVERCLOCK": 3,
+	"HIGH_VOLTAGE": 2,
+	"SPLIT_PULSE": 1,
+	"PHANTOM_DRIVE": 2,
+	"NANO_INFUSION": 3,
+	"STATIC_BLINK": 1,
+	"ENERGY_SIPHON": 2
+}
+
 
 func start_new_run(p_seed: int = 0) -> void:
 	max_health = 5
@@ -246,16 +256,39 @@ func finalize_run_stats(won: bool) -> void:
 func get_random_upgrade_choices(count: int = 3) -> Array[Dictionary]:
 	var available: Array[Dictionary] = []
 	for item in UPGRADE_CATALOG:
-		# Some single-purchase perks like SPLIT_PULSE or STATIC_BLINK shouldn't repeat if already owned
-		if item.id in ["SPLIT_PULSE", "STATIC_BLINK"] and item.id in active_upgrade_ids:
+		if get_upgrade_stack_count(item.id) >= get_upgrade_stack_cap(item.id):
 			continue
 		available.append(item)
 
 	available.shuffle()
+	if available.is_empty():
+		return [{
+			"id": "FIELD_REPAIR",
+			"title": "FIELD REPAIR",
+			"desc": "+1 HP",
+			"flavor": "Restore one integrity point when every subroutine is fully stacked."
+		}]
 	return available.slice(0, mini(count, available.size()))
 
 
-func apply_upgrade(upgrade_id: String) -> void:
+func get_upgrade_stack_count(upgrade_id: String) -> int:
+	var stacks := 0
+	for owned_id in active_upgrade_ids:
+		if owned_id == upgrade_id:
+			stacks += 1
+	return stacks
+
+
+func get_upgrade_stack_cap(upgrade_id: String) -> int:
+	return int(UPGRADE_STACK_CAPS.get(upgrade_id, 0))
+
+
+func apply_upgrade(upgrade_id: String) -> bool:
+	if upgrade_id == "FIELD_REPAIR":
+		heal(1)
+		return true
+	if get_upgrade_stack_cap(upgrade_id) <= 0 or get_upgrade_stack_count(upgrade_id) >= get_upgrade_stack_cap(upgrade_id):
+		return false
 	active_upgrade_ids.append(upgrade_id)
 	match upgrade_id:
 		"OVERCLOCK":
@@ -266,8 +299,8 @@ func apply_upgrade(upgrade_id: String) -> void:
 		"SPLIT_PULSE":
 			projectile_count = 2
 		"PHANTOM_DRIVE":
-			move_speed_mult *= 1.25
-			dash_cooldown_mult = maxf(0.35, dash_cooldown_mult * 0.75)
+			move_speed_mult = minf(1.40, move_speed_mult * 1.16)
+			dash_cooldown_mult = maxf(0.45, dash_cooldown_mult * 0.85)
 		"NANO_INFUSION":
 			max_health += 2
 			current_health = mini(max_health, current_health + 2)
@@ -278,6 +311,7 @@ func apply_upgrade(upgrade_id: String) -> void:
 			siphon_chance = minf(0.5, siphon_chance + 0.25)
 
 	upgrade_applied.emit(upgrade_id)
+	return true
 
 
 func on_enemy_eliminated() -> bool:

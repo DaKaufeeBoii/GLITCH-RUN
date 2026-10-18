@@ -1,10 +1,11 @@
 extends RefCounted
 class_name EvolutionManager
-## Multi-layered enemy evolution and population manager.
+## Multi-layered enemy evolution and population manager for GLITCH//RUN.
 ## Implements:
-##   Layer A: Tactical adaptation coordination.
-##   Layer B: Family & individual specialization with trade-offs.
-##   Layer C: Population evolution across encounters (fitness tracking, bounded mutation, retention).
+##   1. Strict Species Evidence Isolation (species evolve ONLY from their own battle data).
+##   2. Explicit Gameplay Progression Tiers (Tier 0 baseline, Tier 1 learned ability, Tier 2 advanced capability).
+##   3. Strict Health Doubling Invariant (1x base at Tier 0, 2x at Tier 1, 4x at Tier 2).
+##   4. Run-Scoped Lifetime (reset on death/restart/new run, zero cross-run persistence).
 
 const ENEMY_GENOME_SCRIPT := preload("res://scripts/enemy_genome.gd")
 
@@ -18,6 +19,7 @@ var active_genomes: Dictionary = {
 	"DASHER": []
 }
 
+var species_evidence: Dictionary = {}
 var evolution_history: Array[Dictionary] = []
 var active_combatants: Array[RefCounted] = []
 
@@ -30,6 +32,30 @@ func reset() -> void:
 	generation = 1
 	evolution_history.clear()
 	active_combatants.clear()
+	species_evidence = {
+		"CHASER": {
+			"encounters_fought": 0,
+			"combat_time": 0.0,
+			"player_kited_count": 0,
+			"damage_dealt": 0,
+			"tier": 0,
+			"history": []
+		},
+		"DASHER": {
+			"encounters_fought": 0,
+			"combat_time": 0.0,
+			"damage_dealt": 0,
+			"tier": 0,
+			"history": []
+		},
+		"SHOOTER": {
+			"encounters_fought": 0,
+			"combat_time": 0.0,
+			"damage_dealt": 0,
+			"tier": 0,
+			"history": []
+		}
+	}
 	_seed_initial_populations()
 
 
@@ -58,7 +84,6 @@ func get_genome_for_spawn(family: String) -> RefCounted:
 		return fallback_g
 
 	var pool: Array = active_genomes[family]
-	# Sort pool by fitness descending
 	pool.sort_custom(func(a, b) -> bool:
 		return a.fitness_score > b.fitness_score
 	)
@@ -73,111 +98,198 @@ func register_spawned_combatant(genome: RefCounted) -> void:
 		active_combatants.append(genome)
 
 
+func get_species_tier(family: String) -> int:
+	return int(species_evidence.get(family, {}).get("tier", 0))
+
+
+func get_species_health_multiplier(family: String) -> int:
+	return int(pow(2, get_species_tier(family)))
+
+
 func process_encounter_end(
 	sector_index: int,
-	_damage_taken_by_player: int,
+	damage_taken_by_player: int,
 	combat_duration: float,
 	player_profile: Dictionary,
 	_selected_tactic: String
 ) -> Array[Dictionary]:
-	## Evaluates combat outcomes, updates Layer B specialization and Layer C population fitness.
-	## Returns a list of newly applied mutations and evolutionary adaptations.
+	## Evaluates combat outcomes under strict species evidence isolation.
+	## A species evolves ONLY from evidence gathered in its own battles.
 	var new_adaptations: Array[Dictionary] = []
 
-	# 1. Update fitness for active combatants
+	# 1. Update fitness metrics for active combatants
 	for g in active_combatants:
 		g.combat_time_active += combat_duration
 		g.encounters_survived += 1
 		g.calculate_fitness()
 
-	# 2. Layer B: Individual & Family Specialization
-	# Evaluate if player tactics warrant specific named counter-mutations
-	var mob: float = float(player_profile.get("mobility", 0.5))
-	var rng: float = float(player_profile.get("ranged", 0.5))
-	var _tur: float = float(player_profile.get("turret", 0.5))
-	var player_tactics: Dictionary = player_profile.get("successful_player_tactics", {})
+	# 2. Identify which families participated in this battle
+	var active_families: Dictionary = {}
+	for g in active_combatants:
+		if "family" in g:
+			active_families[g.family] = true
 
-	# High Mobility -> Shooters gain PREDICTIVE_OPTICS & Dashers gain ION_HAZARD_TRAIL
-	if mob > 0.55:
-		var shooter_mutated := false
-		for g in active_genomes["SHOOTER"]:
-			if not g.has_mutation("PREDICTIVE_OPTICS"):
-				g.apply_named_mutation("PREDICTIVE_OPTICS")
-				shooter_mutated = true
-		if shooter_mutated:
-			var record := {
-				"sector": sector_index + 1,
-				"family": "SHOOTER",
-				"mutation": "PREDICTIVE_OPTICS",
-				"tradeoff": "Lead aiming calibrated; attack cycle lengthened +25%",
-				"reason": "Player high mobility (%.2f dashes/min)" % player_profile.get("dashes_per_min", 0.0)
-			}
-			evolution_history.append(record)
-			new_adaptations.append(record)
+	# Fallback if active_combatants was not registered (e.g. direct test calls)
+	if active_families.is_empty():
+		for f in player_profile.get("active_families", ["CHASER", "SHOOTER", "DASHER"]):
+			active_families[f] = true
 
-		var dasher_mutated := false
-		for g in active_genomes["DASHER"]:
-			if not g.has_mutation("ION_HAZARD_TRAIL"):
-				g.apply_named_mutation("ION_HAZARD_TRAIL")
-				dasher_mutated = true
-		if dasher_mutated:
-			var record := {
-				"sector": sector_index + 1,
-				"family": "DASHER",
-				"mutation": "ION_HAZARD_TRAIL",
-				"tradeoff": "Hazard energy dropped on charge; telegraph warning widened +20%",
-				"reason": "Player dynamic kiting detected"
-			}
-			evolution_history.append(record)
-			new_adaptations.append(record)
+	# 3. Process Species Evidence & Distinct Evolution Paths
 
-	# Perimeter Camping / Ranged Play -> Chasers develop PINCER_WINGS
-	if rng > 0.55:
-		var chaser_mutated := false
-		for g in active_genomes["CHASER"]:
-			if not g.has_mutation("PINCER_WINGS"):
-				g.apply_named_mutation("PINCER_WINGS")
-				chaser_mutated = true
-		if chaser_mutated:
+	# --- RED CHASER PROGRESSION ---
+	if active_families.has("CHASER") and species_evidence.has("CHASER"):
+		var ev: Dictionary = species_evidence["CHASER"]
+		ev.encounters_fought += 1
+		ev.combat_time += combat_duration
+
+		# Did player kite or maintain distance?
+		var ranged_ratio: float = float(player_profile.get("ranged", 0.5))
+		var mobility_ratio: float = float(player_profile.get("mobility", 0.5))
+		if ranged_ratio > 0.40 or mobility_ratio > 0.45 or combat_duration >= 4.0:
+			ev.player_kited_count += 1
+
+		# Tier 0 -> Tier 1: Enhanced Pursuit Speed (+35%) & 2x Health
+		if ev.tier == 0 and ev.encounters_fought >= 1 and ev.player_kited_count >= 1:
+			ev.tier = 1
+			for g in active_genomes["CHASER"]:
+				g.tier = 1
+				g.apply_named_mutation("RAPID_PURSUIT")
 			var record := {
 				"sector": sector_index + 1,
 				"family": "CHASER",
-				"mutation": "PINCER_WINGS",
-				"tradeoff": "Pincer flanking angle expanded; direct approach speed relaxed -10%",
-				"reason": "Player perimeter camping (long range ratio %.2f)" % rng
+				"tier": 1,
+				"mutation": "RAPID_PURSUIT",
+				"health_mult": "2x (6 HP)",
+				"tradeoff": "Pursuit speed +35% (124.2 px/s), max armor doubled to 6 HP",
+				"reason": "Player kiting observed in %d battle(s) (range ratio %.2f). Evolved rapid pursuit thrusters." % [ev.encounters_fought, ranged_ratio],
+				"counter": "Cut back across pursuit trajectory; use arena obstacles to break line of chase."
 			}
 			evolution_history.append(record)
 			new_adaptations.append(record)
+			ev.history.append(record)
 
-	# Heavy Static Blink Dash Kills -> Dashers & Chasers acquire STATIC_GROUNDING
-	if int(player_tactics.get("DASH_STATIC", 0)) >= 3:
-		var static_mutated := false
-		for g in active_genomes["DASHER"]:
-			if not g.has_mutation("STATIC_GROUNDING"):
-				g.apply_named_mutation("STATIC_GROUNDING")
-				static_mutated = true
-		if static_mutated:
+		# Tier 1 -> Tier 2: Crimson Laser Blaster (+committed aim) & 4x Health
+		elif ev.tier == 1 and ev.encounters_fought >= 2:
+			ev.tier = 2
+			for g in active_genomes["CHASER"]:
+				g.tier = 2
+				g.apply_named_mutation("CRIMSON_BLASTER")
+			var record := {
+				"sector": sector_index + 1,
+				"family": "CHASER",
+				"tier": 2,
+				"mutation": "CRIMSON_BLASTER",
+				"health_mult": "4x (12 HP)",
+				"tradeoff": "Equipped with telegraphed laser projectile cannon, max armor doubled to 12 HP",
+				"reason": "Chasers engaged across %d battle(s). Evolved crimson laser projectile attack." % ev.encounters_fought,
+				"counter": "Watch for the 0.65s laser telegraph; aim locks at 0.25s remaining, allowing dash evasion."
+			}
+			evolution_history.append(record)
+			new_adaptations.append(record)
+			ev.history.append(record)
+
+	# --- PURPLE DASHER PROGRESSION ---
+	if active_families.has("DASHER") and species_evidence.has("DASHER"):
+		var ev: Dictionary = species_evidence["DASHER"]
+		ev.encounters_fought += 1
+		ev.combat_time += combat_duration
+
+		# Tier 0 -> Tier 1: Ion Hazard Trail & 2x Health
+		if ev.tier == 0 and ev.encounters_fought >= 1:
+			ev.tier = 1
+			for g in active_genomes["DASHER"]:
+				g.tier = 1
+				g.apply_named_mutation("ION_HAZARD_TRAIL")
 			var record := {
 				"sector": sector_index + 1,
 				"family": "DASHER",
-				"mutation": "STATIC_GROUNDING",
-				"tradeoff": "Takes 40% less dash shock damage; chassis weight reduces speed -8%",
-				"reason": "Player relying heavily on Static Blink contact damage"
+				"tier": 1,
+				"mutation": "ION_HAZARD_TRAIL",
+				"health_mult": "2x (4 HP)",
+				"tradeoff": "Leaves ionized electric hazard spheres along dash path, max armor doubled to 4 HP",
+				"reason": "Dashers engaged player across %d encounter(s). Evolved trailing area denial hazards." % ev.encounters_fought,
+				"counter": "Avoid walking directly in Dasher wake; lure Dashers into open perimeter corridors."
 			}
 			evolution_history.append(record)
 			new_adaptations.append(record)
+			ev.history.append(record)
 
-	# 3. Layer C: Population Evolution Across Encounters
-	# Apply generational selection, bounded mutation, and culling
+		# Tier 1 -> Tier 2: Overclocked Velocity (+25% stalk & lunge) & 4x Health
+		elif ev.tier == 1 and ev.encounters_fought >= 2:
+			ev.tier = 2
+			for g in active_genomes["DASHER"]:
+				g.tier = 2
+				g.apply_named_mutation("OVERCLOCKED_THRUSTERS")
+			var record := {
+				"sector": sector_index + 1,
+				"family": "DASHER",
+				"tier": 2,
+				"mutation": "OVERCLOCKED_THRUSTERS",
+				"health_mult": "4x (8 HP)",
+				"tradeoff": "+25% stalking speed (118.8 px/s) & lunge speed (700 px/s), max armor doubled to 8 HP",
+				"reason": "Surviving Dashers analyzed %d battle(s). Evolved overclocked pursuit thrusters." % ev.encounters_fought,
+				"counter": "Telegraph window remains readable; wait for telegraph commitment before dodging."
+			}
+			evolution_history.append(record)
+			new_adaptations.append(record)
+			ev.history.append(record)
+
+	# --- AMBER SHOOTER PROGRESSION ---
+	if active_families.has("SHOOTER") and species_evidence.has("SHOOTER"):
+		var ev: Dictionary = species_evidence["SHOOTER"]
+		ev.encounters_fought += 1
+		ev.combat_time += combat_duration
+
+		# Tier 0 -> Tier 1: Predictive Lead Aiming Optics & 2x Health
+		if ev.tier == 0 and ev.encounters_fought >= 1:
+			ev.tier = 1
+			for g in active_genomes["SHOOTER"]:
+				g.tier = 1
+				g.apply_named_mutation("PREDICTIVE_OPTICS")
+			var record := {
+				"sector": sector_index + 1,
+				"family": "SHOOTER",
+				"tier": 1,
+				"mutation": "PREDICTIVE_OPTICS",
+				"health_mult": "2x (6 HP)",
+				"tradeoff": "Calibrated predictive lead targeting optics (0.75), max armor doubled to 6 HP",
+				"reason": "Shooters analyzed player trajectory across %d battle(s). Evolved predictive lead calculations." % ev.encounters_fought,
+				"counter": "Stop or change heading when laser telegraph locks; do not run in a straight line."
+			}
+			evolution_history.append(record)
+			new_adaptations.append(record)
+			ev.history.append(record)
+
+		# Tier 1 -> Tier 2: 2-Round Burst Volley & 4x Health
+		elif ev.tier == 1 and ev.encounters_fought >= 2:
+			ev.tier = 2
+			for g in active_genomes["SHOOTER"]:
+				g.tier = 2
+				g.apply_named_mutation("BURST_VOLLEY")
+			var record := {
+				"sector": sector_index + 1,
+				"family": "SHOOTER",
+				"tier": 2,
+				"mutation": "BURST_VOLLEY",
+				"health_mult": "4x (12 HP)",
+				"tradeoff": "Rapid 2-round projectile volley, max armor doubled to 12 HP",
+				"reason": "Surviving Shooters analyzed %d encounter(s). Evolved dual capacitor discharge coils." % ev.encounters_fought,
+				"counter": "Use pillars and cover geometry to intercept the follow-up burst bolt."
+			}
+			evolution_history.append(record)
+			new_adaptations.append(record)
+			ev.history.append(record)
+
+	# 4. Generational population breeding and trait perturbation
 	generation += 1
 	for family in ["CHASER", "SHOOTER", "DASHER"]:
-		_evolve_family_pool(family, sector_index, new_adaptations)
+		_evolve_family_pool(family, sector_index)
 
 	active_combatants.clear()
 	return new_adaptations
 
 
-func _evolve_family_pool(family: String, sector_index: int, _new_adaptations: Array[Dictionary]) -> void:
+func _evolve_family_pool(family: String, _sector_index: int) -> void:
 	var pool: Array = active_genomes[family]
 	if pool.size() < 2:
 		return
@@ -187,10 +299,10 @@ func _evolve_family_pool(family: String, sector_index: int, _new_adaptations: Ar
 		return a.fitness_score > b.fitness_score
 	)
 
-	# The top performer is retained (Elitism)
+	# Retain top performer (Elitism)
 	var top_performer: RefCounted = pool[0]
 
-	# Replace the lowest performer with a mutated offspring of the top performer
+	# Produce offspring inheriting parent's tier and mutations
 	var offspring: RefCounted = top_performer.duplicate_genome()
 	offspring.generation = generation
 	offspring.encounters_survived = 0
@@ -198,40 +310,33 @@ func _evolve_family_pool(family: String, sector_index: int, _new_adaptations: Ar
 	offspring.combat_time_active = 0.0
 	offspring.fitness_score = 0.0
 
-	# Bounded numerical perturbation (prevent stat inflation!)
+	# Bounded trait perturbation
 	var delta_aggression := randf_range(-MUTATION_PERTURBATION, MUTATION_PERTURBATION)
 	var delta_flanking := randf_range(-MUTATION_PERTURBATION, MUTATION_PERTURBATION)
-	var delta_prediction := randf_range(-MUTATION_PERTURBATION, MUTATION_PERTURBATION)
 
 	offspring.aggression += delta_aggression
 	offspring.flanking_tendency += delta_flanking
-	offspring.prediction_strength += delta_prediction
-
-	# Enforce hard bounded limits
 	offspring.clamp_all_traits()
 	offspring.variant_name = "%s Gen-%d" % [family.capitalize(), generation]
 
 	# Replace lowest performer in pool
 	pool[pool.size() - 1] = offspring
 
-	var lineage_entry := {
-		"sector": sector_index + 1,
-		"family": family,
-		"mutation": "POPULATION_SPECIATION",
-		"tradeoff": "Bounded generational trait perturbation (Gen %d)" % generation,
-		"reason": "Top variant %s reproduced; least effective variant culled" % top_performer.variant_name
-	}
-	evolution_history.append(lineage_entry)
-
 
 func get_active_mutations_summary() -> Array[String]:
 	var summary: Array[String] = []
-	for family in active_genomes:
-		for g in active_genomes[family]:
-			for m in g.active_mutations:
-				var desc := "%s: %s" % [family, m]
-				if not desc in summary:
-					summary.append(desc)
+	for family in ["CHASER", "DASHER", "SHOOTER"]:
+		var ev: Dictionary = species_evidence.get(family, {})
+		var t: int = int(ev.get("tier", 0))
+		var hp_mult := int(pow(2, t))
+		if t > 0:
+			var muts: Array[String] = []
+			for g in active_genomes.get(family, []):
+				for m in g.active_mutations:
+					if not m in muts:
+						muts.append(m)
+			var mut_str: String = ", ".join(muts) if not muts.is_empty() else "Evolved"
+			summary.append("%s [Tier %d | %dx HP]: %s" % [family, t, hp_mult, mut_str])
 	return summary
 
 
@@ -245,6 +350,7 @@ func export_evolution_data() -> Dictionary:
 
 	return {
 		"generation": generation,
+		"species_evidence": species_evidence.duplicate(true),
 		"active_genomes": families_dict,
 		"history": evolution_history.duplicate(true)
 	}

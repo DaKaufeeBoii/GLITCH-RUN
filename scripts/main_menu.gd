@@ -86,45 +86,52 @@ func _build_ui() -> void:
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
-	var main_vbox := VBoxContainer.new()
-	main_vbox.custom_minimum_size = Vector2(480, 0)
-	main_vbox.add_theme_constant_override("separation", 14)
-	main_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	center.add_child(main_vbox)
+	var main_row := HBoxContainer.new()
+	main_row.custom_minimum_size = Vector2(800, 0)
+	main_row.add_theme_constant_override("separation", 56)
+	center.add_child(main_row)
+
+	var identity_column := VBoxContainer.new()
+	identity_column.custom_minimum_size = Vector2(400, 0)
+	identity_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity_column.add_theme_constant_override("separation", 18)
+	identity_column.alignment = BoxContainer.ALIGNMENT_CENTER
+	main_row.add_child(identity_column)
 
 	# Glowing Title Banner
 	var title_vbox := VBoxContainer.new()
 	title_vbox.add_theme_constant_override("separation", 2)
-	main_vbox.add_child(title_vbox)
+	identity_column.add_child(title_vbox)
 
 	var title_lbl := Label.new()
 	title_lbl.text = "GLITCH // RUN"
-	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_lbl.add_theme_font_size_override("font_size", 44)
+	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	title_lbl.add_theme_font_size_override("font_size", 38)
 	title_lbl.add_theme_color_override("font_color", Color("38bdf8"))
 	title_vbox.add_child(title_lbl)
 
 	var sub_lbl := Label.new()
 	sub_lbl.text = "AN ADAPTIVE ROGUELITE SIMULATION"
-	sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	sub_lbl.add_theme_font_size_override("font_size", 13)
 	sub_lbl.add_theme_color_override("font_color", Color("f43f5e"))
 	title_vbox.add_child(sub_lbl)
 
 	# Records Badge
 	records_label = Label.new()
-	records_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	records_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	records_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	records_label.add_theme_font_size_override("font_size", 12)
 	records_label.add_theme_color_override("font_color", Color("94a3b8"))
 	_update_records_display()
-	main_vbox.add_child(records_label)
+	identity_column.add_child(records_label)
 
 	# Action Buttons (Touch-friendly 48dp+ sizing)
 	var btn_vbox := VBoxContainer.new()
-	btn_vbox.custom_minimum_size = Vector2(280, 0)
-	btn_vbox.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	btn_vbox.add_theme_constant_override("separation", 10)
-	main_vbox.add_child(btn_vbox)
+	btn_vbox.custom_minimum_size = Vector2(300, 0)
+	btn_vbox.add_theme_constant_override("separation", 8)
+	btn_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	main_row.add_child(btn_vbox)
 
 	var play_btn := Button.new()
 	play_btn.text = "INITIALIZE SIMULATION"

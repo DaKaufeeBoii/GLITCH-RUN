@@ -6,6 +6,7 @@ extends Control
 signal resume_requested
 signal restart_requested
 signal menu_requested
+signal quit_requested
 
 var title_label: Label
 var stats_label: Label
@@ -19,6 +20,7 @@ var how_to_play_panel: Control
 var confirm_panel: Control
 var confirm_msg_label: Label
 var confirm_callback: Callable
+var quit_btn: Button
 
 
 func _ready() -> void:
@@ -110,7 +112,7 @@ func _build_ui() -> void:
 	map_vbox.add_child(minimap_nodes_hbox)
 
 	minimap_branch_label = Label.new()
-	minimap_branch_label.text = "S: Start  •  ⚔: Combat  •  +: Recovery  •  ★: Elite Threat  •  Ω: Nexus Boss"
+	minimap_branch_label.text = "S: Start  •  ⚔: Combat  •  $: Shop  •  G: Gift Cache  •  +: Recovery  •  ★: Elite  •  Ω: Boss"
 	minimap_branch_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	minimap_branch_label.add_theme_font_size_override("font_size", 10)
 	minimap_branch_label.add_theme_color_override("font_color", Color("64748b"))
@@ -193,10 +195,26 @@ func _build_ui() -> void:
 	)
 	btn_vbox.add_child(menu_btn)
 
+	quit_btn = Button.new()
+	quit_btn.text = "QUIT SESSION"
+	quit_btn.custom_minimum_size = Vector2(0, 48)
+	quit_btn.pressed.connect(func():
+		_show_confirmation(
+			"TERMINATE APPLICATION // QUIT SESSION",
+			"The game will close and the active run and its evolutions will be lost.",
+			Callable(self, "_confirm_quit")
+		)
+	)
+	btn_vbox.add_child(quit_btn)
+
 	# Build child modals
 	_build_confirm_modal()
 	_build_how_to_play_modal()
 	_build_settings_modal()
+
+
+func get_quit_button() -> Button:
+	return quit_btn
 
 
 func _play_click() -> void:
@@ -247,6 +265,12 @@ func open_pause() -> void:
 				"START":
 					icon = "S"
 					accent_col = Color("94a3b8")
+				"SHOP":
+					icon = "$"
+					accent_col = Color("facc15")
+				"GIFT":
+					icon = "G"
+					accent_col = Color("c084fc")
 				"RECOVERY":
 					icon = "+"
 					accent_col = Color("22c55e")
@@ -352,6 +376,15 @@ func _confirm_menu() -> void:
 	get_tree().paused = false
 	visible = false
 	menu_requested.emit()
+
+
+func _confirm_quit() -> void:
+	confirm_panel.visible = false
+	if is_inside_tree():
+		get_tree().paused = false
+		get_tree().quit()
+	quit_requested.emit()
+
 
 
 func _build_confirm_modal() -> void:

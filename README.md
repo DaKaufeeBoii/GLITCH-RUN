@@ -34,6 +34,7 @@ Replaces static room sequences with an algorithmic procedural dungeon generator 
   - Retries up to 10 times with deterministic fallbacks.
 - **Branching Route Decisions:** Clear a chamber to unlock holographic route portals (Recovery Node `+2 HP`, Elite Threat, Combat, or Sector Gateway).
 - **Deterministic Seed Reproducibility:** Every run generates a deterministic run seed displayed on HUD and debrief screens for exact layout and encounter replay.
+- **Boss Chamber Guarantee:** Every generated sector ends in a validated boss room; a room-level fallback prevents encounter filtering from dropping its boss.
 
 ---
 
@@ -99,6 +100,8 @@ A lightweight **LinUCB Contextual Bandit** online learning policy balances explo
 - **Procedural Audio Synthesizer (`audio_synth.gd`):** Real-time 16-bit PCM waveform generation featuring 11 retro synth profiles (blaster discharges, dash whooshes, predictive lock-on hums, hazard crackles, boss sirens) and a 110 BPM cyber synthwave looping track.
 - **Juice & Visual Feedback:** Quadratic camera trauma shake, chromatic aberration glitch shaders (`glitch.gdshader`), and a bounded procedural geometric debris emitter (`debris_emitter.gd`).
 - **Touch-First Menus:** Minimum 48dp touch targets across all title, settings, how-to-play, threat archive, pause, and confirmation dialogs.
+- **Two-Step Start Flow:** A clean `TAP TO START` splash opens the main menu. The menu now places the game identity/records beside its action buttons to give each screen more room.
+- **Bounded Upgrade Stacks:** Repeatable upgrades have explicit stack caps and the draft shows the current stack level. Fire rate, movement speed, dash cooldown, damage, and healing chance retain hard bounds.
 - **Safe Backgrounding:** Safe pause on `NOTIFICATION_APPLICATION_FOCUS_OUT` and `NOTIFICATION_APPLICATION_PAUSED`.
 - **Android Back Navigation:** Modal dismissal $\to$ safe pause $\to$ title confirmation hierarchy.
 
@@ -133,13 +136,13 @@ mkdir -p build/android
 
 ## 9. Deterministic Automated Testing
 
-Run the **42-scenario deterministic test suite** via headless Godot console:
+Run the **45-scenario deterministic test suite** via headless Godot console:
 
 ```powershell
 & "D:\GODOT\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe" --headless -s scripts/test_runner.gd
 ```
 
-### Complete 42-Scenario Test Suite:
+### Complete 45-Scenario Test Suite:
 1. `Insufficient Data Scenario`: Baseline deployment when combat telemetry $< 12\text{s}$.
 2. `High Mobility Scenario`: Predicts dash evasion and deploys lead-laser countermeasures.
 3. `Ranged Camping Scenario`: Deploys flanking pincer formations against snipers.
@@ -182,6 +185,9 @@ Run the **42-scenario deterministic test suite** via headless Godot console:
 40. `Android Back Key & Navigation Hierarchy`: Modal dismiss $\to$ pause $\to$ exit hierarchy validation.
 41. `Mobile Debris & Particle Bounding`: Verifies active particle limits (`MAX_ACTIVE_SHARDS <= 64`).
 42. `Offline QA Crash Logger & Diagnostics`: Verifies local diagnostics logging to user storage with zero PII.
+43. `Generated Boss Chamber Encounter Composition`: Verifies exactly one boss spawn in the terminal room across 100 seeds.
+44. `Upgrade Stack Caps & Hard Stat Bounds`: Verifies capped damage/fire-rate stacks and removes maxed upgrades from the reward pool.
+45. `Splash First Screen & Tap-to-Menu Flow`: Verifies the splash prompt and startup scene configuration.
 
 ---
 

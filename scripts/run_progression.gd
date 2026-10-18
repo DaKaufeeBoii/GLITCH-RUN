@@ -1,23 +1,33 @@
 extends RefCounted
 class_name RunProgression
-## Manages endless sector, room, and wave progression for GLITCH//RUN.
-## Replaces fixed 6-room caps with a monotonic depth and multi-wave loop.
+## Manages sector-level wave scheduling, room advancement, and depth progression for GLITCH//RUN.
+## Enforces exactly 3–5 regular combat waves total per sector (distributed across combat rooms).
+## Non-wave rooms: START, RECOVERY, SHOP, GIFT.
+## Boss is a separate end-of-sector encounter after the regular waves.
 
 signal wave_changed(current_wave: int, total_waves: int)
 signal room_changed(room_index: int, total_rooms: int, sector: int, depth: int)
 signal sector_changed(new_sector: int, sector_seed: int)
+signal sector_waves_cleared()
 
 const DEFAULT_ROOMS_PER_SECTOR := 5
-const MAX_WAVES_PER_ROOM := 5
-const MIN_WAVES_PER_ROOM := 3
+const MIN_SECTOR_WAVES := 3
+const MAX_SECTOR_WAVES := 5
 
-var run_depth: int = 1 # Monotonically increasing across entire run
+var run_depth: int = 1 # Monotonically increasing room steps taken across entire run
 var sector_index: int = 1
 var room_index: int = 0 # 0 to rooms_per_sector - 1
 var rooms_per_sector: int = DEFAULT_ROOMS_PER_SECTOR
+
+# Sector-level wave schedule (3–5 regular waves total per sector)
+var sector_total_waves: int = 3
+var sector_waves_completed: int = 0
+
+# Room-level wave state
 var current_wave: int = 1
 var waves_in_room: int = 1
-var difficulty: String = "NORMAL" # "EASY", "NORMAL", "HARD"
+
+var difficulty: String = "NORMAL" # "EASY", "NORMAL", "HARD", "HYPERGRID"
 var base_run_seed: int = 1337
 var is_endless: bool = true
 
@@ -33,12 +43,29 @@ func reset() -> void:
 	sector_index = 1
 	room_index = 0
 	rooms_per_sector = DEFAULT_ROOMS_PER_SECTOR
+	_init_sector_wave_schedule()
 	current_wave = 1
 	waves_in_room = 1
 
 
+func _init_sector_wave_schedule() -> void:
+	sector_waves_completed = 0
+	# Schedule exactly 3, 4, or 5 regular waves per sector based on difficulty and sector depth
+	match difficulty:
+		"EASY":
+			sector_total_waves = 3
+		"HARD", "HYPERGRID":
+			sector_total_waves = 4 if sector_index == 1 else 5
+		_: # NORMAL
+			if sector_index == 1:
+				sector_total_waves = 3
+			elif sector_index == 2:
+				sector_total_waves = 4
+			else:
+				sector_total_waves = 5
+
+
 static func derive_sector_seed(base_seed: int, sector: int) -> int:
-	## Deterministically derives unique seed per sector from base run seed
 	var s := ((base_seed << 5) ^ (sector * 31337) ^ 0x5DEECE66D) & 0x7FFFFFFF
 	return s if s != 0 else 1337
 
@@ -51,48 +78,61 @@ func is_boss_chamber() -> bool:
 	return room_index >= rooms_per_sector - 1
 
 
+func is_sector_regular_waves_complete() -> bool:
+	return sector_waves_completed >= sector_total_waves
+
+
 func calculate_waves_for_current_room(room_type: String) -> int:
-	if room_type == "START":
-		waves_in_room = 1
-	elif room_type == "BOSS" or is_boss_chamber():
-		waves_in_room = 1
-	else:
-		# Bounded wave curve: 3 waves early, 4 waves mid, 5 waves deep
-		if difficulty == "EASY":
-			waves_in_room = 3
-		elif difficulty == "HARD":
-			waves_in_room = clampi(3 + int(float(run_depth) / 4.0), 3, MAX_WAVES_PER_ROOM)
-		else: # NORMAL
-			if run_depth <= 3:
-				waves_in_room = 3
-			elif run_depth <= 7:
-				waves_in_room = 4
-			else:
-				waves_in_room = 5
-	current_wave = 1
-	return waves_in_room
+	## Distributes scheduled sector waves to combat rooms.
+	## Non-wave rooms (START, RECOVERY, SHOP, GIFT) have 0 waves.
+	## Boss is a separate end-of-sector encounter (1 boss wave).
+	match room_type:
+		"START", "RECOVERY", "SHOP", "GIFT":
+			waves_in_room = 0
+			current_wave = 0
+			return 0
+		"BOSS":
+			waves_in_room = 1
+			current_wave = 1
+			return 1
+		_: # COMBAT, ELITE
+			var remaining_sector_waves: int = sector_total_waves - sector_waves_completed
+			if remaining_sector_waves <= 0:
+				# All scheduled regular waves for this sector have already been cleared!
+				waves_in_room = 0
+				current_wave = 0
+				return 0
+			# Combat room consumes scheduled wave (1 wave per room visit)
+			waves_in_room = 1
+			current_wave = 1
+			return waves_in_room
 
 
 func calculate_spawn_budget(wave: int) -> int:
-	## Returns enemy count budget for a specific wave
 	var base_count := 3
 	match difficulty:
 		"EASY":
 			base_count = 2
-		"HARD":
+		"HARD", "HYPERGRID":
 			base_count = 4
 		_:
 			base_count = 3
 
-	# Gradual scaling with depth and wave index
 	var depth_bonus := clampi(int(float(run_depth) / 3.0), 0, 4)
 	var wave_bonus := clampi(wave - 1, 0, 2)
 	var total_budget: int = clampi(base_count + depth_bonus + wave_bonus, 2, 9)
 	return total_budget
 
 
+func complete_current_wave() -> void:
+	## Call when a combat wave in a combat/elite room is cleared
+	if current_wave > 0 and sector_waves_completed < sector_total_waves:
+		sector_waves_completed += 1
+		if sector_waves_completed >= sector_total_waves:
+			sector_waves_cleared.emit()
+
+
 func advance_wave() -> bool:
-	## Advances to next wave in current room. Returns true if another wave exists, false if room is cleared.
 	if current_wave < waves_in_room:
 		current_wave += 1
 		wave_changed.emit(current_wave, waves_in_room)
@@ -101,7 +141,6 @@ func advance_wave() -> bool:
 
 
 func advance_room(target_room: int = -1) -> Dictionary:
-	## Advances room or triggers new sector when reaching end of sector chambers.
 	run_depth += 1
 	if target_room >= 0:
 		room_index = target_room
@@ -114,6 +153,7 @@ func advance_room(target_room: int = -1) -> Dictionary:
 		sector_index += 1
 		room_index = 0
 		is_new_sector = true
+		_init_sector_wave_schedule()
 		sector_changed.emit(sector_index, get_current_sector_seed())
 
 	room_changed.emit(room_index, rooms_per_sector, sector_index, run_depth)
@@ -122,16 +162,15 @@ func advance_room(target_room: int = -1) -> Dictionary:
 		"sector": sector_index,
 		"room": room_index,
 		"depth": run_depth,
-		"sector_seed": get_current_sector_seed()
+		"sector_seed": get_current_sector_seed(),
+		"sector_total_waves": sector_total_waves,
+		"sector_waves_completed": sector_waves_completed
 	}
 
 
 func get_difficulty_multipliers() -> Dictionary:
-	## Returns speed and telegraph multipliers bounded for fairness
 	var speed_mult := 1.0
 	var telegraph_mult := 1.0
-
-	# Smooth, bounded scaling with run depth
 	var depth_factor := minf(0.20, float(run_depth - 1) * 0.015)
 	speed_mult += depth_factor
 	telegraph_mult = maxf(0.75, 1.0 - depth_factor * 0.8)
@@ -139,7 +178,7 @@ func get_difficulty_multipliers() -> Dictionary:
 	if difficulty == "EASY":
 		speed_mult *= 0.90
 		telegraph_mult *= 1.15
-	elif difficulty == "HARD":
+	elif difficulty == "HARD" or difficulty == "HYPERGRID":
 		speed_mult *= 1.10
 		telegraph_mult *= 0.90
 

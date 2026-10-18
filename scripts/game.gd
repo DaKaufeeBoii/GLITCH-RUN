@@ -270,7 +270,10 @@ func _process(delta: float) -> void:
 	if is_instance_valid(player):
 		_update_hud_hearts()
 		elims_label.text = "ELIMS  %02d" % rs.score
-		sector_label.text = "SEC %d  •  ROOM %d/%d" % [rs.current_sector, rs.current_room_index + 1, rs.TOTAL_ROOMS]
+		var sec_w: int = rs.progression.sector_waves_completed if (rs and rs.progression) else 0
+		var sec_tw: int = rs.progression.sector_total_waves if (rs and rs.progression) else 3
+		var total_r: int = rs.progression.rooms_per_sector if (rs and rs.progression) else rs.TOTAL_ROOMS
+		sector_label.text = "SEC %d  •  RM %d/%d  •  WAVE %d/%d" % [rs.current_sector, rs.current_room_index + 1, total_r, sec_w, sec_tw]
 
 	# Update Boss Bar if in Boss room
 	if boss_active and is_instance_valid(boss_ref):
@@ -542,16 +545,140 @@ func _load_room(index: int) -> void:
 	for r in current_room_data.obstacles:
 		_add_obstacle(r.get_center(), r.size)
 
-	# Calculate wave structure for this chamber
+	# Calculate wave structure for this chamber from sector schedule
 	if rs_node and rs_node.progression:
 		rs_node.progression.calculate_waves_for_current_room(current_room_data.room_type)
 		rs_node.current_wave = rs_node.progression.current_wave
 		rs_node.waves_in_room = rs_node.progression.waves_in_room
 
 	damage_taken_this_sector = 0
-	_spawn_wave_enemies(1)
+
+	if rs_node and rs_node.progression and rs_node.waves_in_room == 0:
+		# Non-wave room (START, RECOVERY, SHOP, GIFT) - secure chamber!
+		room_cleared = true
+		_handle_non_wave_room(current_room_data.room_type)
+	else:
+		_spawn_wave_enemies(1)
+
 	queue_redraw()
 	_update_debug_overlay()
+
+
+func _handle_non_wave_room(room_type: String) -> void:
+	doors_unlocked = true
+	var rs_node = get_node_or_null("/root/RunState")
+	match room_type:
+		"START":
+			_show_director_banner("CALIBRATION DOCK // EXPEDITION COMMENCED", "Chamber secure. Select forward route corridor.")
+			_unlock_exit_doors()
+		"RECOVERY":
+			if rs_node:
+				rs_node.heal(2)
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
+			_show_director_banner("RECOVERY MEDBAY // +2 HP RESTORED", "Nanite biocircuits repaired. Route doors open.")
+			_unlock_exit_doors()
+		"SHOP":
+			_show_shop_interface()
+		"GIFT":
+			_show_gift_interface()
+		_:
+			_unlock_exit_doors()
+
+
+func _show_shop_interface() -> void:
+	if touch_controls:
+		touch_controls.enabled = false
+	get_tree().paused = true
+	var rs = get_node_or_null("/root/RunState")
+	var stock: Array = current_room_data.shop_stock if current_room_data else []
+	if stock.is_empty():
+		stock = dungeon_generator._generate_shop_stock(RandomNumberGenerator.new())
+
+	for child in upgrade_cards_box.get_children():
+		child.queue_free()
+
+	for item in stock:
+		var card := Button.new()
+		card.custom_minimum_size = Vector2(230, 210)
+		var item_id: String = item.get("id", "OVERCLOCK")
+		var cost: int = int(item.get("cost", 5))
+		var title: String = item.get("title", item_id)
+		var desc: String = item.get("desc", "+Upgrade")
+		var can_afford: bool = rs != null and rs.score >= cost
+		var is_capped: bool = rs != null and rs.get_upgrade_stack_count(item_id) >= rs.get_upgrade_stack_cap(item_id)
+
+		var status_text := "COST: %d BITS" % cost
+		if is_capped:
+			status_text = "[ FULLY STACKED ]"
+		elif not can_afford:
+			status_text = "COST: %d BITS (HAVE %d)" % [cost, (rs.score if rs else 0)]
+
+		card.text = "\n[ SHOP // %s ]\n%s\n\n%s\n\n%s" % [
+			title,
+			status_text,
+			desc,
+			"Tap to purchase" if (can_afford and not is_capped) else "Unavailable"
+		]
+		card.disabled = not can_afford or is_capped
+		card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		card.pressed.connect(func():
+			if rs and rs.score >= cost and not is_capped:
+				rs.score -= cost
+				rs.apply_upgrade(item_id)
+				if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+					get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
+				_close_shop_or_gift()
+		)
+		upgrade_cards_box.add_child(card)
+
+	var bypass_btn := Button.new()
+	bypass_btn.custom_minimum_size = Vector2(230, 210)
+	bypass_btn.text = "\n[ BYPASS TERMINAL ]\n\nSave bits for later.\n\nProceed to exit doors."
+	bypass_btn.pressed.connect(_close_shop_or_gift)
+	upgrade_cards_box.add_child(bypass_btn)
+
+	upgrade_container.visible = true
+
+
+func _show_gift_interface() -> void:
+	if touch_controls:
+		touch_controls.enabled = false
+	get_tree().paused = true
+	var rs = get_node_or_null("/root/RunState")
+	var gifts: Array = current_room_data.gift_choices if current_room_data else []
+	if gifts.is_empty():
+		gifts = ["PHANTOM_DRIVE", "NANO_INFUSION"]
+
+	for child in upgrade_cards_box.get_children():
+		child.queue_free()
+
+	for item_id in gifts:
+		var card := Button.new()
+		card.custom_minimum_size = Vector2(230, 210)
+		var stack_count: int = (rs.get_upgrade_stack_count(item_id) + 1) if rs else 1
+		var stack_cap: int = rs.get_upgrade_stack_cap(item_id) if rs else 2
+		card.text = "\n[ CACHE // %s ]\nFREE UPGRADE\n(STACK %d/%d)\n\nTap to extract subroutine." % [item_id, stack_count, stack_cap]
+		card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		card.pressed.connect(func():
+			if rs:
+				rs.apply_upgrade(item_id)
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
+			_close_shop_or_gift()
+		)
+		upgrade_cards_box.add_child(card)
+
+	upgrade_container.visible = true
+
+
+func _close_shop_or_gift() -> void:
+	upgrade_container.visible = false
+	get_tree().paused = false
+	if touch_controls:
+		touch_controls.enabled = true
+	_unlock_exit_doors()
+
 
 
 func _spawn_wave_enemies(wave_num: int) -> void:
@@ -584,6 +711,21 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 	var spawns_to_create: Array = encounter.spawn_list.slice(0, mini(spawn_budget, encounter.spawn_list.size()))
 	if spawns_to_create.is_empty() and not encounter.spawn_list.is_empty():
 		spawns_to_create = encounter.spawn_list
+	# Boss rooms must never silently become ordinary empty/regular encounters if
+	# encounter composition or budget filtering changes later.
+	if current_room_data.room_type == "BOSS":
+		var contains_boss := false
+		for spawn in spawns_to_create:
+			if spawn.type == "BOSS":
+				contains_boss = true
+				break
+		if not contains_boss:
+			spawns_to_create.push_front({
+				"type": "BOSS",
+				"pos": Vector2(680, 276),
+				"flank_angle": 0.0,
+				"genome": null
+			})
 
 	for espawn in spawns_to_create:
 		var stype: String = espawn.type
@@ -760,6 +902,8 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 			_trigger_next_wave()
 		else:
 			room_cleared = true
+			if rs and rs.progression:
+				rs.progression.complete_current_wave()
 			_on_room_cleared()
 
 
@@ -810,7 +954,12 @@ func _show_upgrade_draft() -> void:
 	for item in choices:
 		var card := Button.new()
 		card.custom_minimum_size = Vector2(230, 210)
-		card.text = "\n[ %s ]\n\n%s\n\n\"%s\"" % [item.title, item.desc, item.flavor]
+		if item.id == "FIELD_REPAIR":
+			card.text = "\n[ %s ]\n\n%s\n\n\"%s\"" % [item.title, item.desc, item.flavor]
+		else:
+			var stack_count: int = rs.get_upgrade_stack_count(item.id) + 1
+			var stack_cap: int = rs.get_upgrade_stack_cap(item.id)
+			card.text = "\n[ %s ]\nSTACK %d / %d\n\n%s\n\n\"%s\"" % [item.title, stack_count, stack_cap, item.desc, item.flavor]
 		card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		card.pressed.connect(_on_upgrade_selected.bind(item.id))
 		upgrade_cards_box.add_child(card)
@@ -859,6 +1008,10 @@ func _update_route_ui() -> void:
 		var border_col := Color("38bdf8")
 		if ttype == "RECOVERY":
 			border_col = Color("22c55e")
+		elif ttype == "SHOP":
+			border_col = Color("facc15")
+		elif ttype == "GIFT":
+			border_col = Color("c084fc")
 		elif ttype == "ELITE":
 			border_col = Color("f59e0b")
 		elif ttype == "BOSS" or ttype == "NEXT_SECTOR":
@@ -894,6 +1047,14 @@ func _enter_door(door: Dictionary) -> void:
 		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 			get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
 		_show_director_banner("RECOVERY NODE REACHED // +2 HP RESTORED", "Nanite biocircuits patched.")
+	elif ttype == "SHOP":
+		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+			get_node("/root/AudioSynth").play("ui_click", 0.0, 0.0)
+		_show_director_banner("BLACK MARKET DATA TERMINAL", "Spend collected bits for tactical upgrades.")
+	elif ttype == "GIFT":
+		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+			get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
+		_show_director_banner("DATA CACHE RECOVERED // UNCLAIMED TECH", "Extract 1 complimentary subroutine.")
 	elif ttype == "ELITE":
 		trigger_glitch(0.8)
 		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):

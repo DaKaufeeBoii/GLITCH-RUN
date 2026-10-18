@@ -21,6 +21,9 @@ const PAUSE_MENU_SCRIPT := preload("res://scripts/pause_menu.gd")
 const CRASH_LOGGER_SCRIPT := preload("res://scripts/crash_logger.gd")
 const DEBRIS_EMITTER_SCRIPT := preload("res://scripts/debris_emitter.gd")
 const MOBILE_CONTROLS_SCRIPT := preload("res://scripts/mobile_controls.gd")
+const CHASER_SCENE := preload("res://scenes/enemies/chaser.tscn")
+const DASHER_SCENE := preload("res://scenes/enemies/dasher.tscn")
+const SHOOTER_SCENE := preload("res://scenes/enemies/shooter.tscn")
 
 func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
@@ -31,6 +34,9 @@ static func run_all_tests() -> bool:
 	print("--- Running Adaptive Director & Procedural Dungeon Scenario Tests ---")
 	var all_passed := true
 
+	all_passed = test_enemy_evolution_species_isolation_and_tiers() and all_passed
+	all_passed = test_pause_menu_quit_session_flow() and all_passed
+	all_passed = test_dungeon_shops_gifts_and_sector_schedule() and all_passed
 	all_passed = test_insufficient_data() and all_passed
 	all_passed = test_high_mobility_scenario() and all_passed
 	all_passed = test_ranged_camping_scenario() and all_passed
@@ -52,6 +58,9 @@ static func run_all_tests() -> bool:
 	all_passed = test_shooter_aim_lock_during_telegraph() and all_passed
 	all_passed = test_run_state_idempotent_finalization() and all_passed
 	all_passed = test_run_progression_wave_scaling_and_depth() and all_passed
+	all_passed = test_boss_room_always_has_boss() and all_passed
+	all_passed = test_upgrade_stack_caps() and all_passed
+	all_passed = test_start_screen_flow() and all_passed
 	all_passed = test_save_schema_v2_migration() and all_passed
 	all_passed = test_dungeon_topology_branching_routes() and all_passed
 	all_passed = test_subseed_determinism() and all_passed
@@ -75,7 +84,7 @@ static func run_all_tests() -> bool:
 	all_passed = test_crash_logger_offline_diagnostics() and all_passed
 
 	if all_passed:
-		print("--- ALL 42 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 45 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -638,22 +647,47 @@ static func test_run_progression_wave_scaling_and_depth() -> bool:
 	assert(prog.sector_index == 1, "Progression must start in Sector 1")
 	assert(prog.room_index == 0, "Progression must start at room 0")
 
-	# Wave counts
-	assert(prog.calculate_waves_for_current_room("START") == 1, "START room must have 1 wave")
-	assert(prog.calculate_waves_for_current_room("COMBAT") == 3, "Early depth COMBAT room must have 3 waves")
+	# Sector wave schedule (Normal difficulty: Sector 1 = 3 waves, Sector 2 = 4 waves, Sector 3 = 5 waves)
+	assert(prog.sector_total_waves == 3, "Normal Sector 1 must schedule 3 regular waves")
+	var prog_sec2 = RUN_PROGRESSION_SCRIPT.new(4242, "NORMAL")
+	prog_sec2.sector_index = 2
+	prog_sec2._init_sector_wave_schedule()
+	assert(prog_sec2.sector_total_waves == 4, "Normal Sector 2 must schedule 4 regular waves")
+	var prog_sec3 = RUN_PROGRESSION_SCRIPT.new(4242, "NORMAL")
+	prog_sec3.sector_index = 3
+	prog_sec3._init_sector_wave_schedule()
+	assert(prog_sec3.sector_total_waves == 5, "Normal Sector 3 must schedule 5 regular waves")
 
-	# Deep depth wave count
-	prog.run_depth = 8
-	assert(prog.calculate_waves_for_current_room("COMBAT") == 5, "Deep depth COMBAT room must have 5 waves")
+	# Difficulty scaling
+	var prog_easy = RUN_PROGRESSION_SCRIPT.new(4242, "EASY")
+	assert(prog_easy.sector_total_waves == 3, "Easy difficulty must schedule 3 waves per sector")
+	var prog_hard = RUN_PROGRESSION_SCRIPT.new(4242, "HARD")
+	assert(prog_hard.sector_total_waves == 4, "Hard Sector 1 must schedule 4 waves")
 
-	# Wave advancement
+	# Non-wave rooms have 0 waves (START, RECOVERY, SHOP, GIFT)
+	assert(prog.calculate_waves_for_current_room("START") == 0, "START room must have 0 combat waves")
+	assert(prog.calculate_waves_for_current_room("RECOVERY") == 0, "RECOVERY room must have 0 combat waves")
+	assert(prog.calculate_waves_for_current_room("SHOP") == 0, "SHOP room must have 0 combat waves")
+	assert(prog.calculate_waves_for_current_room("GIFT") == 0, "GIFT room must have 0 combat waves")
+
+	# Boss room is 1 end-of-sector boss encounter
+	assert(prog.calculate_waves_for_current_room("BOSS") == 1, "BOSS room must have 1 boss wave")
+
+	# Sector wave consumption across combat rooms
 	prog.reset()
-	prog.calculate_waves_for_current_room("COMBAT") # 3 waves
-	assert(prog.advance_wave(), "Must advance to wave 2")
-	assert(prog.current_wave == 2, "Current wave must be 2")
-	assert(prog.advance_wave(), "Must advance to wave 3")
-	assert(prog.current_wave == 3, "Current wave must be 3")
-	assert(not prog.advance_wave(), "advance_wave() must return false when reaching final wave in room")
+	assert(prog.calculate_waves_for_current_room("COMBAT") == 1, "Combat room consumes 1 scheduled wave")
+	prog.complete_current_wave()
+	assert(prog.sector_waves_completed == 1, "1 sector wave completed")
+	prog.calculate_waves_for_current_room("COMBAT")
+	prog.complete_current_wave()
+	assert(prog.sector_waves_completed == 2, "2 sector waves completed")
+	prog.calculate_waves_for_current_room("COMBAT")
+	prog.complete_current_wave()
+	assert(prog.sector_waves_completed == 3, "All 3 sector waves completed")
+	assert(prog.is_sector_regular_waves_complete(), "Sector regular waves must be complete")
+
+	# Visiting extra combat rooms after regular waves completed yields 0 waves
+	assert(prog.calculate_waves_for_current_room("COMBAT") == 0, "Extra combat rooms after sector quota return 0 waves")
 
 	# Room & Sector advancement
 	prog.reset()
@@ -666,6 +700,7 @@ static func test_run_progression_wave_scaling_and_depth() -> bool:
 	assert(prog.sector_index == 2, "Sector index must advance to 2")
 	assert(prog.room_index == 0, "Room index must reset to 0 in new sector")
 	assert(prog.run_depth == 6, "Run depth must monotonically increment to 6")
+	assert(prog.sector_total_waves == 4, "Sector 2 wave schedule must advance to 4 waves")
 
 	# Deterministic sector seed derivation
 	var s1: int = RUN_PROGRESSION_SCRIPT.derive_sector_seed(9999, 1)
@@ -675,6 +710,61 @@ static func test_run_progression_wave_scaling_and_depth() -> bool:
 	assert(s1 != s2, "Different sectors must derive distinct seeds")
 
 	print("  [PASS] Run Progression Multi-Wave Scaling & Monotonic Depth Scenario")
+	return true
+
+
+
+static func test_boss_room_always_has_boss() -> bool:
+	var generator = DUNGEON_GEN_SCRIPT.new()
+	for seed_value in range(1, 101):
+		var layout = generator.generate_dungeon(seed_value, 5)
+		var boss_room = layout.get_room(layout.total_rooms - 1)
+		assert(boss_room != null and boss_room.room_type == "BOSS", "Every sector graph must end in a boss room")
+		var boss_count := 0
+		for spawn in boss_room.enemy_spawns:
+			if spawn.type == "BOSS":
+				boss_count += 1
+		assert(boss_count == 1, "Every generated boss room must contain exactly one boss spawn")
+	print("  [PASS] Generated Boss Chamber Encounter Composition (100 seeds)")
+	return true
+
+
+static func test_upgrade_stack_caps() -> bool:
+	var rs_script := load("res://scripts/run_state.gd")
+	var rs: Node = rs_script.new()
+	rs.start_new_run(4242)
+	assert(rs.apply_upgrade("HIGH_VOLTAGE"), "First HIGH_VOLTAGE stack should apply")
+	assert(rs.apply_upgrade("HIGH_VOLTAGE"), "Second HIGH_VOLTAGE stack should apply")
+	assert(not rs.apply_upgrade("HIGH_VOLTAGE"), "HIGH_VOLTAGE must reject stacks past its cap")
+	assert(rs.damage_bonus == 2, "Capped damage upgrade must not over-apply")
+	assert(rs.get_upgrade_stack_count("HIGH_VOLTAGE") == 2, "Stack count should match applied stacks")
+	assert(rs.apply_upgrade("OVERCLOCK"), "OVERCLOCK should allow its first stack")
+	assert(rs.apply_upgrade("OVERCLOCK"), "OVERCLOCK should allow its second stack")
+	assert(rs.apply_upgrade("OVERCLOCK"), "OVERCLOCK should allow its third stack")
+	assert(not rs.apply_upgrade("OVERCLOCK"), "OVERCLOCK must reject stacks past its cap")
+	assert(rs.fire_interval_mult >= 0.35, "Fire interval must remain inside the hard cap")
+	var eligible: Array[Dictionary] = rs.get_random_upgrade_choices(7)
+	for item in eligible:
+		assert(item.id not in ["HIGH_VOLTAGE", "OVERCLOCK"], "Fully stacked upgrades must leave the reward pool")
+	for upgrade_id in rs.UPGRADE_STACK_CAPS:
+		for _stack in range(rs.get_upgrade_stack_cap(upgrade_id) - rs.get_upgrade_stack_count(upgrade_id)):
+			rs.apply_upgrade(upgrade_id)
+	var fallback: Array[Dictionary] = rs.get_random_upgrade_choices(3)
+	assert(fallback.size() == 1 and fallback[0].id == "FIELD_REPAIR", "All capped upgrades must fall back to a useful repair reward")
+	rs.free()
+	print("  [PASS] Upgrade Stack Caps & Hard Stat Bounds")
+	return true
+
+
+static func test_start_screen_flow() -> bool:
+	var start_script = load("res://scripts/start_screen.gd")
+	var start_screen: Control = start_script.new()
+	start_screen._build_screen()
+	assert(is_instance_valid(start_screen.prompt), "Splash must present a start prompt")
+	assert(start_screen.prompt.text == "TAP TO START", "Splash prompt must clearly invite input")
+	assert(ProjectSettings.get_setting("application/run/main_scene") == "res://scenes/ui/start_screen.tscn", "Splash must be the first launched scene")
+	start_screen.free()
+	print("  [PASS] Splash First Screen & Tap-to-Menu Flow")
 	return true
 
 
@@ -1292,4 +1382,165 @@ static func test_crash_logger_offline_diagnostics() -> bool:
 	return true
 
 
+static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
+	var evo_mgr = EVOLUTION_MANAGER_SCRIPT.new()
+	assert(evo_mgr.get_species_tier("CHASER") == 0, "Chaser starts at Tier 0")
+	assert(evo_mgr.get_species_tier("DASHER") == 0, "Dasher starts at Tier 0")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 0, "Shooter starts at Tier 0")
+	assert(evo_mgr.get_species_health_multiplier("CHASER") == 1, "Chaser Tier 0 has 1x health multiplier")
+
+	# Test strict species isolation:
+	# Simulate encounter where ONLY Chaser participated. Player was kiting (ranged = 0.85).
+	var chaser_g = evo_mgr.get_genome_for_spawn("CHASER")
+	evo_mgr.register_spawned_combatant(chaser_g)
+
+	var kite_profile := {
+		"ranged": 0.85,
+		"mobility": 0.40,
+		"turret": 0.20
+	}
+	var adaptations1 = evo_mgr.process_encounter_end(0, 0, 15.0, kite_profile, "DEFAULT")
+	assert(evo_mgr.get_species_tier("CHASER") == 1, "Chaser must evolve to Tier 1 after kited battle")
+	assert(evo_mgr.get_species_health_multiplier("CHASER") == 2, "Chaser Tier 1 must have 2x health multiplier")
+	assert(evo_mgr.get_species_tier("DASHER") == 0, "Dasher must remain Tier 0 because it did not fight")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 0, "Shooter must remain Tier 0 because it did not fight")
+	assert(not adaptations1.is_empty(), "Must record Tier 1 adaptation")
+	assert(adaptations1[0].family == "CHASER", "Adaptation must be for Chaser")
+
+	# Second encounter for Chaser:
+	evo_mgr.register_spawned_combatant(chaser_g)
+	var _adaptations2 = evo_mgr.process_encounter_end(0, 0, 12.0, kite_profile, "DEFAULT")
+	assert(evo_mgr.get_species_tier("CHASER") == 2, "Chaser must evolve to Tier 2 after second battle")
+	assert(evo_mgr.get_species_health_multiplier("CHASER") == 4, "Chaser Tier 2 must have 4x health multiplier")
+	assert(evo_mgr.get_species_tier("DASHER") == 0, "Dasher must still be Tier 0")
+
+	# Verify Tier 2 Chaser node behavior:
+	var chaser_node = CHASER_SCENE.instantiate()
+	chaser_g.apply_to_enemy(chaser_node)
+	assert(chaser_node.max_health == 12, "Chaser Tier 2 max health must be 12 (4x of base 3)")
+	assert(chaser_node.health == 12, "Chaser Tier 2 current health must be 12")
+	assert(chaser_node.has_ranged_attack, "Chaser Tier 2 must have learned ranged attack")
+	assert(chaser_node.move_speed > 120.0, "Chaser Tier 2 must have Tier 1 speed buff preserved")
+	chaser_node.free()
+
+	# Now Dasher battles:
+	var dasher_g = evo_mgr.get_genome_for_spawn("DASHER")
+	evo_mgr.register_spawned_combatant(dasher_g)
+	evo_mgr.process_encounter_end(1, 0, 10.0, {}, "DEFAULT")
+	assert(evo_mgr.get_species_tier("DASHER") == 1, "Dasher evolves to Tier 1 after 1 battle")
+	assert(evo_mgr.get_species_health_multiplier("DASHER") == 2, "Dasher Tier 1 has 2x health (4 HP)")
+	var dasher_node = DASHER_SCENE.instantiate()
+	dasher_g.apply_to_enemy(dasher_node)
+	assert(dasher_node.max_health == 4, "Dasher Tier 1 max health must be 4")
+	assert(dasher_node.has_hazard_trail, "Dasher Tier 1 must leave hazard trails")
+	dasher_node.free()
+
+	evo_mgr.register_spawned_combatant(dasher_g)
+	evo_mgr.process_encounter_end(1, 0, 10.0, {}, "DEFAULT")
+	assert(evo_mgr.get_species_tier("DASHER") == 2, "Dasher evolves to Tier 2 after 2 battles")
+	assert(evo_mgr.get_species_health_multiplier("DASHER") == 4, "Dasher Tier 2 has 4x health (8 HP)")
+	var dasher_node2 = DASHER_SCENE.instantiate()
+	dasher_g.apply_to_enemy(dasher_node2)
+	assert(dasher_node2.max_health == 8, "Dasher Tier 2 max health must be 8")
+	assert(dasher_node2.lunge_speed >= 700.0, "Dasher Tier 2 lunge speed must be 700.0 (+25%)")
+	dasher_node2.free()
+
+	# Now Shooter battles:
+	var shooter_g = evo_mgr.get_genome_for_spawn("SHOOTER")
+	evo_mgr.register_spawned_combatant(shooter_g)
+	evo_mgr.process_encounter_end(2, 0, 10.0, {}, "DEFAULT")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 1, "Shooter Tier 1 after 1 battle")
+	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 2, "Shooter Tier 1 has 2x health (6 HP)")
+	var shooter_node = SHOOTER_SCENE.instantiate()
+	shooter_g.apply_to_enemy(shooter_node)
+	assert(shooter_node.max_health == 6, "Shooter Tier 1 max health must be 6")
+	assert(shooter_node.lead_prediction == 0.75, "Shooter Tier 1 has lead prediction 0.75")
+	shooter_node.free()
+
+	evo_mgr.register_spawned_combatant(shooter_g)
+	evo_mgr.process_encounter_end(2, 0, 10.0, {}, "DEFAULT")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 2, "Shooter Tier 2 after 2 battles")
+	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 4, "Shooter Tier 2 has 4x health (12 HP)")
+	var shooter_node2 = SHOOTER_SCENE.instantiate()
+	shooter_g.apply_to_enemy(shooter_node2)
+	assert(shooter_node2.max_health == 12, "Shooter Tier 2 max health must be 12")
+	assert(shooter_node2.burst_count == 2, "Shooter Tier 2 has 2-round burst volley")
+	shooter_node2.free()
+
+	# Test Health Doubling Invariant: calling apply_to_enemy multiple times does NOT multiply health repeatedly!
+	var test_chaser = CHASER_SCENE.instantiate()
+	chaser_g.apply_to_enemy(test_chaser)
+	assert(test_chaser.max_health == 12, "First spawn must be 12 HP")
+	chaser_g.apply_to_enemy(test_chaser)
+	assert(test_chaser.max_health == 12, "Second apply must remain 12 HP, not 24 or 48 HP")
+	test_chaser.free()
+
+	# Test Run-Scoped Reset:
+	evo_mgr.reset()
+	assert(evo_mgr.get_species_tier("CHASER") == 0, "Reset restores Chaser to Tier 0")
+	assert(evo_mgr.get_species_tier("DASHER") == 0, "Reset restores Dasher to Tier 0")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 0, "Reset restores Shooter to Tier 0")
+	assert(evo_mgr.evolution_history.is_empty(), "Reset clears evolution history")
+
+	print("  [PASS] Strict Species Evidence Isolation & Tier Evolutions (Speed, Laser, Hazards, Volley)")
+	return true
+
+
+static func test_pause_menu_quit_session_flow() -> bool:
+	var pause = PAUSE_MENU_SCRIPT.new()
+	pause._build_ui()
+
+	# Find QUIT SESSION button
+	var quit_btn: Button = pause.get_quit_button()
+	if quit_btn == null:
+		for child in pause.find_children("*", "", true, false):
+			if child is Button and child.text == "QUIT SESSION":
+				quit_btn = child
+				break
+	assert(quit_btn != null, "Pause menu must have a dedicated QUIT SESSION button")
+	assert(quit_btn.custom_minimum_size.y >= 48.0, "QUIT SESSION button must be touch-friendly (>=48dp height)")
+
+	# Trigger confirmation modal
+	quit_btn.pressed.emit()
+	assert(pause.confirm_panel.visible, "Pressing QUIT SESSION must display confirmation modal")
+	assert("TERMINATE APPLICATION" in pause.confirm_msg_label.text or "QUIT SESSION" in pause.confirm_msg_label.text, "Confirmation modal must explicitly warn about session termination")
+	assert("lost" in pause.confirm_msg_label.text.to_lower(), "Confirmation modal must warn that run and evolutions will be lost")
+
+	# Back request cancels confirmation modal without quitting
+	pause._handle_back_request()
+	assert(not pause.confirm_panel.visible, "Back/Cancel must safely dismiss confirmation modal")
+
+	pause.free()
+	print("  [PASS] Pause Menu Touch Quit Session & Loss Confirmation Flow Scenario")
+	return true
+
+
+static func test_dungeon_shops_gifts_and_sector_schedule() -> bool:
+	var gen = DUNGEON_GEN_SCRIPT.new()
+	var shop_found := false
+	var gift_found := false
+
+	# Test 50 distinct dungeon seeds
+	for s in range(5001, 5051):
+		var layout = gen.generate_dungeon(s, 6)
+		assert(layout.rooms.size() == 6, "Must generate 6 rooms")
+		assert(layout.rooms[0].room_type == "START", "Room 0 must be START")
+		assert(layout.rooms[5].room_type == "BOSS", "Room 5 must be BOSS")
+
+		for r in layout.rooms:
+			assert(r.is_validated, "Every room must be reachability validated")
+			if r.room_type == "SHOP":
+				shop_found = true
+				assert(not r.shop_stock.is_empty(), "SHOP room must stock items with bit prices")
+				for item in r.shop_stock:
+					assert(item.has("cost") and int(item.cost) > 0, "Shop items must have valid bit costs")
+			elif r.room_type == "GIFT":
+				gift_found = true
+				assert(not r.gift_choices.is_empty(), "GIFT room must offer free subroutine choices")
+
+	assert(shop_found, "Procedural generation must produce explorable SHOP rooms across seeds")
+	assert(gift_found, "Procedural generation must produce explorable GIFT cache rooms across seeds")
+
+	print("  [PASS] Explorable Sector Graphs, Shop Kiosks & Gift Caches Scenario")
+	return true
 

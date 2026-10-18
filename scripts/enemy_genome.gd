@@ -30,6 +30,8 @@ const MAX_COORDINATION := 1.0
 var family: String = "CHASER" # "CHASER", "SHOOTER", "DASHER", "BOSS"
 var generation: int = 1
 var variant_name: String = "Standard"
+var tier: int = 0 # 0 = Baseline (1x HP), 1 = Learned Tier 1 (2x HP), 2 = Learned Tier 2 (4x HP)
+var base_max_health: int = 3
 
 # Evolvable Numerical Traits
 var prediction_strength: float = 0.0
@@ -64,9 +66,14 @@ func _init(p_family: String = "CHASER", p_generation: int = 1) -> void:
 	_apply_family_defaults()
 
 
+func get_max_health() -> int:
+	return base_max_health * int(pow(2, tier))
+
+
 func _apply_family_defaults() -> void:
 	match family:
 		"CHASER":
+			base_max_health = 3
 			preferred_distance = 60.0
 			aggression = 1.0
 			flanking_tendency = 0.0
@@ -76,6 +83,7 @@ func _apply_family_defaults() -> void:
 			attack_timing_mult = 1.0
 			variant_name = "Chaser Alpha"
 		"SHOOTER":
+			base_max_health = 3
 			preferred_distance = 210.0
 			aggression = 0.90
 			flanking_tendency = 0.1
@@ -85,6 +93,7 @@ func _apply_family_defaults() -> void:
 			attack_timing_mult = 1.0
 			variant_name = "Shooter Sentry"
 		"DASHER":
+			base_max_health = 2
 			preferred_distance = 180.0
 			aggression = 1.10
 			flanking_tendency = 0.0
@@ -94,6 +103,7 @@ func _apply_family_defaults() -> void:
 			attack_timing_mult = 1.0
 			variant_name = "Dasher Interceptor"
 		"BOSS":
+			base_max_health = 30
 			preferred_distance = 220.0
 			aggression = 1.15
 			flanking_tendency = 0.2
@@ -107,6 +117,8 @@ func _apply_family_defaults() -> void:
 func duplicate_genome() -> RefCounted:
 	var copy = get_script().new(family, generation)
 	copy.variant_name = variant_name
+	copy.tier = tier
+	copy.base_max_health = base_max_health
 	copy.prediction_strength = prediction_strength
 	copy.flanking_tendency = flanking_tendency
 	copy.aggression = aggression
@@ -145,31 +157,61 @@ func apply_named_mutation(mut_name: String) -> bool:
 		return false # Mutation already present
 
 	match mut_name:
+		"RAPID_PURSUIT":
+			# Chaser Tier 1: +35% pursuit speed, 2x HP
+			tier = maxi(tier, 1)
+			active_mutations.append(mut_name)
+			variant_name = variant_name + " [Pursuit]"
+			return true
+
+		"CRIMSON_BLASTER":
+			# Chaser Tier 2: Learns telegraphed laser projectile attack, 4x HP
+			tier = maxi(tier, 2)
+			active_mutations.append(mut_name)
+			variant_name = variant_name + " [Blaster]"
+			return true
+
+		"ION_HAZARD_TRAIL":
+			# Dasher Tier 1: Leaves ion hazard trail along dash, 2x HP
+			tier = maxi(tier, 1)
+			attack_timing_mult = clampf(attack_timing_mult * 1.15, MIN_ATTACK_TIMING, MAX_ATTACK_TIMING)
+			active_mutations.append(mut_name)
+			variant_name = variant_name + " [IonTrail]"
+			return true
+
+		"OVERCLOCKED_THRUSTERS":
+			# Dasher Tier 2: +25% stalking and lunge speed, 4x HP
+			tier = maxi(tier, 2)
+			active_mutations.append(mut_name)
+			variant_name = variant_name + " [Overclocked]"
+			return true
+
 		"PREDICTIVE_OPTICS":
-			# Tradeoff: Strong lead prediction, but +25% attack interval (slower cycle)
-			prediction_strength = clampf(prediction_strength + 0.55, MIN_PREDICTION, MAX_PREDICTION)
-			attack_timing_mult = clampf(attack_timing_mult * 1.25, MIN_ATTACK_TIMING, MAX_ATTACK_TIMING)
+			# Shooter Tier 1: Lead prediction aiming optics, 2x HP
+			tier = maxi(tier, 1)
+			prediction_strength = 0.75
+			attack_timing_mult = clampf(attack_timing_mult * 1.20, MIN_ATTACK_TIMING, MAX_ATTACK_TIMING)
 			active_mutations.append(mut_name)
 			variant_name = variant_name + " [Optics]"
 			return true
 
+		"BURST_VOLLEY":
+			# Shooter Tier 2: 2-round burst volley firing, 4x HP
+			tier = maxi(tier, 2)
+			active_mutations.append(mut_name)
+			variant_name = variant_name + " [BurstVolley]"
+			return true
+
 		"PINCER_WINGS":
-			# Tradeoff: Wide pincer flanking angle, but -10% direct aggression
+			# Wide pincer flanking angle
 			flanking_tendency = clampf(flanking_tendency + 0.55, MIN_FLANKING, MAX_FLANKING)
 			aggression = clampf(aggression * 0.90, MIN_AGGRESSION, MAX_AGGRESSION)
 			active_mutations.append(mut_name)
 			variant_name = variant_name + " [Pincer]"
 			return true
 
-		"ION_HAZARD_TRAIL":
-			# Tradeoff: Leaves ionized electric trail on dash, but +20% longer telegraph window
-			attack_timing_mult = clampf(attack_timing_mult * 1.20, MIN_ATTACK_TIMING, MAX_ATTACK_TIMING)
-			active_mutations.append(mut_name)
-			variant_name = variant_name + " [IonTrail]"
-			return true
-
 		"RAPID_THRUSTERS":
-			# Tradeoff: +20% movement speed, but -20% evasion
+			# +20% movement speed, -20% evasion
 			aggression = clampf(aggression + 0.20, MIN_AGGRESSION, MAX_AGGRESSION)
 			evasion_tendency = clampf(evasion_tendency - 0.20, MIN_EVASION, MAX_EVASION)
 			active_mutations.append(mut_name)
@@ -177,7 +219,7 @@ func apply_named_mutation(mut_name: String) -> bool:
 			return true
 
 		"STATIC_GROUNDING":
-			# Tradeoff: 40% resistance to player dash zaps, but -8% movement speed
+			# 40% resistance to player dash zaps, -8% movement speed
 			damage_multipliers["dash"] = 0.60
 			aggression = clampf(aggression * 0.92, MIN_AGGRESSION, MAX_AGGRESSION)
 			active_mutations.append(mut_name)
@@ -185,7 +227,7 @@ func apply_named_mutation(mut_name: String) -> bool:
 			return true
 
 		"DEFENSIVE_STRIKE":
-			# Tradeoff: +30% evasive strafing, but -12% direct aggression
+			# +30% evasive strafing, -12% direct aggression
 			evasion_tendency = clampf(evasion_tendency + 0.30, MIN_EVASION, MAX_EVASION)
 			aggression = clampf(aggression * 0.88, MIN_AGGRESSION, MAX_AGGRESSION)
 			active_mutations.append(mut_name)
@@ -202,12 +244,22 @@ func apply_to_enemy(enemy_node: Node2D) -> void:
 	# Bind genome reference
 	enemy_node.set("genome", self)
 
+	# Apply tier health doubling (1x at Tier 0, 2x at Tier 1, 4x at Tier 2)
+	var calc_hp: int = get_max_health()
+	if "max_health" in enemy_node:
+		enemy_node.max_health = calc_hp
+		enemy_node.health = calc_hp
+
 	# 1. Chaser behavioral application
 	if family == "CHASER":
+		var speed: float = 92.0 * aggression
+		if tier >= 1 or has_mutation("RAPID_PURSUIT"):
+			speed *= 1.35
 		if "move_speed" in enemy_node:
-			enemy_node.move_speed = 92.0 * aggression
+			enemy_node.move_speed = speed
+		if "has_ranged_attack" in enemy_node:
+			enemy_node.has_ranged_attack = (tier >= 2 or has_mutation("CRIMSON_BLASTER"))
 		if "flank_angle" in enemy_node:
-			# Flank angle up to 0.75 radians (~43 degrees)
 			enemy_node.flank_angle = flanking_tendency * 0.70
 			if flanking_tendency > 0.15:
 				enemy_node.set("is_flanker", true)
@@ -215,7 +267,9 @@ func apply_to_enemy(enemy_node: Node2D) -> void:
 	# 2. Shooter behavioral application
 	elif family == "SHOOTER":
 		if "lead_prediction" in enemy_node:
-			enemy_node.lead_prediction = prediction_strength
+			enemy_node.lead_prediction = 0.75 if (tier >= 1 or has_mutation("PREDICTIVE_OPTICS")) else prediction_strength
+		if "burst_count" in enemy_node:
+			enemy_node.burst_count = 2 if (tier >= 2 or has_mutation("BURST_VOLLEY")) else 1
 		if "move_speed" in enemy_node:
 			enemy_node.move_speed = 82.0 * aggression
 		if "ideal_distance" in enemy_node:
@@ -223,12 +277,17 @@ func apply_to_enemy(enemy_node: Node2D) -> void:
 
 	# 3. Dasher behavioral application
 	elif family == "DASHER":
+		var p_spd: float = 95.0 * aggression
+		var l_spd: float = 560.0 * aggression
+		if tier >= 2 or has_mutation("OVERCLOCKED_THRUSTERS"):
+			p_spd *= 1.25
+			l_spd *= 1.25
 		if "patrol_speed" in enemy_node:
-			enemy_node.patrol_speed = 95.0 * aggression
+			enemy_node.patrol_speed = p_spd
 		if "lunge_speed" in enemy_node:
-			enemy_node.lunge_speed = 560.0 * aggression
+			enemy_node.lunge_speed = l_spd
 		if "has_hazard_trail" in enemy_node:
-			enemy_node.has_hazard_trail = has_mutation("ION_HAZARD_TRAIL")
+			enemy_node.has_hazard_trail = (tier >= 1 or has_mutation("ION_HAZARD_TRAIL"))
 
 	# Generic modifiers
 	if "damage_multipliers" in enemy_node:
@@ -257,6 +316,8 @@ func to_dict() -> Dictionary:
 		"family": family,
 		"generation": generation,
 		"variant_name": variant_name,
+		"tier": tier,
+		"base_max_health": base_max_health,
 		"prediction_strength": prediction_strength,
 		"flanking_tendency": flanking_tendency,
 		"aggression": aggression,
@@ -276,6 +337,8 @@ static func from_dict(d: Dictionary) -> RefCounted:
 	var script = load("res://scripts/enemy_genome.gd") as GDScript
 	var g = script.new(d.get("family", "CHASER"), int(d.get("generation", 1)))
 	g.variant_name = d.get("variant_name", "Standard")
+	g.tier = int(d.get("tier", 0))
+	g.base_max_health = int(d.get("base_max_health", 3))
 	g.prediction_strength = float(d.get("prediction_strength", 0.0))
 	g.flanking_tendency = float(d.get("flanking_tendency", 0.0))
 	g.aggression = float(d.get("aggression", 1.0))
@@ -290,3 +353,4 @@ static func from_dict(d: Dictionary) -> RefCounted:
 	g.fitness_score = float(d.get("fitness_score", 0.0))
 	g.clamp_all_traits()
 	return g
+

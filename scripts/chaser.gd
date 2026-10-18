@@ -1,20 +1,35 @@
 extends CharacterBody2D
 ## Geometric pursuer drone shaped as a ruby diamond with pincer flanking subroutines.
+## Evolves through same-species combat experience:
+##   Tier 0: Contact pursuit only.
+##   Tier 1: High-speed pursuit (+35% speed), 2x health.
+##   Tier 2: Telegraphed laser projectile attack (+committed aim window), 4x health.
 
 signal defeated
 
 const EnemySteering := preload("res://scripts/enemy_steering.gd")
+const PROJECTILE_SCENE := preload("res://scenes/weapons/enemy_projectile.tscn")
 
 @export var max_health := 3
 @export var move_speed := 92.0
 @export var flank_angle := 0.0
 @export var is_flanker := false
+@export var has_ranged_attack := false
 
 var health := 3
 var target: Node2D
 var contact_cooldown := 0.0
 var defeated_already := false
 var damage_flash := 0.0
+
+# Ranged attack state (Tier 2 learned evolution)
+const TELEGRAPH_TIME := 0.65
+const AIM_LOCK_TIME := 0.25 # Aim freezes during final 0.25s so player has a readable dodge window
+var ranged_cooldown := 2.0
+var is_charging_shot := false
+var charge_timer := 0.0
+var locked_aim_dir := Vector2.RIGHT
+var recovery_timer := 0.0
 
 var genome: RefCounted = null
 var spatial_index: RefCounted = null
@@ -29,18 +44,55 @@ var damage_multipliers: Dictionary = {
 func _ready() -> void:
 	health = max_health
 	add_to_group("enemies")
+	ranged_cooldown = randf_range(1.5, 2.5)
 	queue_redraw()
 
 
 func _physics_process(delta: float) -> void:
 	contact_cooldown = maxf(0.0, contact_cooldown - delta)
 	damage_flash = maxf(0.0, damage_flash - delta)
+	ranged_cooldown = maxf(0.0, ranged_cooldown - delta)
+	recovery_timer = maxf(0.0, recovery_timer - delta)
 
 	if not is_instance_valid(target):
 		return
 
 	var to_target := target.global_position - global_position
 	var dist := to_target.length()
+
+	# Handle active ranged charging state
+	if is_charging_shot:
+		velocity = Vector2.ZERO
+		charge_timer -= delta
+		if charge_timer > AIM_LOCK_TIME:
+			# Track player before aim lock
+			locked_aim_dir = to_target.normalized()
+		rotation = locked_aim_dir.angle()
+		queue_redraw()
+		if charge_timer <= 0.0:
+			is_charging_shot = false
+			recovery_timer = 0.20
+			ranged_cooldown = randf_range(2.5, 3.5)
+			_fire_ranged_shot()
+		return
+
+	if recovery_timer > 0.0:
+		velocity = Vector2.ZERO
+		queue_redraw()
+		return
+
+	# Check ranged shot initiation (Tier 2 learned ability)
+	if has_ranged_attack and ranged_cooldown <= 0.0 and dist >= 85.0 and dist <= 380.0:
+		var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects)
+		if not los_blocked:
+			is_charging_shot = true
+			charge_timer = TELEGRAPH_TIME
+			locked_aim_dir = to_target.normalized()
+			velocity = Vector2.ZERO
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("enemy_laser_charge", 0.05, -3.0)
+			queue_redraw()
+			return
 
 	if dist > 36.0:
 		# Pincer flanking trajectory when at medium/long range
@@ -79,6 +131,20 @@ func _physics_process(delta: float) -> void:
 	queue_redraw()
 
 
+func _fire_ranged_shot() -> void:
+	if not get_parent():
+		return
+	var proj = PROJECTILE_SCENE.instantiate()
+	proj.global_position = global_position + locked_aim_dir * 18.0
+	proj.direction = locked_aim_dir
+	if "shooter_enemy" in proj:
+		proj.shooter_enemy = self
+	get_parent().add_child(proj)
+	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+		get_node("/root/AudioSynth").play("player_blaster", 0.08, 4.0)
+	queue_redraw()
+
+
 func take_damage(amount: int, source: String = "plasma") -> void:
 	if defeated_already:
 		return
@@ -94,6 +160,17 @@ func take_damage(amount: int, source: String = "plasma") -> void:
 
 
 func _draw() -> void:
+	# Warning laser line during ranged attack telegraph (Tier 2)
+	if is_charging_shot:
+		if charge_timer <= AIM_LOCK_TIME:
+			# Solid committed laser line (Aim locked! Player dodge window active!)
+			draw_line(Vector2.ZERO, to_local(global_position + locked_aim_dir * 360.0), Color("f43f5e"), 2.5)
+			draw_line(Vector2.ZERO, to_local(global_position + locked_aim_dir * 360.0), Color("ffffff"), 1.0)
+		else:
+			# Pulsing tracking warning line
+			var pulse := 0.4 + sin(charge_timer * 22.0) * 0.35
+			draw_line(Vector2.ZERO, to_local(global_position + locked_aim_dir * 360.0), Color(0.96, 0.25, 0.37, pulse), 1.5)
+
 	# Primary body color with damage flash
 	var body_color := Color("f43f5e") if damage_flash <= 0.0 else Color("ffffff")
 	var inner_color := Color("9f1239") if damage_flash <= 0.0 else Color("fecdd3")
@@ -114,6 +191,13 @@ func _draw() -> void:
 		draw_line(Vector2(-2, 12), Vector2(-10, 20), body_color, 2.0)
 		draw_circle(Vector2(-10, -20), 2.0, Color("38bdf8"))
 		draw_circle(Vector2(-10, 20), 2.0, Color("38bdf8"))
+
+	# Evolved Tier 2 crimson laser cannon prongs
+	if has_ranged_attack:
+		draw_line(Vector2(14, -5), Vector2(21, -5), Color("be123c"), 2.0)
+		draw_line(Vector2(14, 5), Vector2(21, 5), Color("be123c"), 2.0)
+		draw_circle(Vector2(21, -5), 1.8, Color("f43f5e"))
+		draw_circle(Vector2(21, 5), 1.8, Color("f43f5e"))
 
 	# Inner facet diamond
 	var inner_pts := PackedVector2Array([

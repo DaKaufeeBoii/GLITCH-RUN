@@ -7,7 +7,7 @@
 **Export & Hardening Guide:** [docs/ANDROID_EXPORT.md](docs/ANDROID_EXPORT.md)  
 **Privacy Policy:** [docs/PRIVACY.md](docs/PRIVACY.md)  
 
-All 7 core milestones from `ANTIGRAVITY_IMPLEMENTATION_PLAN.md` have been executed, verified, and checked off with **42 deterministic test scenarios passing**.
+All 7 core milestones from `ANTIGRAVITY_IMPLEMENTATION_PLAN.md` have been executed, verified, and checked off with **45 deterministic test scenarios passing**.
 
 ---
 
@@ -121,14 +121,14 @@ plan.md
   - Early-game onboarding: first room deploys baseline hostiles before mutations engage.
   - Low-health mercy protocol: `STABILIZATION` widens telegraphs by +30% when HP $< 35\%$.
   - Updated `README.md`, `plan.md`, `docs/ANDROID_EXPORT.md`, and `docs/PRIVACY.md`.
-  - All 42 automated deterministic test scenarios pass.
+  - All 45 automated deterministic test scenarios pass.
 
 ---
 
 ## Verification
 
-Execute the full 42-scenario test suite via:
+Execute the full 45-scenario test suite via:
 ```powershell
 & "D:\GODOT\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe" --headless -s scripts/test_runner.gd
 ```
-Result: `--- ALL 42 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---` (Exit code 0).
+Result: `--- ALL 45 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---` (Exit code 0).

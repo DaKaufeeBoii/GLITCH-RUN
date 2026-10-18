@@ -269,16 +269,27 @@ func setup_debrief(
 				evo_card.add_child(ev_vbox)
 
 				var ev_title := Label.new()
-				ev_title.text = "SECTOR %d: %s -> %s" % [evo.get("sector", 1), evo.get("family", "ENEMY"), evo.get("mutation", "MUTATION")]
+				var tier_str: String = " [TIER %d | %s]" % [evo.get("tier", 1), evo.get("health_mult", "2x HP")] if evo.has("tier") else ""
+				ev_title.text = "SECTOR %d: %s%s -> %s" % [evo.get("sector", 1), evo.get("family", "ENEMY"), tier_str, evo.get("mutation", "MUTATION")]
 				ev_title.add_theme_font_size_override("font_size", 11)
 				ev_title.add_theme_color_override("font_color", Color("e9d5ff"))
 				ev_vbox.add_child(ev_title)
 
-				var ev_trade := Label.new()
-				ev_trade.text = "Trade-off: %s" % evo.get("tradeoff", "Balanced adaptation")
-				ev_trade.add_theme_font_size_override("font_size", 10)
-				ev_trade.add_theme_color_override("font_color", Color("cbd5e1"))
-				ev_vbox.add_child(ev_trade)
+				var ev_reason := Label.new()
+				ev_reason.text = "Evidence: %s" % evo.get("reason", "Observation")
+				ev_reason.add_theme_font_size_override("font_size", 10)
+				ev_reason.add_theme_color_override("font_color", Color("cbd5e1"))
+				ev_reason.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				ev_vbox.add_child(ev_reason)
+
+				if evo.has("counter"):
+					var ev_counter := Label.new()
+					ev_counter.text = "Player Counter: %s" % evo.get("counter", "")
+					ev_counter.add_theme_font_size_override("font_size", 10)
+					ev_counter.add_theme_color_override("font_color", Color("38bdf8"))
+					ev_counter.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+					ev_vbox.add_child(ev_counter)
+
 
 		# 3. Boss Encounters & Returning Mutations
 		if rs and not rs.boss_encounter_history.is_empty():

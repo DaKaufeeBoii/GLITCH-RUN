@@ -10,6 +10,7 @@ const EnemySteering := preload("res://scripts/enemy_steering.gd")
 @export var move_speed := 82.0
 @export var ideal_distance := 210.0
 @export var lead_prediction := 0.0
+@export var burst_count := 1
 
 var health := 3
 var target: Node2D
@@ -113,6 +114,8 @@ func _physics_process(delta: float) -> void:
 
 
 func _fire_shot() -> void:
+	if not get_parent():
+		return
 	var proj = PROJECTILE_SCENE.instantiate()
 	proj.global_position = global_position + aimed_direction * 24.0
 	proj.direction = aimed_direction
@@ -120,6 +123,18 @@ func _fire_shot() -> void:
 		proj.shooter_enemy = self
 	get_parent().add_child(proj)
 	queue_redraw()
+
+	if burst_count >= 2 and is_inside_tree():
+		await get_tree().create_timer(0.14).timeout
+		if is_instance_valid(self) and not defeated_already and is_inside_tree() and get_parent():
+			var proj2 = PROJECTILE_SCENE.instantiate()
+			proj2.global_position = global_position + aimed_direction * 24.0
+			proj2.direction = aimed_direction
+			if "shooter_enemy" in proj2:
+				proj2.shooter_enemy = self
+			get_parent().add_child(proj2)
+			queue_redraw()
+
 
 
 func take_damage(amount: int, source: String = "plasma") -> void:

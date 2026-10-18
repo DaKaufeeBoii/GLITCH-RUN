@@ -2,7 +2,7 @@ extends RefCounted
 class_name DungeonGenerator
 ## Dedicated Procedural Dungeon Engineering Component.
 ## Separates:
-##   1. Topology Graph Generation
+##   1. Topology Graph Generation with branching routes, shops, and gift caches
 ##   2. Configurable Room Template Selection
 ##   3. Obstacle Geometry & Symmetries
 ##   4. BFS Navigation & Reachability Validation
@@ -11,12 +11,12 @@ class_name DungeonGenerator
 
 const ROOM_RECT := Rect2(42.0, 64.0, 876.0, 424.0)
 const GRID_CELL_SIZE := 32.0
-const MIN_PLAYER_ENEMY_DIST := 200.0
+const MIN_PLAYER_ENEMY_DIST := 195.0
 const MAX_VALIDATION_RETRIES := 10
 
 class RoomData extends RefCounted:
 	var index: int = 0
-	var room_type: String = "COMBAT" # "START", "COMBAT", "RECOVERY", "ELITE", "BOSS"
+	var room_type: String = "COMBAT" # "START", "COMBAT", "RECOVERY", "ELITE", "SHOP", "GIFT", "BOSS"
 	var template_name: String = "OPEN_ARENA"
 	var bounds: Rect2 = Rect2()
 	var obstacles: Array[Rect2] = []
@@ -25,6 +25,8 @@ class RoomData extends RefCounted:
 	var exit_doors: Array[Dictionary] = [] # Array of { "pos": Vector2, "target_room": int, "target_type": String, "label": String }
 	var enemy_spawns: Array[Dictionary] = []
 	var connections: Array[int] = []
+	var shop_stock: Array[Dictionary] = []
+	var gift_choices: Array[String] = []
 	var tactical_context: Dictionary = {
 		"has_cover": false,
 		"chokepoint_ratio": 0.0,
@@ -58,7 +60,7 @@ class DungeonLayout extends RefCounted:
 		return null
 
 
-func generate_dungeon(seed_val: int, room_count: int = 5) -> DungeonLayout:
+func generate_dungeon(seed_val: int, room_count: int = 6) -> DungeonLayout:
 	## Generates a completely validated, connected procedural dungeon layout from a seed.
 	var layout := DungeonLayout.new()
 	layout.seed_value = seed_val
@@ -78,7 +80,7 @@ func generate_dungeon(seed_val: int, room_count: int = 5) -> DungeonLayout:
 	var spawn_rng := RandomNumberGenerator.new()
 	spawn_rng.seed = spawn_seed
 
-	# 1. Generate Topology Graph with Route Branches
+	# 1. Generate Topology Graph with Route Branches and Loops
 	_build_topology_graph(layout, room_count, graph_rng)
 
 	# 2. Determine Room Types
@@ -88,16 +90,23 @@ func generate_dungeon(seed_val: int, room_count: int = 5) -> DungeonLayout:
 			room_types.append("START")
 		elif i == room_count - 1:
 			room_types.append("BOSS")
-		elif i == 2 and graph_rng.randf() < 0.50:
-			room_types.append("RECOVERY")
-		elif i == 3 and graph_rng.randf() < 0.45:
-			room_types.append("ELITE")
+		elif i == 1:
+			room_types.append("COMBAT")
+		elif i == 2:
+			# Branch node: Shop or Recovery
+			room_types.append("SHOP" if graph_rng.randf() < 0.60 else "RECOVERY")
+		elif i == 3:
+			# Branch node: Gift or Combat
+			room_types.append("GIFT" if graph_rng.randf() < 0.55 else "COMBAT")
+		elif i == 4:
+			# Late node: Elite or Combat
+			room_types.append("ELITE" if graph_rng.randf() < 0.50 else "COMBAT")
 		else:
 			room_types.append("COMBAT")
 
 	# 3. Generate and Validate each Room in the Graph
 	for i in range(room_count):
-		var room := _generate_valid_room(i, room_types[i], layout, geom_rng, spawn_rng)
+		var room := _generate_valid_room(i, room_types[i], layout, room_types, geom_rng, spawn_rng)
 		room.connections.assign(layout.adjacency.get(i, []))
 		layout.rooms.append(room)
 
@@ -108,15 +117,34 @@ func _build_topology_graph(layout: DungeonLayout, count: int, _rng: RandomNumber
 	for i in range(count):
 		layout.adjacency[i] = []
 
-	# Linear progression spine (0 -> 1 -> 2 -> ... -> Boss)
+	# Main forward progression spine
 	for i in range(count - 1):
 		layout.adjacency[i].append(i + 1)
 		layout.adjacency[i + 1].append(i)
 
-	# In sectors with count >= 5, room 1 branches to provide guaranteed tactical route choice:
-	# Branch A leads to Room 2 (Tactical Respite / Recovery)
-	# Branch B leads directly to Room 3 (Elite Threat Bypass)
-	if count >= 5:
+	# Interconnected branch shortcuts and loops
+	if count >= 6:
+		# Room 0 connects forward to Room 1 (Combat) and Room 2 (Shop/Recovery)
+		if not 2 in layout.adjacency[0]:
+			layout.adjacency[0].append(2)
+			layout.adjacency[2].append(0)
+
+		# Room 1 connects forward to Room 3 (Gift/Combat)
+		if not 3 in layout.adjacency[1]:
+			layout.adjacency[1].append(3)
+			layout.adjacency[3].append(1)
+
+		# Room 2 connects forward to Room 4 (Elite/Combat)
+		if not 4 in layout.adjacency[2]:
+			layout.adjacency[2].append(4)
+			layout.adjacency[4].append(2)
+
+		# Room 3 connects forward to Room 5 (Boss)
+		if not (count - 1) in layout.adjacency[3]:
+			layout.adjacency[3].append(count - 1)
+			layout.adjacency[count - 1].append(3)
+
+	elif count >= 5:
 		if not 3 in layout.adjacency[1]:
 			layout.adjacency[1].append(3)
 			layout.adjacency[3].append(1)
@@ -126,10 +154,11 @@ func _generate_valid_room(
 	index: int,
 	room_type: String,
 	layout: DungeonLayout,
+	room_types: Array[String],
 	geom_rng: RandomNumberGenerator,
 	spawn_rng: RandomNumberGenerator
 ) -> RoomData:
-	for attempt in range(MAX_VALIDATION_RETRIES):
+	for _attempt in range(MAX_VALIDATION_RETRIES):
 		var room := RoomData.new()
 		room.index = index
 		room.room_type = room_type
@@ -147,7 +176,7 @@ func _generate_valid_room(
 		if forward_connections.size() <= 1:
 			var target_idx: int = forward_connections[0] if not forward_connections.is_empty() else index + 1
 			var door_pos := Vector2(room.bounds.end.x - 60.0, center.y)
-			var target_type := _get_provisional_room_type(target_idx, layout.total_rooms)
+			var target_type := _get_provisional_room_type(target_idx, layout.total_rooms, room_types)
 			var label := _get_door_label(target_idx, target_type)
 			room.exit_doors.append({ "pos": door_pos, "target_room": target_idx, "target_type": target_type, "label": label })
 			room.exit_door = door_pos
@@ -157,7 +186,7 @@ func _generate_valid_room(
 			for c_idx in range(mini(2, forward_connections.size())):
 				var target_idx: int = forward_connections[c_idx]
 				var door_pos := Vector2(room.bounds.end.x - 60.0, center.y + offsets[c_idx])
-				var target_type := _get_provisional_room_type(target_idx, layout.total_rooms)
+				var target_type := _get_provisional_room_type(target_idx, layout.total_rooms, room_types)
 				var label := _get_door_label(target_idx, target_type)
 				room.exit_doors.append({ "pos": door_pos, "target_room": target_idx, "target_type": target_type, "label": label })
 			room.exit_door = room.exit_doors[0].pos
@@ -168,6 +197,12 @@ func _generate_valid_room(
 
 		# Generate Geometry & Obstacles
 		_apply_template_geometry(room, template_name, geom_rng)
+
+		# Populate Shop / Gift stock if applicable
+		if room_type == "SHOP":
+			room.shop_stock = _generate_shop_stock(spawn_rng)
+		elif room_type == "GIFT":
+			room.gift_choices = _generate_gift_choices(spawn_rng)
 
 		# Generate Enemy Spawns
 		_generate_enemy_spawns(room, index, room_type, spawn_rng)
@@ -181,32 +216,44 @@ func _generate_valid_room(
 	return _build_fallback_room(index, room_type)
 
 
-func _get_provisional_room_type(room_idx: int, total_rooms: int) -> String:
+func _get_provisional_room_type(room_idx: int, total_rooms: int, room_types: Array[String] = []) -> String:
+	if not room_types.is_empty() and room_idx < room_types.size():
+		return room_types[room_idx]
 	if room_idx == 0:
 		return "START"
 	if room_idx >= total_rooms - 1:
 		return "BOSS"
-	if room_idx == 2:
-		return "RECOVERY"
-	if room_idx == 3:
-		return "ELITE"
-	return "COMBAT"
+	match room_idx:
+		1:
+			return "COMBAT"
+		2:
+			return "SHOP"
+		3:
+			return "GIFT"
+		4:
+			return "ELITE"
+		_:
+			return "COMBAT"
 
 
 func _get_door_label(target_idx: int, room_type: String) -> String:
 	if target_idx >= 5:
-		return "SECTOR GATE // HYPERGRID"
+		return "SECTOR GATE // NEXUS CORE"
 	match room_type:
 		"START":
-			return "CALIBRATION"
+			return "CALIBRATION DOCK"
+		"SHOP":
+			return "BLACK MARKET // DATA TERMINAL"
+		"GIFT":
+			return "SUBROUTINE CACHE // FREE REWARD"
 		"RECOVERY":
-			return "RECOVERY (+2 HP)"
+			return "RECOVERY BAY (+2 HP)"
 		"ELITE":
 			return "ELITE THREAT // HIGH REWARD"
 		"BOSS":
 			return "NEXUS // OVERLORD CORE"
 		_:
-			return "CHAMBER %d // COMBAT" % (target_idx + 1)
+			return "CHAMBER %d // COMBAT WAVE" % (target_idx + 1)
 
 
 func _pick_template_name(_index: int, room_type: String, rng: RandomNumberGenerator) -> String:
@@ -214,6 +261,12 @@ func _pick_template_name(_index: int, room_type: String, rng: RandomNumberGenera
 		return "CALIBRATION_OPEN"
 	if room_type == "BOSS":
 		return "BOSS_NEXUS"
+	if room_type == "SHOP":
+		return "SHOP_DEPOT"
+	if room_type == "GIFT":
+		return "GIFT_VAULT"
+	if room_type == "RECOVERY":
+		return "RECOVERY_BAY"
 
 	var templates := [
 		"QUAD_PILLARS",
@@ -236,8 +289,31 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.chokepoint_ratio = 0.0
 			room.tactical_context.flanking_lanes = 2
 
+		"SHOP_DEPOT":
+			# Central merchant kiosk with clear perimeter pathways
+			room.obstacles.append(Rect2(Vector2(center.x - 30.0, center.y - 25.0), Vector2(60.0, 50.0)))
+			room.tactical_context.has_cover = true
+			room.tactical_context.chokepoint_ratio = 0.15
+			room.tactical_context.flanking_lanes = 3
+
+		"GIFT_VAULT":
+			# Secure cache station in center with decorative corner pylons
+			room.obstacles.append(Rect2(Vector2(center.x - 24.0, center.y - 24.0), Vector2(48.0, 48.0)))
+			room.obstacles.append(Rect2(Vector2(center.x - 140.0, center.y - 80.0), Vector2(36.0, 36.0)))
+			room.obstacles.append(Rect2(Vector2(center.x + 104.0, center.y + 44.0), Vector2(36.0, 36.0)))
+			room.tactical_context.has_cover = true
+			room.tactical_context.chokepoint_ratio = 0.20
+			room.tactical_context.flanking_lanes = 3
+
+		"RECOVERY_BAY":
+			# Twin medbay pods flanking center aisle
+			room.obstacles.append(Rect2(Vector2(center.x - 110.0, center.y - 80.0), Vector2(50.0, 36.0)))
+			room.obstacles.append(Rect2(Vector2(center.x + 60.0, center.y + 44.0), Vector2(50.0, 36.0)))
+			room.tactical_context.has_cover = true
+			room.tactical_context.chokepoint_ratio = 0.20
+			room.tactical_context.flanking_lanes = 3
+
 		"QUAD_PILLARS":
-			# 4 symmetrical pillar columns providing cover and 3 distinct approach channels
 			var x_offset := 160.0
 			var y_offset := 95.0
 			var col_size := Vector2(44.0, 44.0)
@@ -250,7 +326,6 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.flanking_lanes = 3
 
 		"CENTRAL_CHOKEPOINT":
-			# Central barrier splitting upper and lower lanes
 			var wall_w := 260.0
 			var wall_h := 28.0
 			room.obstacles.append(Rect2(Vector2(center.x - wall_w * 0.5, center.y - wall_h * 0.5), Vector2(wall_w, wall_h)))
@@ -259,7 +334,6 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.flanking_lanes = 2
 
 		"SPLIT_LANE":
-			# Twin vertical or horizontal barriers dividing arena into 3 lanes
 			var bar_size := Vector2(26.0, 140.0)
 			room.obstacles.append(Rect2(Vector2(center.x - 120.0 - 13.0, center.y - 70.0), bar_size))
 			room.obstacles.append(Rect2(Vector2(center.x + 120.0 - 13.0, center.y - 70.0), bar_size))
@@ -268,7 +342,6 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.flanking_lanes = 3
 
 		"COVER_FORTRESS":
-			# 4 staggered terminal clusters for close-quarters firefights
 			var block_size := Vector2(60.0, 28.0)
 			room.obstacles.append(Rect2(Vector2(center.x - 130.0, center.y - 85.0), block_size))
 			room.obstacles.append(Rect2(Vector2(center.x + 80.0, center.y - 85.0), block_size))
@@ -279,7 +352,6 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.flanking_lanes = 3
 
 		"HAZARD_CORRIDOR":
-			# Low obstacle density, but high hazard ratio
 			room.obstacles.append(Rect2(Vector2(center.x - 80.0, center.y - 20.0), Vector2(160.0, 40.0)))
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.30
@@ -287,7 +359,6 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.hazard_density = 0.60
 
 		"CROSS_INTERSECTION":
-			# Central cross layout with 4 corner approach corridors
 			room.obstacles.append(Rect2(Vector2(center.x - 20.0, center.y - 90.0), Vector2(40.0, 60.0)))
 			room.obstacles.append(Rect2(Vector2(center.x - 20.0, center.y + 30.0), Vector2(40.0, 60.0)))
 			room.tactical_context.has_cover = true
@@ -295,7 +366,6 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.flanking_lanes = 2
 
 		"BOSS_NEXUS":
-			# Corner blast barriers protecting perimeter
 			var b_size := Vector2(36.0, 36.0)
 			room.obstacles.append(Rect2(Vector2(180.0 - 18.0, 150.0 - 18.0), b_size))
 			room.obstacles.append(Rect2(Vector2(780.0 - 18.0, 150.0 - 18.0), b_size))
@@ -306,11 +376,41 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.flanking_lanes = 4
 
 
+func _generate_shop_stock(rng: RandomNumberGenerator) -> Array[Dictionary]:
+	var catalog := [
+		{ "id": "OVERCLOCK", "title": "OVERCLOCK", "cost": 4, "desc": "+35% Fire Rate" },
+		{ "id": "PHANTOM_DRIVE", "title": "PHANTOM DRIVE", "cost": 5, "desc": "+25% Speed, -25% Dash CD" },
+		{ "id": "HIGH_VOLTAGE", "title": "HIGH VOLTAGE", "cost": 6, "desc": "+1 Shot Damage" },
+		{ "id": "NANO_INFUSION", "title": "NANO INFUSION", "cost": 7, "desc": "+2 Max HP & Heal 2" },
+		{ "id": "STATIC_BLINK", "title": "STATIC BLINK", "cost": 6, "desc": "Dash Deals 2 DMG" },
+		{ "id": "ENERGY_SIPHON", "title": "ENERGY SIPHON", "cost": 5, "desc": "+25% Siphon Chance" }
+	]
+	# Deterministically shuffle with rng
+	for i in range(catalog.size() - 1, 0, -1):
+		var j := rng.randi() % (i + 1)
+		var tmp = catalog[i]
+		catalog[i] = catalog[j]
+		catalog[j] = tmp
+	var chosen: Array[Dictionary] = []
+	for i in range(mini(3, catalog.size())):
+		chosen.append(catalog[i])
+	return chosen
+
+
+func _generate_gift_choices(rng: RandomNumberGenerator) -> Array[String]:
+	var pool := ["PHANTOM_DRIVE", "NANO_INFUSION", "STATIC_BLINK", "OVERCLOCK", "HIGH_VOLTAGE"]
+	for i in range(pool.size() - 1, 0, -1):
+		var j := rng.randi() % (i + 1)
+		var tmp = pool[i]
+		pool[i] = pool[j]
+		pool[j] = tmp
+	return [pool[0], pool[1]]
+
+
 func _generate_enemy_spawns(room: RoomData, index: int, room_type: String, rng: RandomNumberGenerator) -> void:
 	room.enemy_spawns.clear()
 
 	if room_type == "START":
-		# 3 introductory chasers
 		room.enemy_spawns.append({ "type": "CHASER", "pos": Vector2(620, 200), "flank_angle": 0.50 })
 		room.enemy_spawns.append({ "type": "CHASER", "pos": Vector2(740, 276), "flank_angle": 0.0 })
 		room.enemy_spawns.append({ "type": "CHASER", "pos": Vector2(620, 360), "flank_angle": -0.50 })
@@ -320,7 +420,7 @@ func _generate_enemy_spawns(room: RoomData, index: int, room_type: String, rng: 
 		room.enemy_spawns.append({ "type": "BOSS", "pos": Vector2(680, 276), "flank_angle": 0.0 })
 		return
 
-	# Progressive enemy composition
+	# Progressive enemy composition for combat arenas & standby spawns
 	var base_enemy_count: int = clampi(3 + int(index * 0.65), 3, 6)
 	var possible_types := ["CHASER"]
 	if index >= 1:
@@ -330,7 +430,6 @@ func _generate_enemy_spawns(room: RoomData, index: int, room_type: String, rng: 
 
 	for i in range(base_enemy_count):
 		var etype: String = possible_types[rng.randi() % possible_types.size()]
-		# Sample position on right 60% of arena
 		var min_x := room.bounds.position.x + room.bounds.size.x * 0.45
 		var max_x := room.bounds.end.x - 80.0
 		var min_y := room.bounds.position.y + 60.0
@@ -346,15 +445,6 @@ func _generate_enemy_spawns(room: RoomData, index: int, room_type: String, rng: 
 
 
 func _validate_room_reachability(room: RoomData) -> bool:
-	## BFS Flood-Fill reachability validator on discrete 32x32 grid.
-	## Guarantees:
-	##   1. Player spawn is clear and within bounds.
-	##   2. Obstacles do not overlap player spawn or exits.
-	##   3. Obstacles do not block all navigation (exit door is 100% reachable).
-	##   4. Every enemy spawn is reachable and not embedded in an obstacle.
-	##   5. Minimum distance between player spawn and enemy spawns is >= 200px.
-
-	# 1. Check player spawn bounds and clearance
 	if not room.bounds.has_point(room.player_spawn):
 		return false
 	for obs in room.obstacles:
@@ -364,7 +454,6 @@ func _validate_room_reachability(room: RoomData) -> bool:
 			if obs.grow(20.0).has_point(door.pos):
 				return false
 
-	# 2. Check enemy spawn clearance and minimum distance
 	for espawn in room.enemy_spawns:
 		var epos: Vector2 = espawn.pos
 		if not room.bounds.has_point(epos):
@@ -375,7 +464,7 @@ func _validate_room_reachability(room: RoomData) -> bool:
 			if obs.grow(16.0).has_point(epos):
 				return false
 
-	# 3. Construct 2D Walkability Grid
+	# Construct 2D Walkability Grid
 	var origin_x := room.bounds.position.x
 	var origin_y := room.bounds.position.y
 	var grid_w := int(ceil(room.bounds.size.x / GRID_CELL_SIZE))
@@ -388,7 +477,6 @@ func _validate_room_reachability(room: RoomData) -> bool:
 			col.append(false)
 		blocked_grid.append(col)
 
-	# Mark obstacle cells as blocked
 	for obs in room.obstacles:
 		var min_gx := clampi(int((obs.position.x - origin_x) / GRID_CELL_SIZE), 0, grid_w - 1)
 		var max_gx := clampi(int((obs.end.x - origin_x) / GRID_CELL_SIZE), 0, grid_w - 1)
@@ -399,7 +487,6 @@ func _validate_room_reachability(room: RoomData) -> bool:
 			for gy in range(min_gy, max_gy + 1):
 				blocked_grid[gx][gy] = true
 
-	# 4. BFS Reachability from Player Spawn
 	var start_gx := clampi(int((room.player_spawn.x - origin_x) / GRID_CELL_SIZE), 0, grid_w - 1)
 	var start_gy := clampi(int((room.player_spawn.y - origin_y) / GRID_CELL_SIZE), 0, grid_h - 1)
 
@@ -431,25 +518,22 @@ func _validate_room_reachability(room: RoomData) -> bool:
 					visited[nx][ny] = true
 					queue.append(Vector2i(nx, ny))
 
-	# Confirm all exit doors are reachable
 	for door in room.exit_doors:
 		var dgx := clampi(int((door.pos.x - origin_x) / GRID_CELL_SIZE), 0, grid_w - 1)
 		var dgy := clampi(int((door.pos.y - origin_y) / GRID_CELL_SIZE), 0, grid_h - 1)
 		if not visited[dgx][dgy]:
-			return false # An exit door is blocked by obstacles!
+			return false
 
-	# Confirm all enemy spawns are reachable
 	for espawn in room.enemy_spawns:
 		var egx := clampi(int((espawn.pos.x - origin_x) / GRID_CELL_SIZE), 0, grid_w - 1)
 		var egy := clampi(int((espawn.pos.y - origin_y) / GRID_CELL_SIZE), 0, grid_h - 1)
 		if not visited[egx][egy]:
-			return false # Enemy spawn trapped in unreachable chamber!
+			return false
 
 	return true
 
 
 func _build_fallback_room(index: int, room_type: String) -> RoomData:
-	## Guaranteed safe fallback room template if procedural generation exceeds retries.
 	var room := RoomData.new()
 	room.index = index
 	room.room_type = room_type
@@ -461,7 +545,6 @@ func _build_fallback_room(index: int, room_type: String) -> RoomData:
 	room.exit_doors.append({ "pos": door_pos, "target_room": index + 1, "target_type": "COMBAT", "label": "FORWARD CORRIDOR" })
 	room.obstacles.clear()
 
-	# Two safe, small pillar blocks
 	var center := ROOM_RECT.get_center()
 	room.obstacles.append(Rect2(center.x - 120.0, center.y - 20.0, 40.0, 40.0))
 	room.obstacles.append(Rect2(center.x + 120.0, center.y - 20.0, 40.0, 40.0))
