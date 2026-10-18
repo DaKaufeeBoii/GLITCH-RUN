@@ -1,6 +1,5 @@
 extends CharacterBody2D
-## Production-grade cyberpunk pixel-art player with multi-animation state machine,
-## aiming blaster weapon pivot, dash ghost trails, and mobile/desktop controls.
+## Geometric cyberpunk operative with twin-stick movement, dynamic dash, and precision aiming.
 
 signal health_changed(current: int, maximum: int)
 signal died
@@ -8,7 +7,6 @@ signal dashed
 signal damaged(amount: int)
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/projectile.tscn")
-const ASSET_LOADER := preload("res://scripts/asset_loader.gd")
 
 const MOVE_SPEED := 245.0
 const DASH_SPEED := 720.0
@@ -30,13 +28,11 @@ var damage_cooldown := 0.0
 var dead := false
 var is_firing := false
 
-# Visual nodes
-var anim_sprite: AnimatedSprite2D
-var gun_sprite: Sprite2D
 var ghost_spawn_timer := 0.0
 
 
 func _ready() -> void:
+	add_to_group("player")
 	if Engine.has_singleton("RunState") or get_node_or_null("/root/RunState") != null:
 		var rs = get_node("/root/RunState")
 		max_health = rs.max_health
@@ -44,77 +40,14 @@ func _ready() -> void:
 		rs.health_updated.connect(_on_runstate_health_updated)
 	else:
 		health = max_health
-
-	_setup_visual_components()
-
-
-func _setup_visual_components() -> void:
-	var sheet_tex := ASSET_LOADER.load_texture("res://assets/player/player_sheet.png")
-	var blaster_tex := ASSET_LOADER.load_texture("res://assets/player/blaster.png")
-
-	var frames := SpriteFrames.new()
-
-	if sheet_tex:
-		# 1. Idle (Row 0, 4 frames)
-		frames.add_animation("idle")
-		frames.set_animation_speed("idle", 6.0)
-		frames.set_animation_loop("idle", true)
-		for c in range(4):
-			frames.add_frame("idle", _make_atlas(sheet_tex, c, 0))
-
-		# 2. Run (Row 1, 6 frames)
-		frames.add_animation("run")
-		frames.set_animation_speed("run", 10.0)
-		frames.set_animation_loop("run", true)
-		for c in range(6):
-			frames.add_frame("run", _make_atlas(sheet_tex, c, 1))
-
-		# 3. Dash (Row 2, 4 frames)
-		frames.add_animation("dash")
-		frames.set_animation_speed("dash", 14.0)
-		frames.set_animation_loop("dash", false)
-		for c in range(4):
-			frames.add_frame("dash", _make_atlas(sheet_tex, c, 2))
-
-		# 4. Hurt (Row 3, 4 frames)
-		frames.add_animation("hurt")
-		frames.set_animation_speed("hurt", 12.0)
-		frames.set_animation_loop("hurt", false)
-		for c in range(4):
-			frames.add_frame("hurt", _make_atlas(sheet_tex, c, 3))
-
-		# 5. Death (Row 4, 6 frames)
-		frames.add_animation("death")
-		frames.set_animation_speed("death", 8.0)
-		frames.set_animation_loop("death", false)
-		for c in range(6):
-			frames.add_frame("death", _make_atlas(sheet_tex, c, 4))
-
-	anim_sprite = AnimatedSprite2D.new()
-	anim_sprite.name = "PlayerSprite"
-	anim_sprite.sprite_frames = frames
-	anim_sprite.play("idle")
-	add_child(anim_sprite)
-
-	# Dedicated Blaster Weapon Sprite
-	gun_sprite = Sprite2D.new()
-	gun_sprite.name = "Blaster"
-	gun_sprite.texture = blaster_tex
-	gun_sprite.offset = Vector2(0, 0)
-	add_child(gun_sprite)
-
-
-func _make_atlas(tex: Texture2D, col: int, row: int) -> AtlasTexture:
-	var at := AtlasTexture.new()
-	at.atlas = tex
-	at.region = Rect2(col * 32, row * 32, 32, 32)
-	return at
+	queue_redraw()
 
 
 func _on_runstate_health_updated(curr: int, max_h: int) -> void:
 	health = curr
 	max_health = max_h
 	health_changed.emit(health, max_health)
+	queue_redraw()
 
 
 func _physics_process(delta: float) -> void:
@@ -143,7 +76,6 @@ func _physics_process(delta: float) -> void:
 		dash_time -= delta
 		velocity = aim_direction * DASH_SPEED
 
-		# Spawn cyber ghost afterimages during dash
 		ghost_spawn_timer -= delta
 		if ghost_spawn_timer <= 0.0:
 			ghost_spawn_timer = 0.035
@@ -151,7 +83,6 @@ func _physics_process(delta: float) -> void:
 
 		if rs and rs.dash_damage:
 			_apply_dash_damage()
-			queue_redraw()
 	else:
 		velocity = move_input * (MOVE_SPEED * move_mult)
 		if not touch_aim.is_zero_approx():
@@ -161,76 +92,36 @@ func _physics_process(delta: float) -> void:
 			if not mouse_direction.is_zero_approx():
 				aim_direction = mouse_direction.normalized()
 
+	rotation = aim_direction.angle()
 	move_and_slide()
+	queue_redraw()
 
-	# Update visual orientation and animation states
-	_update_animation_and_weapon(move_input)
-
-	# Input actions
 	if (Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_SPACE)) and dash_cooldown <= 0.0:
 		try_dash()
 
-	var firing := touch_fire or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_key_pressed(KEY_J)
+	var firing := touch_fire or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_key_pressed(KEY_J) or Input.is_key_pressed(KEY_K)
 	is_firing = firing
 	if firing and fire_cooldown <= 0.0:
 		_fire()
 
 
-func _update_animation_and_weapon(move_input: Vector2) -> void:
-	if not is_instance_valid(anim_sprite):
-		return
-
-	# Horizontal flip matches aiming direction
-	var is_facing_left := aim_direction.x < -0.05
-	anim_sprite.flip_h = is_facing_left
-
-	# Position and angle weapon towards aim direction
-	if is_instance_valid(gun_sprite):
-		var gun_offset := Vector2(-4.0 if is_facing_left else 4.0, 2.0)
-		gun_sprite.position = gun_offset + aim_direction * 8.0
-		gun_sprite.rotation = aim_direction.angle()
-		gun_sprite.flip_v = is_facing_left
-
-	# Damage flash effect
-	if damage_cooldown > 0.0:
-		var blink := int(damage_cooldown * 18.0) % 2 == 0
-		anim_sprite.modulate = Color(1.0, 1.0, 1.0, 0.4) if blink else Color(1.0, 1.0, 1.0, 1.0)
-	else:
-		anim_sprite.modulate = Color(1.0, 1.0, 1.0, 1.0)
-
-	# State-driven animation playback
-	if dash_time > 0.0:
-		if anim_sprite.animation != "dash":
-			anim_sprite.play("dash")
-	elif damage_cooldown > 0.5:
-		if anim_sprite.animation != "hurt":
-			anim_sprite.play("hurt")
-	elif move_input.length() > 0.1:
-		if anim_sprite.animation != "run":
-			anim_sprite.play("run")
-	else:
-		if anim_sprite.animation != "idle":
-			anim_sprite.play("idle")
-
-
 func _spawn_dash_ghost(has_static_blink: bool) -> void:
-	var ghost := Sprite2D.new()
-	if anim_sprite.sprite_frames and anim_sprite.sprite_frames.has_animation(anim_sprite.animation):
-		var frame_count := anim_sprite.sprite_frames.get_frame_count(anim_sprite.animation)
-		if anim_sprite.frame < frame_count:
-			ghost.texture = anim_sprite.sprite_frames.get_frame_texture(anim_sprite.animation, anim_sprite.frame)
+	var ghost := Node2D.new()
 	ghost.global_position = global_position
-	ghost.flip_h = anim_sprite.flip_h
+	ghost.rotation = rotation
 	ghost.z_index = z_index - 1
-
 	var ghost_color := Color("c084fc") if has_static_blink else Color("38bdf8")
 	ghost_color.a = 0.55
 	ghost.modulate = ghost_color
 
+	# Custom draw for ghost polygon
+	var poly := PackedVector2Array([Vector2(17, 0), Vector2(-11, -11), Vector2(-7, 0), Vector2(-11, 11)])
+	ghost.draw.connect(func(): ghost.draw_colored_polygon(poly, Color.WHITE))
+
 	get_parent().add_child(ghost)
 
 	var tween := ghost.create_tween()
-	tween.tween_property(ghost, "modulate:a", 0.0, 0.22)
+	tween.tween_property(ghost, "modulate:a", 0.0, 0.2)
 	tween.tween_callback(Callable(ghost, "queue_free"))
 
 
@@ -263,6 +154,8 @@ func try_dash() -> void:
 	if rs:
 		cd_mult = rs.dash_cooldown_mult
 	dash_cooldown = DASH_COOLDOWN * cd_mult
+	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+		get_node("/root/AudioSynth").play("dash", 0.05, -2.0)
 	dashed.emit()
 
 
@@ -278,19 +171,18 @@ func take_damage(amount: int) -> void:
 		return
 	health = maxi(0, health - amount)
 	damage_cooldown = 0.75
+	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+		get_node("/root/AudioSynth").play("player_hurt", 0.05, 0.0)
 	damaged.emit(amount)
 	health_changed.emit(health, max_health)
 	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		rs.current_health = health
+	queue_redraw()
 
 	if health == 0:
 		dead = true
 		set_physics_process(false)
-		if is_instance_valid(gun_sprite):
-			gun_sprite.visible = false
-		if is_instance_valid(anim_sprite):
-			anim_sprite.play("death")
 		died.emit()
 
 
@@ -305,23 +197,60 @@ func _fire() -> void:
 		count = rs.projectile_count
 
 	fire_cooldown = FIRE_INTERVAL * interval_mult
+	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+		get_node("/root/AudioSynth").play("blaster", 0.08, -3.0)
 
 	if count == 1:
 		_spawn_bullet(aim_direction, extra_dmg)
 	else:
-		_spawn_bullet(aim_direction.rotated(-0.08), extra_dmg)
-		_spawn_bullet(aim_direction.rotated(0.08), extra_dmg)
+		_spawn_bullet(aim_direction.rotated(-0.10), extra_dmg)
+		_spawn_bullet(aim_direction.rotated(0.10), extra_dmg)
 
 
 func _spawn_bullet(dir: Vector2, extra_dmg: int) -> void:
+	var shoot_dir := dir.normalized()
+	if shoot_dir.is_zero_approx():
+		shoot_dir = Vector2.RIGHT
+
 	var projectile = PROJECTILE_SCENE.instantiate()
-	projectile.position = global_position + dir * 18.0
-	projectile.direction = dir
+	# Spawn clear of player collision shape (radius 13 + bullet 5 = 18; using 24.0)
+	projectile.global_position = global_position + shoot_dir * 24.0
+	projectile.direction = shoot_dir
 	projectile.damage = 1 + extra_dmg
 	get_parent().add_child(projectile)
 
 
 func _draw() -> void:
+	var body_color := Color("38bdf8") # Sleek cyber cyan
+	if dash_time > 0.0:
+		body_color = Color("c084fc") # Dynamic purple during invulnerable dash
+	elif damage_cooldown > 0.0 and int(damage_cooldown * 14.0) % 2 == 0:
+		body_color = Color("ffffff") # Crisp damage flash blink
+
+	# Primary aerodynamic geometric arrow polygon
+	var pts := PackedVector2Array([
+		Vector2(17, 0),
+		Vector2(-11, -11),
+		Vector2(-7, 0),
+		Vector2(-11, 11)
+	])
+	draw_colored_polygon(pts, body_color)
+	draw_polyline(PackedVector2Array([Vector2(17, 0), Vector2(-11, -11), Vector2(-7, 0), Vector2(-11, 11), Vector2(17, 0)]), body_color.lightened(0.35), 1.2)
+
+	# Twin rail blaster barrels
+	draw_line(Vector2(-1, -7), Vector2(13, -7), Color("1e293b"), 2.2)
+	draw_line(Vector2(-1, 7), Vector2(13, 7), Color("1e293b"), 2.2)
+	draw_circle(Vector2(13, -7), 1.5, body_color)
+	draw_circle(Vector2(13, 7), 1.5, body_color)
+
+	# Cockpit / visor targeting line
+	draw_line(Vector2(5, 0), Vector2(16, 0), Color("ffffff"), 1.8)
+
+	# Central glowing energy core
+	draw_circle(Vector2(-2, 0), 3.5, Color("e0f2fe"))
+	draw_circle(Vector2(-2, 0), 2.0, Color("ffffff"))
+
+	# Electric discharge during static blink dash damage
 	var rs = get_node_or_null("/root/RunState")
 	if dash_time > 0.0 and rs and rs.dash_damage:
 		for i in range(4):

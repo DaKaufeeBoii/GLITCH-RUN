@@ -12,12 +12,13 @@ config_version=5
 
 config/name="GLITCH//RUN"
 config/description="An offline-first adaptive action roguelite prototype."
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://scenes/ui/main_menu.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [autoload]
 
 RunState="*res://scripts/run_state.gd"
+AudioSynth="*res://scripts/audio_synth.gd"
 
 [display]
 

@@ -1,13 +1,14 @@
 extends CharacterBody2D
-## Fast razor interceptor drone with afterburner flare telegraph, supersonic lunge, and recovery.
+## Fast interceptor drone shaped as an aggressive magenta chevron with high-speed lunge and hazard trails.
 
 signal defeated
 
-const ASSET_LOADER := preload("res://scripts/asset_loader.gd")
+const HAZARD_SCENE := preload("res://scenes/weapons/hazard_node.tscn")
 
 @export var max_health := 2
 @export var patrol_speed := 95.0
 @export var lunge_speed := 560.0
+@export var has_hazard_trail := false
 
 var health := 2
 var target: Node2D
@@ -20,62 +21,18 @@ var state_timer := 1.2
 var lunge_direction := Vector2.RIGHT
 var contact_dealt := false
 var damage_flash := 0.0
-
-var anim_sprite: AnimatedSprite2D
+var hazard_timer := 0.0
 
 
 func _ready() -> void:
 	health = max_health
 	add_to_group("enemies")
 	state_timer = randf_range(1.0, 2.0)
-	_setup_visuals()
-
-
-func _setup_visuals() -> void:
-	var tex := ASSET_LOADER.load_texture("res://assets/enemies/dasher_sheet.png")
-	var frames := SpriteFrames.new()
-
-	# Stalk cruise (Frames 0 and 1)
-	frames.add_animation("cruise")
-	frames.set_animation_speed("cruise", 6.0)
-	frames.set_animation_loop("cruise", true)
-
-	if tex:
-		for i in range(2):
-			var at := AtlasTexture.new()
-			at.atlas = tex
-			at.region = Rect2(i * 32, 0, 32, 32)
-			frames.add_frame("cruise", at)
-
-		# Telegraph overclock (Frame 2)
-		frames.add_animation("overclock")
-		frames.set_animation_speed("overclock", 10.0)
-		var at_oc := AtlasTexture.new()
-		at_oc.atlas = tex
-		at_oc.region = Rect2(2 * 32, 0, 32, 32)
-		frames.add_frame("overclock", at_oc)
-
-		# Lunge dive (Frame 3)
-		frames.add_animation("lunge")
-		frames.set_animation_speed("lunge", 12.0)
-		var at_l := AtlasTexture.new()
-		at_l.atlas = tex
-		at_l.region = Rect2(3 * 32, 0, 32, 32)
-		frames.add_frame("lunge", at_l)
-
-	anim_sprite = AnimatedSprite2D.new()
-	anim_sprite.sprite_frames = frames
-	anim_sprite.play("cruise")
-	add_child(anim_sprite)
+	queue_redraw()
 
 
 func _physics_process(delta: float) -> void:
 	damage_flash = maxf(0.0, damage_flash - delta)
-	if is_instance_valid(anim_sprite):
-		if damage_flash > 0.0:
-			anim_sprite.modulate = Color(2.0, 2.0, 2.0, 1.0)
-		else:
-			anim_sprite.modulate = Color(1.0, 1.0, 1.0, 1.0)
 
 	if not is_instance_valid(target):
 		return
@@ -87,15 +44,11 @@ func _physics_process(delta: float) -> void:
 		State.STALK:
 			rotation = to_target.angle()
 			velocity = to_target.normalized() * patrol_speed
-			if is_instance_valid(anim_sprite) and anim_sprite.animation != "cruise":
-				anim_sprite.play("cruise")
 			if state_timer <= 0.0 and to_target.length() < 300.0:
 				state = State.TELEGRAPH
 				state_timer = 0.55
 				lunge_direction = to_target.normalized()
 				velocity = Vector2.ZERO
-				if is_instance_valid(anim_sprite):
-					anim_sprite.play("overclock")
 				queue_redraw()
 
 		State.TELEGRAPH:
@@ -105,8 +58,7 @@ func _physics_process(delta: float) -> void:
 				state = State.LUNGE
 				state_timer = 0.28
 				contact_dealt = false
-				if is_instance_valid(anim_sprite):
-					anim_sprite.play("lunge")
+				hazard_timer = 0.0
 
 		State.LUNGE:
 			velocity = lunge_direction * lunge_speed
@@ -115,12 +67,18 @@ func _physics_process(delta: float) -> void:
 				if target.has_method("take_damage"):
 					target.take_damage(1)
 					contact_dealt = true
+
+			# Drop electric hazard nodes along the lunge path
+			if has_hazard_trail:
+				hazard_timer -= delta
+				if hazard_timer <= 0.0:
+					hazard_timer = 0.05
+					_drop_hazard()
+
 			if state_timer <= 0.0:
 				state = State.RECOVER
 				state_timer = 0.65
 				velocity = Vector2.ZERO
-				if is_instance_valid(anim_sprite):
-					anim_sprite.play("cruise")
 
 		State.RECOVER:
 			velocity = Vector2.ZERO
@@ -129,7 +87,17 @@ func _physics_process(delta: float) -> void:
 				state = State.STALK
 				state_timer = randf_range(1.4, 2.2)
 
-	move_and_slide()
+	if is_inside_tree():
+		move_and_slide()
+	queue_redraw()
+
+
+func _drop_hazard() -> void:
+	if not get_parent():
+		return
+	var hz = HAZARD_SCENE.instantiate()
+	hz.global_position = global_position
+	get_parent().add_child(hz)
 
 
 func take_damage(amount: int) -> void:
@@ -147,12 +115,58 @@ func take_damage(amount: int) -> void:
 func _draw() -> void:
 	# Warning trajectory during telegraph
 	if state == State.TELEGRAPH:
-		var pulse := 0.5 + sin(state_timer * 28.0) * 0.45
-		draw_line(Vector2.ZERO, to_local(global_position + lunge_direction * 240.0), Color(1.0, 0.2, 0.8, pulse), 3.0)
-		draw_line(Vector2.ZERO, to_local(global_position + lunge_direction * 240.0), Color(1.0, 0.9, 1.0, pulse * 0.7), 1.0)
+		var pulse := 0.4 + sin(state_timer * 25.0) * 0.3
+		var line_color := Color(1.0, 0.1, 0.5, pulse) if not has_hazard_trail else Color(1.0, 0.2, 0.7, pulse + 0.2)
+		draw_line(Vector2.ZERO, to_local(global_position + lunge_direction * 220.0), line_color, 3.0)
+		if has_hazard_trail:
+			draw_line(Vector2.ZERO, to_local(global_position + lunge_direction * 220.0), Color(1.0, 0.9, 1.0, pulse * 0.7), 1.0)
+
+	# Dynamic color based on combat state
+	var body_color := Color("d946ef")
+	if damage_flash > 0.0:
+		body_color = Color("ffffff")
+	elif state == State.TELEGRAPH:
+		body_color = Color("f472b6")
+	elif state == State.LUNGE:
+		body_color = Color("ef4444")
+	elif state == State.RECOVER:
+		body_color = Color("831843")
+
+	# Aggressive geometric chevron polygon
+	var pts := PackedVector2Array([
+		Vector2(16, 0),
+		Vector2(-12, -13),
+		Vector2(-4, 0),
+		Vector2(-12, 13)
+	])
+	draw_colored_polygon(pts, body_color)
+	draw_polyline(PackedVector2Array([
+		Vector2(16, 0),
+		Vector2(-12, -13),
+		Vector2(-4, 0),
+		Vector2(-12, 13),
+		Vector2(16, 0)
+	]), body_color.lightened(0.35), 1.5)
+
+	# Evolved hazard trail capacitors on wingtips
+	if has_hazard_trail:
+		draw_circle(Vector2(-12, -13), 2.5, Color("f472b6"))
+		draw_circle(Vector2(-12, 13), 2.5, Color("f472b6"))
+		draw_circle(Vector2(-12, -13), 1.2, Color("ffffff"))
+		draw_circle(Vector2(-12, 13), 1.2, Color("ffffff"))
+
+	# Thruster flare during lunge
+	if state == State.LUNGE:
+		var flame := PackedVector2Array([
+			Vector2(-4, 0),
+			Vector2(-14, -5),
+			Vector2(-22, 0),
+			Vector2(-14, 5)
+		])
+		draw_colored_polygon(flame, Color("fbcfe8"))
 
 	# Health bar
 	if health < max_health:
 		var hit_points := float(health) / float(max_health)
 		draw_rect(Rect2(-12, -18, 24, 3), Color("181a26"))
-		draw_rect(Rect2(-11, -17, 22.0 * hit_points, 2), Color("d946ef"))
+		draw_rect(Rect2(-11, -17, 22.0 * hit_points, 2), Color("ec4899"))

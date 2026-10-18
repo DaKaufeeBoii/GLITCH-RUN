@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://euithovl2dix"
-path="res://.godot/imported/dasher_sheet.png-131e40dc5f733e54f05aedf196f642b5.ctex"
+uid="uid://djgympvwy2kef"
+path="res://.godot/imported/boss.png-e082db91d6fa1618aacdf6fe050837a1.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/enemies/dasher_sheet.png"
-dest_files=["res://.godot/imported/dasher_sheet.png-131e40dc5f733e54f05aedf196f642b5.ctex"]
+source_file="res://assets/enemies/boss.png"
+dest_files=["res://.godot/imported/boss.png-e082db91d6fa1618aacdf6fe050837a1.ctex"]
 
 [params]
 

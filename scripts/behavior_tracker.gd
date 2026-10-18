@@ -121,3 +121,16 @@ func get_profile() -> Dictionary:
 		"damage_per_min": damage_per_min,
 		"dashes_per_min": dashes_per_min
 	}
+
+
+func get_combat_metrics() -> Dictionary:
+	var prof := get_profile()
+	var total_t := maxf(0.1, total_combat_time)
+	return {
+		"moving_time_ratio": clampf((mobile_firing_time + (total_combat_time - total_firing_time) * 0.7) / total_t, 0.0, 1.0),
+		"avg_distance_to_enemy": 300.0 if prof.ranged > 0.65 else (130.0 if prof.aggression > 0.6 else 210.0),
+		"firing_time_ratio": clampf(total_firing_time / total_t, 0.0, 1.0),
+		"dash_count": dash_timestamps.size(),
+		"damage_taken": damage_timestamps.size(),
+		"profile": prof
+	}

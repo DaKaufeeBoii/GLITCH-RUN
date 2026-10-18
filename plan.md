@@ -20,22 +20,20 @@ This plan tracks the current prototype, the next playable milestones, and later 
 ```text
 project.godot
 assets/
-  player/
-    player_sheet.png (192x160 32x32 spritesheet: idle, run, dash, hurt, death)
-    blaster.png (32x32 bullpup rail pistol)
-  environment/
-    tileset.png (256x128 32x32 tiles: alloy plates, cyber circuits, grates, hatches, server racks, generators)
   ui/
-    hearts.png (64x32 32x32 health module containers: full & depleted)
+    hearts.png (64x32 geometric health module gems: full ruby diamond & depleted socket)
+  player/
+    player.png (32x32 geometric cyan ship arrow)
   enemies/
-    chaser_sheet.png (128x32 4-frame scuttle crawl)
-    shooter_sheet.png (128x32 4-frame hover sentry with charge & recoil)
-    dasher_sheet.png (128x32 4-frame razor interceptor with afterburners)
-    boss_sheet.png (256x64 4-frame Nexus Overlord singularity core)
-    boss_drone.png (16x16 autonomous orbital defense pod)
+    chaser.png (32x32 geometric ruby diamond)
+    shooter.png (32x32 geometric amber hexagon)
+    dasher.png (32x32 geometric magenta chevron)
+    boss.png (64x64 geometric ruby octagon)
   weapons/
-    player_plasma.png (32x16 plasma dart with ion trail)
-    enemy_tachyon.png (24x24 rotating tachyon hazard orb)
+    player_plasma.png (32x16 geometric plasma energy bolt)
+    enemy_tachyon.png (24x24 geometric tachyon hazard orb)
+  environment/
+    tileset.png (128x64 geometric cyber grid plate)
 scenes/
   main.tscn
   player/player.tscn
@@ -62,11 +60,13 @@ scripts/
   adaptive_director.gd
   test_director.gd
   asset_loader.gd
+  generate_geometric_placeholders.py
 README.md
 plan.md
 ```
 
-All placeholder vector shapes have been replaced with production-ready cyberpunk pixel art.
+All entities and projectiles utilize clean, vibrant geometric vector rendering with basic geometrical shapes (arrows, diamonds, hexagons, chevrons, octagons, and glowing spheres) and reliable collision physics.
+
 
 ## Progress
 
@@ -86,11 +86,15 @@ All placeholder vector shapes have been replaced with production-ready cyberpunk
 - [x] Milestone 2: Implement `AdaptiveDirector` with weighted tactical counters (Mobility, Ranged, Turret), cooldowns, and fairness adjustments.
 - [x] Milestone 2: Add on-screen Cyberpunk Director Adaptation alert banner.
 - [x] Milestone 2: Add deterministic scenario test suite (`test_director.gd`) validating all 6 core scenarios.
-- [x] Visual Assets Overhaul: Restored Tech Dungeon pack (animated player, tileset, UI hearts).
-- [x] Visual Assets Overhaul: Generated authentic pixel art for all 4 enemy archetypes and weapon projectiles.
-- [x] Visual Assets Overhaul: Dynamic neon trails, static blink VFX, obstacle server racks with telemetry LEDs, and sector-specific ambient tints.
-- [ ] Open in Godot 4.7.2, run the main scene, and playtest/tune.
-- [ ] Install the first Android build on a physical device and tune touch controls.
+- [x] Visual Assets & Geometric Overhaul: Crisp geometric vector shapes (arrows, diamonds, hexagons, chevrons, octagons).
+- [x] Bullet Physics & Collision: Fixed self-collision bug, proper collision masks, zero Godot warnings.
+- [x] Evolving AI Enemies: Shooter lead prediction aim with cyber lasers, Chaser pincer flanking and flocking separation, Dasher lingering electric hazard trails.
+- [x] Procedural Audio & SFX Synthesis: Zero-asset 16-bit PCM waveform synthesizer (`audio_synth.gd`) with 11 custom retro profiles.
+- [x] Glitch & Juice Overhaul: Quadratic camera trauma shake, custom chromatic aberration / scanline glitch post-process shader (`glitch.gdshader`), and procedural geometric debris emitter (`debris_emitter.gd`).
+- [x] Milestone 3: Cyberpunk Main Menu (`main_menu.gd`) with persistent high score archive and Director threat taxonomy modal.
+- [x] Milestone 3: In-Game Tactical Pause Menu (`pause_menu.gd`) with upgrade review and run stats.
+- [x] Milestone 3: End-of-Run Director Telemetry Debrief Terminal (`debrief_terminal.gd`) featuring procedural 4-axis radar chart and AI adaptation timeline log.
+- [x] Automated Headless Test Suite: All 10 deterministic scenarios pass with zero errors, zero warnings, and zero memory leaks.
 
 ## Milestone 0 — Confirm the first playable slice
 

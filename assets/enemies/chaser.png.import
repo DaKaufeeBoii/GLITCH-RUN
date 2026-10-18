@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://e3k06g2fnb7p"
-path="res://.godot/imported/boss_drone.png-311c0ac6867d4360d0b8f1f3cdc3bae8.ctex"
+uid="uid://bicr6bhchqjws"
+path="res://.godot/imported/chaser.png-79d120525b3c4ac7bd4da025073862b7.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/enemies/boss_drone.png"
-dest_files=["res://.godot/imported/boss_drone.png-311c0ac6867d4360d0b8f1f3cdc3bae8.ctex"]
+source_file="res://assets/enemies/chaser.png"
+dest_files=["res://.godot/imported/chaser.png-79d120525b3c4ac7bd4da025073862b7.ctex"]
 
 [params]
 

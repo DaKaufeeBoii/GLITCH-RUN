@@ -1,22 +1,16 @@
 extends Area2D
-## High-energy player plasma projectile with glowing pixel-art bolt and wall impact.
+## Player plasma bolt with geometric cyan glow, trail drawing, and reliable collision handling.
 
-const ASSET_LOADER := preload("res://scripts/asset_loader.gd")
-
-@export var speed := 620.0
+@export var speed := 640.0
 @export var damage := 1
 var direction := Vector2.RIGHT
-var lifetime := 1.5
-
-var sprite: Sprite2D
+var lifetime := 1.6
 
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
-	sprite = Sprite2D.new()
-	sprite.texture = ASSET_LOADER.load_texture("res://assets/weapons/player_plasma.png")
-	add_child(sprite)
 	rotation = direction.angle()
+	queue_redraw()
 
 
 func _physics_process(delta: float) -> void:
@@ -27,6 +21,25 @@ func _physics_process(delta: float) -> void:
 
 
 func _on_body_entered(body: Node2D) -> void:
-	if body.is_in_group("enemies") and body.has_method("take_damage"):
-		body.take_damage(damage)
+	# Never collide with the firing player
+	if body.is_in_group("player") or body == self:
+		return
+
+	if body.is_in_group("enemies"):
+		if body.has_method("take_damage"):
+			body.take_damage(damage)
+		queue_free()
+		return
+
+	# Collided with static arena walls or obstacles
 	queue_free()
+
+
+func _draw() -> void:
+	# High-visibility geometric cyan plasma bolt
+	# Trailing ion energy line
+	draw_line(Vector2(-10, 0), Vector2(2, 0), Color(0.22, 0.74, 0.97, 0.55), 3.5)
+	# Glowing outer sphere
+	draw_circle(Vector2(2, 0), 4.5, Color(0.22, 0.74, 0.97, 1.0))
+	# White-hot energetic core
+	draw_circle(Vector2(2, 0), 2.2, Color(1.0, 1.0, 1.0, 1.0))

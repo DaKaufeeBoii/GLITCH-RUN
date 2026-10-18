@@ -1,6 +1,6 @@
 extends RefCounted
 class_name AdaptiveDirector
-## Analyzes player combat profile to select telegraphed tactical counters with fairness weights and cooldowns.
+## Analyzes player combat profile to evolve enemy micro-tactics: predictive aiming, pincer flanking, and hazard trails.
 
 var last_tactic := ""
 var tactic_history: Array[String] = []
@@ -34,12 +34,15 @@ func evaluate_sector_tactics(profile: Dictionary, room_index: int, current_hp: i
 		return {
 			"tactic": "STABILIZATION",
 			"banner_title": "DIRECTOR PROTOCOL // COMBAT STABILIZATION",
-			"banner_sub": "Telegraph durations extended +30% • Evasion windows widened",
+			"banner_sub": "Tactical mutations suspended • Telegraph windows widened +30%",
 			"enemy_speed_mult": 0.88,
 			"enemy_telegraph_mult": 1.30,
 			"extra_chasers": 0,
 			"extra_dashers": 0,
-			"extra_shooters": 0
+			"extra_shooters": 0,
+			"has_hazard_trail": false,
+			"pincer_flanking": false,
+			"shooter_lead": 0.0
 		}
 
 	# 2. Score potential counter-tactics based on profile metrics & fairness weights
@@ -77,36 +80,45 @@ func evaluate_sector_tactics(profile: Dictionary, room_index: int, current_hp: i
 			return {
 				"tactic": "COUNTER_MOBILITY",
 				"banner_title": "DIRECTOR ADAPTATION // HIGH MOBILITY DETECTED",
-				"banner_sub": "Deploying perimeter interception vectors & extra Dasher units",
+				"banner_sub": "Dashers dropping ionization hazard lines • Shooters predicting evasion vectors",
 				"enemy_speed_mult": 1.05,
 				"enemy_telegraph_mult": 1.0,
 				"extra_chasers": 0,
 				"extra_dashers": 1,
-				"extra_shooters": 0
+				"extra_shooters": 0,
+				"has_hazard_trail": true,
+				"pincer_flanking": false,
+				"shooter_lead": 0.75
 			}
 
 		"COUNTER_RANGED":
 			return {
 				"tactic": "COUNTER_RANGED",
 				"banner_title": "DIRECTOR ADAPTATION // PERIMETER CAMPING DETECTED",
-				"banner_sub": "Over-tuning hostile advance thrusters (+18% Chaser pursuit speed)",
-				"enemy_speed_mult": 1.18,
+				"banner_sub": "Chasers evolving pincer flanking angles • Shooters leading long-range shots",
+				"enemy_speed_mult": 1.16,
 				"enemy_telegraph_mult": 1.0,
 				"extra_chasers": 1,
 				"extra_dashers": 0,
-				"extra_shooters": 0
+				"extra_shooters": 0,
+				"has_hazard_trail": false,
+				"pincer_flanking": true,
+				"shooter_lead": 1.0
 			}
 
 		"COUNTER_TURRET":
 			return {
 				"tactic": "COUNTER_TURRET",
 				"banner_title": "DIRECTOR ADAPTATION // STATIONARY FIRE DETECTED",
-				"banner_sub": "Deploying long-range energy artillery to force repositioning",
+				"banner_sub": "Artillery barrage deployed • Pincer pursuers advancing to flush cover",
 				"enemy_speed_mult": 1.0,
 				"enemy_telegraph_mult": 0.90,
 				"extra_chasers": 0,
 				"extra_dashers": 0,
-				"extra_shooters": 1
+				"extra_shooters": 1,
+				"has_hazard_trail": true,
+				"pincer_flanking": true,
+				"shooter_lead": 0.60
 			}
 
 		_:
@@ -132,5 +144,8 @@ func _make_default_result(title: String, sub: String) -> Dictionary:
 		"enemy_telegraph_mult": 1.0,
 		"extra_chasers": 0,
 		"extra_dashers": 0,
-		"extra_shooters": 0
+		"extra_shooters": 0,
+		"has_hazard_trail": false,
+		"pincer_flanking": false,
+		"shooter_lead": 0.0
 	}

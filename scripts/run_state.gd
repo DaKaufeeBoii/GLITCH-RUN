@@ -26,6 +26,12 @@ var dash_damage := false
 var siphon_chance := 0.0
 var active_upgrade_ids: Array[String] = []
 
+# Persistent Run Statistics & Director Debrief History
+var best_sector := 1
+var best_score := 0
+var best_time := 0.0
+var tactics_log: Array[Dictionary] = []
+
 const UPGRADE_CATALOG: Array[Dictionary] = [
 	{
 		"id": "OVERCLOCK",
@@ -89,7 +95,27 @@ func start_new_run() -> void:
 	dash_damage = false
 	siphon_chance = 0.0
 	active_upgrade_ids.clear()
+	tactics_log.clear()
 	health_updated.emit(current_health, max_health)
+
+
+func record_tactic(sector: int, tactic_name: String, trigger_reason: String, mutations_desc: String) -> void:
+	tactics_log.append({
+		"sector": sector,
+		"tactic": tactic_name,
+		"reason": trigger_reason,
+		"mutations": mutations_desc
+	})
+
+
+func finalize_run_stats(won: bool) -> void:
+	var sector_reached := current_room_index + (1 if won else 0)
+	if sector_reached > best_sector:
+		best_sector = sector_reached
+	if score > best_score:
+		best_score = score
+	if won and (best_time == 0.0 or run_time < best_time):
+		best_time = run_time
 
 
 func get_random_upgrade_choices(count: int = 3) -> Array[Dictionary]:
