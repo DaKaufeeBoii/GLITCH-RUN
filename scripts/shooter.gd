@@ -4,6 +4,7 @@ extends CharacterBody2D
 signal defeated
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/enemy_projectile.tscn")
+const EnemySteering := preload("res://scripts/enemy_steering.gd")
 
 @export var max_health := 3
 @export var move_speed := 82.0
@@ -19,8 +20,13 @@ var telegraph_time := 0.0
 const TELEGRAPH_DURATION := 0.65
 var aimed_direction := Vector2.RIGHT
 var damage_flash := 0.0
+var recovery_time := 0.0
 
 var genome: RefCounted = null
+var spatial_index: RefCounted = null
+var squad_coordinator: RefCounted = null
+var obstacle_rects: Array[Rect2] = []
+
 var damage_multipliers: Dictionary = {
 	"plasma": 1.0,
 	"dash": 1.0,
@@ -37,19 +43,13 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	damage_flash = maxf(0.0, damage_flash - delta)
+	recovery_time = maxf(0.0, recovery_time - delta)
 
 	if not is_instance_valid(target):
 		return
 
 	var to_target := target.global_position - global_position
 	var dist := to_target.length()
-
-	# Compute predictive interception vector based on target velocity
-	var aim_pos := target.global_position
-	if lead_prediction > 0.0 and "velocity" in target:
-		var bullet_speed := 390.0
-		var time_to_hit := dist / bullet_speed
-		aim_pos += target.velocity * time_to_hit * lead_prediction
 	rotation = to_target.angle()
 
 	if telegraph_time > 0.0:
@@ -59,26 +59,53 @@ func _physics_process(delta: float) -> void:
 		queue_redraw()
 		if telegraph_time <= 0.0:
 			_fire_shot()
+			recovery_time = 0.35 # Recovery window after shot
+			if squad_coordinator:
+				squad_coordinator.release_attack_token(self)
+	elif recovery_time > 0.0:
+		velocity = Vector2.ZERO
 	else:
-		var predicted_dir := (aim_pos - global_position).normalized()
+		# Bounded lead interception: prediction angle clamped to 45 deg max
+		var target_vel: Vector2 = target.velocity if ("velocity" in target) else Vector2.ZERO
+		var aim_pos: Vector2 = EnemySteering.predict_target_position(
+			global_position,
+			target.global_position,
+			target_vel,
+			390.0,
+			lead_prediction
+		)
+		var predicted_dir: Vector2 = (aim_pos - global_position).normalized()
 		aimed_direction = predicted_dir
+
 		fire_timer -= delta
 		if fire_timer <= 0.0 and dist < 450.0:
-			var timing_mult: float = float(genome.attack_timing_mult) if (genome and "attack_timing_mult" in genome) else 1.0
-			telegraph_time = TELEGRAPH_DURATION * timing_mult
-			aimed_direction = predicted_dir
-			fire_timer = randf_range(2.0, 3.0) * timing_mult
-			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
-				get_node("/root/AudioSynth").play("enemy_laser_charge", 0.05, -4.0)
+			# Check line of sight: do not shoot through blocking obstacle pillars
+			var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects)
+			var cur_time: float = Time.get_ticks_msec() / 1000.0
+			var token_granted: bool = (squad_coordinator == null or squad_coordinator.request_attack_token(self, cur_time))
 
-		# Kiting movement: maintain ideal distance
-		if dist < ideal_distance - 40.0:
-			velocity = -to_target.normalized() * (move_speed * 1.1)
-		elif dist > ideal_distance + 40.0:
-			velocity = to_target.normalized() * move_speed
-		else:
-			var strafe := to_target.orthogonal().normalized()
-			velocity = strafe * (move_speed * 0.75)
+			if not los_blocked and token_granted:
+				var timing_mult: float = float(genome.attack_timing_mult) if (genome and "attack_timing_mult" in genome) else 1.0
+				telegraph_time = TELEGRAPH_DURATION * timing_mult
+				aimed_direction = predicted_dir
+				fire_timer = randf_range(2.0, 3.0) * timing_mult
+				if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+					get_node("/root/AudioSynth").play("enemy_laser_charge", 0.05, -4.0)
+			else:
+				# Reposition before re-evaluating attack
+				fire_timer = 0.4
+
+		# Kiting movement: maintain ideal distance & avoid obstacles
+		var kite_vel: Vector2 = EnemySteering.calculate_range_velocity(global_position, target.global_position, ideal_distance, move_speed)
+		var separation: Vector2 = Vector2.ZERO
+		if spatial_index:
+			separation = spatial_index.get_separation_for_agent(self, 35.0, 3)
+
+		var move_dir: Vector2 = (kite_vel.normalized() + separation * 0.4).normalized()
+		if not obstacle_rects.is_empty():
+			move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 35.0)
+
+		velocity = move_dir * move_speed
 
 	if is_inside_tree():
 		move_and_slide()
@@ -105,6 +132,8 @@ func take_damage(amount: int, source: String = "plasma") -> void:
 	queue_redraw()
 	if health == 0:
 		defeated_already = true
+		if squad_coordinator:
+			squad_coordinator.release_attack_token(self)
 		defeated.emit()
 		queue_free()
 

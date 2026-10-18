@@ -19,6 +19,9 @@ var orbital_angle := 0.0
 var dash_target_dir := Vector2.ZERO
 var dash_hit_player := false
 var damage_flash := 0.0
+var phase_two_triggered := false
+
+var squad_coordinator: RefCounted = null
 
 
 func _ready() -> void:
@@ -50,15 +53,20 @@ func _physics_process(delta: float) -> void:
 				move_and_slide()
 
 			if phase_timer <= 0.0:
-				var pick := randi() % 2
-				if pick == 0:
-					current_phase = AttackPhase.CHARGING_BURST
-					phase_timer = 0.85
+				var cur_time: float = Time.get_ticks_msec() / 1000.0
+				var token_granted: bool = (squad_coordinator == null or squad_coordinator.request_attack_token(self, cur_time))
+				if token_granted:
+					var pick := randi() % 2
+					if pick == 0:
+						current_phase = AttackPhase.CHARGING_BURST
+						phase_timer = 0.85
+					else:
+						current_phase = AttackPhase.CHARGING_DASH
+						phase_timer = 0.75
+						dash_target_dir = to_target.normalized()
+						dash_hit_player = false
 				else:
-					current_phase = AttackPhase.CHARGING_DASH
-					phase_timer = 0.75
-					dash_target_dir = to_target.normalized()
-					dash_hit_player = false
+					phase_timer = 0.35 # Stagger retry
 
 		AttackPhase.CHARGING_BURST:
 			velocity = Vector2.ZERO
@@ -90,6 +98,8 @@ func _physics_process(delta: float) -> void:
 
 		AttackPhase.RECOVER:
 			velocity = Vector2.ZERO
+			if squad_coordinator:
+				squad_coordinator.release_attack_token(self)
 			if phase_timer <= 0.0:
 				current_phase = AttackPhase.IDLE
 				phase_timer = randf_range(1.4, 2.2)
@@ -116,9 +126,18 @@ func take_damage(amount: int) -> void:
 		return
 	health = maxi(0, health - amount)
 	damage_flash = 0.12
+
+	# Phase 2 cue when boss health drops below 50%
+	if not phase_two_triggered and health <= int(max_health * 0.5):
+		phase_two_triggered = true
+		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+			get_node("/root/AudioSynth").play("mutation_alert", 0.08, 0.0)
+
 	health_changed.emit(health, max_health)
 	if health == 0:
 		defeated_already = true
+		if squad_coordinator:
+			squad_coordinator.release_attack_token(self)
 		defeated.emit()
 		queue_free()
 	else:

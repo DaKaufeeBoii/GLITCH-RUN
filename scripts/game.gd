@@ -19,6 +19,8 @@ const DIRECTOR_TESTS_SCRIPT := preload("res://scripts/test_director.gd")
 const DEBRIS_EMITTER_SCRIPT := preload("res://scripts/debris_emitter.gd")
 const PAUSE_MENU_SCRIPT := preload("res://scripts/pause_menu.gd")
 const DEBRIEF_TERMINAL_SCRIPT := preload("res://scripts/debrief_terminal.gd")
+const SPATIAL_INDEX_SCRIPT := preload("res://scripts/spatial_index.gd")
+const SQUAD_COORDINATOR_SCRIPT := preload("res://scripts/squad_coordinator.gd")
 
 const ROOM_RECT := Rect2(42.0, 64.0, 876.0, 424.0)
 
@@ -84,6 +86,8 @@ var director: RefCounted
 var dungeon_generator: RefCounted
 var dungeon_layout: RefCounted
 var encounter_director: RefCounted
+var spatial_index: RefCounted
+var squad_coordinator: RefCounted
 var current_room_data: RefCounted
 var current_sector_tactic := "DEFAULT"
 var damage_taken_this_sector := 0
@@ -116,6 +120,8 @@ func _ready() -> void:
 	director = ADAPTIVE_DIRECTOR_SCRIPT.new()
 	dungeon_generator = DUNGEON_GEN_SCRIPT.new()
 	encounter_director = ENCOUNTER_DIR_SCRIPT.new()
+	spatial_index = SPATIAL_INDEX_SCRIPT.new()
+	squad_coordinator = SQUAD_COORDINATOR_SCRIPT.new()
 
 	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
 		DIRECTOR_TESTS_SCRIPT.run_all_tests()
@@ -223,6 +229,14 @@ func _process(delta: float) -> void:
 	# Track player combat behavior for adaptive director
 	if not get_tree().paused and is_instance_valid(player) and tracker:
 		tracker.update(delta, player.global_position, player.velocity, active_enemies, player.is_firing, rs.run_time)
+
+	# Update spatial index and squad coordinator
+	if spatial_index:
+		spatial_index.update_cache()
+	if squad_coordinator and rs:
+		var cur_depth: int = rs.progression.run_depth if rs.progression else 1
+		var cur_hp: int = player.health if is_instance_valid(player) else 5
+		squad_coordinator.configure_for_depth(cur_depth, cur_hp)
 
 	# Update Top HUD Hearts & Badges
 	if is_instance_valid(player):
@@ -466,6 +480,10 @@ func _load_room(index: int) -> void:
 			child.queue_free()
 
 	active_enemies.clear()
+	if spatial_index:
+		spatial_index.clear()
+	if squad_coordinator:
+		squad_coordinator.reset()
 
 	var rs_node = get_node_or_null("/root/RunState")
 	var sec_seed: int = rs_node.progression.get_current_sector_seed() if (rs_node and rs_node.progression) else (rs_node.current_seed if rs_node else 1337)
@@ -572,6 +590,10 @@ func _spawn_boss(pos: Vector2) -> void:
 	var boss: Node2D = BOSS_SCENE.instantiate()
 	boss.position = pos
 	boss.target = player
+	if "squad_coordinator" in boss:
+		boss.squad_coordinator = squad_coordinator
+	if spatial_index:
+		spatial_index.register_agent(boss)
 	boss.connect("defeated", Callable(self, "_on_enemy_defeated").bind(boss))
 	add_child(boss)
 	active_enemies.append(boss)
@@ -599,6 +621,14 @@ func _spawn_enemy(
 	enemy.position = pos
 	if "target" in enemy:
 		enemy.target = player
+	if "spatial_index" in enemy:
+		enemy.spatial_index = spatial_index
+	if "squad_coordinator" in enemy:
+		enemy.squad_coordinator = squad_coordinator
+	if "obstacle_rects" in enemy:
+		enemy.obstacle_rects = obstacle_rects
+	if spatial_index:
+		spatial_index.register_agent(enemy)
 	if "move_speed" in enemy:
 		enemy.move_speed *= speed_mult
 	if "patrol_speed" in enemy:
@@ -625,6 +655,10 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 	if run_over:
 		return
 	active_enemies.erase(enemy_node)
+	if spatial_index:
+		spatial_index.unregister_agent(enemy_node)
+	if squad_coordinator:
+		squad_coordinator.release_attack_token(enemy_node)
 
 	# Spawn geometric debris shards and screen shake based on hostile type
 	var shard_type := "diamond"

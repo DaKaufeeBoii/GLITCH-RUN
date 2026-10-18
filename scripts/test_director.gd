@@ -10,6 +10,9 @@ const LEARNING_POLICY_SCRIPT := preload("res://scripts/learning_policy.gd")
 const DUNGEON_GEN_SCRIPT := preload("res://scripts/dungeon_generator.gd")
 const ENCOUNTER_DIR_SCRIPT := preload("res://scripts/encounter_director.gd")
 const RUN_PROGRESSION_SCRIPT := preload("res://scripts/run_progression.gd")
+const ENEMY_STEERING_SCRIPT := preload("res://scripts/enemy_steering.gd")
+const SPATIAL_INDEX_SCRIPT := preload("res://scripts/spatial_index.gd")
+const SQUAD_COORDINATOR_SCRIPT := preload("res://scripts/squad_coordinator.gd")
 
 func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
@@ -46,9 +49,14 @@ static func run_all_tests() -> bool:
 	all_passed = test_subseed_determinism() and all_passed
 	all_passed = test_run_state_history_bounding() and all_passed
 	all_passed = test_branching_room_advancement() and all_passed
+	all_passed = test_ai_bounded_prediction() and all_passed
+	all_passed = test_ai_obstacle_avoidance_steering() and all_passed
+	all_passed = test_ai_spatial_separation_and_capping() and all_passed
+	all_passed = test_ai_squad_attack_staggering() and all_passed
+	all_passed = test_dasher_hazard_cap_and_spacing() and all_passed
 
 	if all_passed:
-		print("--- ALL 26 DIRECTOR, EVOLUTION, LEARNING, FAIRNESS & DUNGEON NAVIGATION SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 31 DIRECTOR, EVOLUTION, STEERING, FAIRNESS & DUNGEON NAVIGATION SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -792,5 +800,159 @@ static func test_branching_room_advancement() -> bool:
 	return true
 
 
+static func test_ai_bounded_prediction() -> bool:
+	var origin := Vector2(100, 100)
+	var target_pos := Vector2(300, 100) # Directly to the right, distance 200
+	var bullet_speed := 400.0
+
+	# 1. Zero prediction factor must return direct target position
+	var direct_pos: Vector2 = ENEMY_STEERING_SCRIPT.predict_target_position(origin, target_pos, Vector2(0, 300), bullet_speed, 0.0)
+	assert(direct_pos == target_pos, "Zero prediction factor must aim straight at target")
+
+	# 2. Perpendicular movement with prediction leads target
+	var lead_pos: Vector2 = ENEMY_STEERING_SCRIPT.predict_target_position(origin, target_pos, Vector2(0, 200), bullet_speed, 1.0)
+	assert(lead_pos.y > target_pos.y, "Aim must lead target down when velocity is downward")
+
+	# 3. Maximum lead angle clamp: even with extreme transverse velocity (10,000 px/s),
+	# deflection angle relative to direct line must not exceed MAX_LEAD_ANGLE (45 deg = 0.7854 rad)
+	var extreme_lead_pos: Vector2 = ENEMY_STEERING_SCRIPT.predict_target_position(origin, target_pos, Vector2(0, 10000), bullet_speed, 1.0)
+	var direct_dir := (target_pos - origin).normalized()
+	var clamped_dir := (extreme_lead_pos - origin).normalized()
+	var angle_deflection := absf(direct_dir.angle_to(clamped_dir))
+	assert(angle_deflection <= ENEMY_STEERING_SCRIPT.MAX_LEAD_ANGLE + 0.001, "Lead prediction must be clamped to 45 degrees max to preserve dodge window")
+
+	print("  [PASS] AI Bounded Target Prediction & Dodge Window Scenario")
+	return true
 
 
+static func test_ai_obstacle_avoidance_steering() -> bool:
+	var obstacles: Array[Rect2] = [
+		Rect2(200, 180, 40, 40) # Obstacle at (200, 180) to (240, 220), center at (220, 200)
+	]
+
+	# 1. Direct path hitting the obstacle must be deflected
+	var agent_pos := Vector2(170, 200) # Heading directly right toward center of obstacle
+	var desired_dir := Vector2.RIGHT
+	var steered_dir: Vector2 = ENEMY_STEERING_SCRIPT.avoid_obstacles(agent_pos, desired_dir, obstacles, 45.0)
+	assert(steered_dir != desired_dir, "Obstacle avoidance must deflect trajectory when heading into obstacle")
+	assert(absf(steered_dir.y) > 0.1, "Steered trajectory must develop lateral deflection component")
+
+	# 2. Line of sight blocked through obstacle
+	var blocked: bool = ENEMY_STEERING_SCRIPT.is_line_blocked(Vector2(150, 200), Vector2(250, 200), obstacles)
+	assert(blocked, "Line of sight penetrating obstacle must return blocked=true")
+
+	# 3. Clear line of sight outside obstacle
+	var clear: bool = ENEMY_STEERING_SCRIPT.is_line_blocked(Vector2(150, 100), Vector2(250, 100), obstacles)
+	assert(not clear, "Clear line of sight must return blocked=false")
+
+	print("  [PASS] AI Obstacle Avoidance Steering & Line of Sight Scenario")
+	return true
+
+
+static func test_ai_spatial_separation_and_capping() -> bool:
+	var index = SPATIAL_INDEX_SCRIPT.new()
+
+	# Create dummy combatant nodes
+	var node1 := Node2D.new()
+	node1.global_position = Vector2(100, 100)
+	var node2 := Node2D.new()
+	node2.global_position = Vector2(105, 100) # 5px away
+	var node3 := Node2D.new()
+	node3.global_position = Vector2(110, 100) # 10px away
+	var node4 := Node2D.new()
+	node4.global_position = Vector2(115, 100) # 15px away
+	var node5 := Node2D.new()
+	node5.global_position = Vector2(120, 100) # 20px away
+
+	index.register_agent(node1)
+	index.register_agent(node2)
+	index.register_agent(node3)
+	index.register_agent(node4)
+	index.register_agent(node5)
+	index.update_cache()
+
+	# Neighbor count capping: capped to 3 neighbors max
+	var neighbors: Array[Vector2] = index.get_neighbor_positions(node1.global_position, 50.0, 3, node1.global_position)
+	assert(neighbors.size() == 3, "SpatialIndex neighbor lookup must be capped at max_count")
+
+	# Separation repulsion: node1 is to the left of neighbors, so separation must push left (-X)
+	var sep: Vector2 = index.get_separation_for_agent(node1, 50.0, 3)
+	assert(sep.x < 0.0, "Separation vector must push away from neighbor cluster")
+
+	# Agent unregistration
+	index.unregister_agent(node5)
+	assert(index.registered_agents.size() == 4, "Unregistering agent must update index size")
+
+	node1.free()
+	node2.free()
+	node3.free()
+	node4.free()
+	node5.free()
+
+	print("  [PASS] AI Spatial Neighbor Separation & Bounded Capping Scenario")
+	return true
+
+
+static func test_ai_squad_attack_staggering() -> bool:
+	var coordinator = SQUAD_COORDINATOR_SCRIPT.new(1, 0.45)
+	var enemy_a := Node2D.new()
+	var enemy_b := Node2D.new()
+
+	# 1. First attacker requests token at t = 1.0 -> Granted
+	var granted_a: bool = coordinator.request_attack_token(enemy_a, 1.0)
+	assert(granted_a, "First attacker should be granted an attack token")
+	assert(coordinator.is_attacker_active(enemy_a), "Attacker A must be registered as active")
+
+	# 2. Second attacker requests token immediately at t = 1.1 -> Denied by stagger cooldown
+	var granted_b_early: bool = coordinator.request_attack_token(enemy_b, 1.1)
+	assert(not granted_b_early, "Simultaneous attack within stagger window must be denied")
+
+	# 3. Second attacker requests token after stagger cooldown at t = 1.6 -> Denied because max concurrent tokens = 1
+	var granted_b_staggered: bool = coordinator.request_attack_token(enemy_b, 1.6)
+	assert(not granted_b_staggered, "Attack must be denied when max concurrent threat tokens is reached")
+
+	# 4. Attacker A finishes attack and releases token -> Attacker B granted token at t = 1.7
+	coordinator.release_attack_token(enemy_a)
+	assert(not coordinator.is_attacker_active(enemy_a), "Attacker A must be deregistered")
+	var granted_b_freed: bool = coordinator.request_attack_token(enemy_b, 1.7)
+	assert(granted_b_freed, "Attacker B must be granted token after previous token release and stagger window")
+
+	# 5. Low player health fairness mercy stabilization
+	coordinator.configure_for_depth(10, 2) # Deep depth, but player HP is critical (<= 2)
+	assert(coordinator.max_concurrent_threat_tokens == 1, "Fairness stabilization must clamp tokens to 1 when HP <= 2")
+	assert(coordinator.min_stagger_cooldown >= 0.65, "Fairness stabilization must lengthen stagger window when HP <= 2")
+
+	enemy_a.free()
+	enemy_b.free()
+
+	print("  [PASS] AI Squad Attack Budget Staggering & Fairness Mercy Scenario")
+	return true
+
+
+static func test_dasher_hazard_cap_and_spacing() -> bool:
+	var dasher_scene := load("res://scenes/enemies/dasher.tscn")
+	var dasher: CharacterBody2D = dasher_scene.instantiate()
+	dasher.has_hazard_trail = true
+
+	assert(dasher.MAX_ACTIVE_HAZARDS == 4, "Dasher must cap active hazards to 4 max")
+	assert(dasher.active_hazards.is_empty(), "Initial hazards list must be empty")
+
+	# Simulate active hazards
+	var dummy_hazards: Array[Node2D] = []
+	for i in range(5):
+		var h := Node2D.new()
+		dummy_hazards.append(h)
+		dasher.active_hazards.append(h)
+
+	# Clean hazards when nodes become invalid or queue_freed
+	dummy_hazards[0].free()
+	dasher._clean_hazards()
+	assert(dasher.active_hazards.size() == 4, "Clean hazards must prune freed nodes")
+
+	for i in range(1, 5):
+		dummy_hazards[i].free()
+
+	dasher.free()
+
+	print("  [PASS] Dasher Hazard Trail Capping & Spacing Scenario")
+	return true

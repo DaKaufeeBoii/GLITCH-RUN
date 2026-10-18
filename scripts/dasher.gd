@@ -4,6 +4,7 @@ extends CharacterBody2D
 signal defeated
 
 const HAZARD_SCENE := preload("res://scenes/weapons/hazard_node.tscn")
+const EnemySteering := preload("res://scripts/enemy_steering.gd")
 
 @export var max_health := 2
 @export var patrol_speed := 95.0
@@ -23,7 +24,15 @@ var contact_dealt := false
 var damage_flash := 0.0
 var hazard_timer := 0.0
 
+const MAX_ACTIVE_HAZARDS := 4
+var active_hazards: Array[Node2D] = []
+var last_hazard_pos := Vector2.INF
+
 var genome: RefCounted = null
+var spatial_index: RefCounted = null
+var squad_coordinator: RefCounted = null
+var obstacle_rects: Array[Rect2] = []
+
 var damage_multipliers: Dictionary = {
 	"plasma": 1.0,
 	"dash": 1.0,
@@ -50,14 +59,29 @@ func _physics_process(delta: float) -> void:
 	match state:
 		State.STALK:
 			rotation = to_target.angle()
-			velocity = to_target.normalized() * patrol_speed
+			var move_dir: Vector2 = to_target.normalized()
+			if not obstacle_rects.is_empty():
+				move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 40.0)
+			var separation: Vector2 = Vector2.ZERO
+			if spatial_index:
+				separation = spatial_index.get_separation_for_agent(self, 30.0, 3)
+			velocity = (move_dir + separation * 0.4).normalized() * patrol_speed
+
 			if state_timer <= 0.0 and to_target.length() < 300.0:
-				state = State.TELEGRAPH
-				var timing_mult: float = float(genome.attack_timing_mult) if (genome and "attack_timing_mult" in genome) else 1.0
-				state_timer = 0.55 * timing_mult
-				lunge_direction = to_target.normalized()
-				velocity = Vector2.ZERO
-				queue_redraw()
+				var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects)
+				var cur_time: float = Time.get_ticks_msec() / 1000.0
+				var token_granted: bool = (squad_coordinator == null or squad_coordinator.request_attack_token(self, cur_time))
+
+				if not los_blocked and token_granted:
+					state = State.TELEGRAPH
+					var timing_mult: float = float(genome.attack_timing_mult) if (genome and "attack_timing_mult" in genome) else 1.0
+					state_timer = 0.55 * timing_mult
+					lunge_direction = to_target.normalized()
+					velocity = Vector2.ZERO
+					last_hazard_pos = Vector2.INF
+					queue_redraw()
+				else:
+					state_timer = 0.35 # Staggered retry
 
 		State.TELEGRAPH:
 			velocity = Vector2.ZERO
@@ -78,18 +102,23 @@ func _physics_process(delta: float) -> void:
 					if genome and "damage_dealt_to_player" in genome:
 						genome.damage_dealt_to_player += 1
 
-			# Drop electric hazard nodes along the lunge path
+			# Drop capped, spaced electric hazard nodes along the lunge path
 			if has_hazard_trail:
 				hazard_timer -= delta
 				if hazard_timer <= 0.0:
-					hazard_timer = 0.05
-					_drop_hazard()
+					hazard_timer = 0.06
+					_clean_hazards()
+					if active_hazards.size() < MAX_ACTIVE_HAZARDS:
+						if last_hazard_pos == Vector2.INF or global_position.distance_to(last_hazard_pos) >= 45.0:
+							_drop_hazard()
 
 			if state_timer <= 0.0:
 				state = State.RECOVER
 				var timing_mult: float = float(genome.attack_timing_mult) if (genome and "attack_timing_mult" in genome) else 1.0
 				state_timer = 0.65 * timing_mult
 				velocity = Vector2.ZERO
+				if squad_coordinator:
+					squad_coordinator.release_attack_token(self)
 
 		State.RECOVER:
 			velocity = Vector2.ZERO
@@ -103,11 +132,21 @@ func _physics_process(delta: float) -> void:
 	queue_redraw()
 
 
+func _clean_hazards() -> void:
+	var valid: Array[Node2D] = []
+	for h in active_hazards:
+		if is_instance_valid(h):
+			valid.append(h)
+	active_hazards = valid
+
+
 func _drop_hazard() -> void:
 	if not get_parent():
 		return
 	var hz = HAZARD_SCENE.instantiate()
 	hz.global_position = global_position
+	last_hazard_pos = global_position
+	active_hazards.append(hz)
 	get_parent().add_child(hz)
 
 
@@ -121,6 +160,8 @@ func take_damage(amount: int, source: String = "plasma") -> void:
 	queue_redraw()
 	if health == 0:
 		defeated_already = true
+		if squad_coordinator:
+			squad_coordinator.release_attack_token(self)
 		defeated.emit()
 		queue_free()
 

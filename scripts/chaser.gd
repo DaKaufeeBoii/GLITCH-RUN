@@ -3,6 +3,8 @@ extends CharacterBody2D
 
 signal defeated
 
+const EnemySteering := preload("res://scripts/enemy_steering.gd")
+
 @export var max_health := 3
 @export var move_speed := 92.0
 @export var flank_angle := 0.0
@@ -15,6 +17,8 @@ var defeated_already := false
 var damage_flash := 0.0
 
 var genome: RefCounted = null
+var spatial_index: RefCounted = null
+var obstacle_rects: Array[Rect2] = []
 var damage_multipliers: Dictionary = {
 	"plasma": 1.0,
 	"dash": 1.0,
@@ -44,16 +48,22 @@ func _physics_process(delta: float) -> void:
 		if (is_flanker or absf(flank_angle) > 0.01) and dist > 85.0:
 			approach_dir = to_target.rotated(flank_angle).normalized()
 
-		# Swarm neighbor separation to prevent stacking
+		# Obstacle avoidance: steer around pillars
+		if not obstacle_rects.is_empty():
+			approach_dir = EnemySteering.avoid_obstacles(global_position, approach_dir, obstacle_rects, 40.0)
+
+		# Swarm neighbor separation using shared SpatialIndex
 		var separation := Vector2.ZERO
-		if is_inside_tree() and get_tree() != null:
+		if spatial_index != null:
+			separation = spatial_index.get_separation_for_agent(self, 30.0, 4)
+		elif is_inside_tree() and get_tree() != null:
+			var n_positions: Array[Vector2] = []
 			for node in get_tree().get_nodes_in_group("enemies"):
 				if node != self and is_instance_valid(node):
-					var d := global_position.distance_to(node.global_position)
-					if d < 28.0 and d > 0.0:
-						separation += (global_position - node.global_position).normalized() * ((28.0 - d) / 28.0)
+					n_positions.append(node.global_position)
+			separation = EnemySteering.get_separation_vector(global_position, n_positions, 30.0, 4)
 
-		velocity = (approach_dir + separation * 0.4).normalized() * move_speed
+		velocity = (approach_dir + separation * 0.45).normalized() * move_speed
 	else:
 		velocity = Vector2.ZERO
 		if contact_cooldown <= 0.0 and target.has_method("take_damage"):

@@ -79,17 +79,17 @@
 
 **Goal:** Make enemy roles distinct and coordinated while maintaining counterplay and Android performance.
 
-- [ ] Profile current AI and establish an enemy-count/frame-time budget for a lower-end target phone before increasing spawn counts.
-- [ ] Replace per-Chaser full-tree enemy scans with a shared, bounded spatial-neighbor service or encounter-level neighbor cache updated at a lower cadence. Use squared distances and cap neighbor contributions.
-- [ ] Add a small reusable steering/decision layer for desired range, separation, obstacle avoidance, target prediction, and attack cooldown. Keep family-specific state machines (Chaser, Shooter, Dasher); do not force every enemy into identical behavior.
-- [ ] Chaser: pursue with separation and obstacle-aware pathing; alternate direct approach and telegraphed flank roles; avoid stacking at the player or becoming trapped against walls.
-- [ ] Shooter: maintain a readable range/strafe pattern, commit aim when the telegraph begins, show a stable warning direction, fire, and recover. Permit lead aim only within bounded prediction and preserve a dodge window. Avoid shooting through blocking geometry unless the weapon is explicitly designed to do so.
-- [ ] Dasher: preserve its telegraph/locked direction, cap and space hazard drops, avoid laying hazards on every frame, and ensure arena geometry leaves a counterplay route. Add a clear recovery period after lunges.
-- [ ] Bosses: use authored phase/state machines with attack cooldowns, stable telegraphs, phase transition cues, collision-safe movement, and one-time damage per attack. Never apply contact damage every physics tick while overlapping.
-- [ ] Improve squad coordination using simple encounter roles (pressure, flank, ranged support) and shared attack budgets. Stagger high-threat attacks; avoid simultaneous unavoidable telegraphs.
-- [ ] Integrate enemy genomes with explicit per-trait caps and visible trade-offs. Keep adaptation gradual, prevent a tactic from stacking duplicate stat modifiers, and log which mutation caused a behavior.
-- [ ] Make adaptive director decisions depend on adequate player data, include cooldowns/diversity limits, and apply health-based fairness stabilization. Consider replacing or disabling the current LinUCB path until its learned weights and reward behavior have real gameplay validation; do not call synthetic benchmark output proof of player enjoyment.
-- [ ] Add deterministic AI scenarios for prediction bounds, telegraph lock, wall/obstacle navigation, separation, contact damage once per attack, hazard caps, fair attack staggering, mutation cap enforcement, and long-frame/pause behavior.
+- [x] Profile current AI and establish an enemy-count/frame-time budget for a lower-end target phone before increasing spawn counts.
+- [x] Replace per-Chaser full-tree enemy scans with a shared, bounded spatial-neighbor service or encounter-level neighbor cache updated at a lower cadence. Use squared distances and cap neighbor contributions.
+- [x] Add a small reusable steering/decision layer for desired range, separation, obstacle avoidance, target prediction, and attack cooldown. Keep family-specific state machines (Chaser, Shooter, Dasher); do not force every enemy into identical behavior.
+- [x] Chaser: pursue with separation and obstacle-aware pathing; alternate direct approach and telegraphed flank roles; avoid stacking at the player or becoming trapped against walls.
+- [x] Shooter: maintain a readable range/strafe pattern, commit aim when the telegraph begins, show a stable warning direction, fire, and recover. Permit lead aim only within bounded prediction and preserve a dodge window. Avoid shooting through blocking geometry unless the weapon is explicitly designed to do so.
+- [x] Dasher: preserve its telegraph/locked direction, cap and space hazard drops, avoid laying hazards on every frame, and ensure arena geometry leaves a counterplay route. Add a clear recovery period after lunges.
+- [x] Bosses: use authored phase/state machines with attack cooldowns, stable telegraphs, phase transition cues, collision-safe movement, and one-time damage per attack. Never apply contact damage every physics tick while overlapping.
+- [x] Improve squad coordination using simple encounter roles (pressure, flank, ranged support) and shared attack budgets. Stagger high-threat attacks; avoid simultaneous unavoidable telegraphs.
+- [x] Integrate enemy genomes with explicit per-trait caps and visible trade-offs. Keep adaptation gradual, prevent a tactic from stacking duplicate stat modifiers, and log which mutation caused a behavior.
+- [x] Make adaptive director decisions depend on adequate player data, include cooldowns/diversity limits, and apply health-based fairness stabilization. Consider replacing or disabling the current LinUCB path until its learned weights and reward behavior have real gameplay validation; do not call synthetic benchmark output proof of player enjoyment.
+- [x] Add deterministic AI scenarios for prediction bounds, telegraph lock, wall/obstacle navigation, separation, contact damage once per attack, hazard caps, fair attack staggering, mutation cap enforcement, and long-frame/pause behavior.
 
 **Acceptance:** Each enemy can be recognized by behavior, dangerous attacks are readable and dodgeable, enemy coordination avoids burst unfairness, and measured worst-case combat remains within target performance budget.
 
