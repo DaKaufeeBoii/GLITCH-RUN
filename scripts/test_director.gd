@@ -13,6 +13,8 @@ const RUN_PROGRESSION_SCRIPT := preload("res://scripts/run_progression.gd")
 const ENEMY_STEERING_SCRIPT := preload("res://scripts/enemy_steering.gd")
 const SPATIAL_INDEX_SCRIPT := preload("res://scripts/spatial_index.gd")
 const SQUAD_COORDINATOR_SCRIPT := preload("res://scripts/squad_coordinator.gd")
+const BOSS_DIRECTOR_SCRIPT := preload("res://scripts/boss_director.gd")
+const BOSS_DEFINITION_SCRIPT := preload("res://scripts/boss_definition.gd")
 
 func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
@@ -54,9 +56,13 @@ static func run_all_tests() -> bool:
 	all_passed = test_ai_spatial_separation_and_capping() and all_passed
 	all_passed = test_ai_squad_attack_staggering() and all_passed
 	all_passed = test_dasher_hazard_cap_and_spacing() and all_passed
+	all_passed = test_boss_definition_registry() and all_passed
+	all_passed = test_boss_director_rotation_and_schedule() and all_passed
+	all_passed = test_returning_boss_mutation_tradeoffs() and all_passed
+	all_passed = test_boss_history_run_persistence() and all_passed
 
 	if all_passed:
-		print("--- ALL 31 DIRECTOR, EVOLUTION, STEERING, FAIRNESS & DUNGEON NAVIGATION SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 35 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER & FAIRNESS SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -956,3 +962,115 @@ static func test_dasher_hazard_cap_and_spacing() -> bool:
 
 	print("  [PASS] Dasher Hazard Trail Capping & Spacing Scenario")
 	return true
+
+
+static func test_boss_definition_registry() -> bool:
+	var director = BOSS_DIRECTOR_SCRIPT.new()
+	assert(director.definitions.size() == 3, "Boss director must have 3 authored bosses")
+	assert(director.definitions.has("nexus_overlord"), "Must register nexus_overlord")
+	assert(director.definitions.has("vector_sentinel"), "Must register vector_sentinel")
+	assert(director.definitions.has("null_architect"), "Must register null_architect")
+
+	for b_id in ["nexus_overlord", "vector_sentinel", "null_architect"]:
+		var b_def = director.get_boss_definition(b_id)
+		assert(b_def != null, "Definition must exist for %s" % b_id)
+		assert(ResourceLoader.exists(b_def.scene_path), "Boss scene must exist at %s" % b_def.scene_path)
+		assert(b_def.base_health >= 25, "Base health must be at least 25")
+		assert(b_def.base_speed > 30.0, "Base speed must be > 30")
+		assert(b_def.allowed_mutations.size() >= 2, "Boss must define at least 2 authored mutation tiers")
+		for m in b_def.allowed_mutations:
+			assert(m.has("id") and m.has("name") and m.has("desc"), "Mutation must have id, name, and desc trade-off")
+
+	print("  [PASS] Boss Definition Roster Registry Scenario")
+	return true
+
+
+static func test_boss_director_rotation_and_schedule() -> bool:
+	var director = BOSS_DIRECTOR_SCRIPT.new()
+
+	# 1. Sector 1 eligibility: Sector 1 has nexus_overlord and vector_sentinel
+	var sec1_eligible: Array = director.get_eligible_bosses(1)
+	assert(sec1_eligible.size() == 2, "Sector 1 must have exactly 2 eligible bosses")
+
+	# 2. Sector 2 eligibility: All 3 bosses eligible
+	var sec2_eligible: Array = director.get_eligible_bosses(2)
+	assert(sec2_eligible.size() == 3, "Sector 2+ must have all 3 bosses eligible")
+
+	# 3. Repetition cooldown: selecting boss for next sector must not repeat last_scheduled_boss_id
+	var seed_val := 4242
+	var b1 = director.select_boss_for_sector(1, seed_val, "")
+	var b2 = director.select_boss_for_sector(2, seed_val, b1.boss_id)
+	assert(b2.boss_id != b1.boss_id, "Boss scheduling must enforce repetition cooldown across adjacent sectors")
+
+	# 4. Deterministic schedule: same seed must produce identical schedule
+	var director2 = BOSS_DIRECTOR_SCRIPT.new()
+	var b1_repro = director2.select_boss_for_sector(1, seed_val, "")
+	var b2_repro = director2.select_boss_for_sector(2, seed_val, b1_repro.boss_id)
+	assert(b1_repro.boss_id == b1.boss_id, "Boss schedule must be 100% deterministic for a seed")
+	assert(b2_repro.boss_id == b2.boss_id, "Boss schedule must be 100% deterministic for a seed")
+
+	print("  [PASS] Boss Director Rotation & Repetition Cooldown Scenario")
+	return true
+
+
+static func test_returning_boss_mutation_tradeoffs() -> bool:
+	var director = BOSS_DIRECTOR_SCRIPT.new()
+
+	# 1. First encounter has 0 mutations (clean baseline)
+	var m0: Array[Dictionary] = director.get_mutations_for_encounter("nexus_overlord")
+	assert(m0.is_empty(), "First encounter must have 0 mutations (baseline calibration)")
+
+	# Simulate first defeat
+	director.record_encounter("nexus_overlord", 1, 5, "VICTORY", m0)
+
+	# 2. Second encounter (first return) has Tier 1 mutation with trade-off
+	var m1: Array[Dictionary] = director.get_mutations_for_encounter("nexus_overlord")
+	assert(m1.size() == 1, "Returning boss must receive exactly 1 capped mutation tier")
+	assert(m1[0].id == "BURST_OVERCLOCK", "First return must assign Tier 1 mutation (BURST_OVERCLOCK)")
+
+	# Simulate second defeat
+	director.record_encounter("nexus_overlord", 2, 10, "VICTORY", m1)
+
+	# 3. Third encounter has Tier 2 mutation
+	var m2: Array[Dictionary] = director.get_mutations_for_encounter("nexus_overlord")
+	assert(m2.size() == 1, "Third encounter must have exactly 1 capped mutation tier")
+	assert(m2[0].id == "TITAN_DASH", "Second return must assign Tier 2 mutation (TITAN_DASH)")
+
+	# 4. Verify boss instance parameter mutation with trade-off
+	var boss_scene := load("res://scenes/enemies/boss.tscn")
+	var boss: CharacterBody2D = boss_scene.instantiate()
+	assert(boss.burst_projectile_count == 8, "Baseline projectile count should be 8")
+	assert(boss.post_burst_recovery == 1.0, "Baseline post-burst recovery should be 1.0s")
+
+	boss.apply_mutations(m1)
+	assert(boss.burst_projectile_count == 10, "BURST_OVERCLOCK must increase projectiles to 10")
+	assert(boss.post_burst_recovery > 1.2, "BURST_OVERCLOCK must add recovery time trade-off")
+	boss.free()
+
+	print("  [PASS] Returning Boss Mutation Tiers & Trade-offs Scenario")
+	return true
+
+
+static func test_boss_history_run_persistence() -> bool:
+	var rs_scene := load("res://scripts/run_state.gd")
+	var rs = rs_scene.new()
+	rs.start_new_run(9999)
+
+	assert(rs.boss_encounter_history.is_empty(), "boss_encounter_history must start empty on new run")
+
+	# Record multiple encounters
+	for i in range(25):
+		rs.record_boss_encounter("boss_%d" % i, i + 1, (i + 1) * 5, "VICTORY", [{"id": "MUT"}])
+
+	# Bounding check
+	assert(rs.boss_encounter_history.size() == rs.MAX_LOG_HISTORY, "boss_encounter_history must be capped at MAX_LOG_HISTORY (20)")
+	assert(rs.boss_encounter_history[0].boss_id == "boss_5", "Must preserve newest 20 encounters")
+
+	# Starting new run must clear history
+	rs.start_new_run(8888)
+	assert(rs.boss_encounter_history.is_empty(), "Starting new run must clear boss_encounter_history")
+
+	rs.free()
+	print("  [PASS] Boss History Run Persistence & Bounding Scenario")
+	return true
+

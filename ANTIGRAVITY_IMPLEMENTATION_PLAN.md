@@ -97,14 +97,14 @@
 
 **Goal:** Add multiple recognizable bosses and make returns feel like adaptation rather than inflated stats.
 
-- [ ] Define a `BossDefinition` resource/data format: stable boss ID, display name, scene, sector/depth eligibility, base stats, attack kit, phase thresholds, telegraph timings, and allowed mutation set.
-- [ ] Implement at least three mechanically distinct bosses before scaling: retain Nexus Overlord and add two with different arena control/movement patterns. Reuse common health-bar, phase, warning, and defeat interfaces while keeping attacks authored per boss.
-- [ ] Add a boss director that chooses a boss from the eligible roster using a run-seeded schedule and repetition cooldown. Ensure boss milestones recur during endless mode; do not make the first boss a run-ending event.
-- [ ] Persist boss encounter history within a run: encounter count, player outcome, attacks/mutations used, and a bounded evolution level. Reset this history on new run unless permanent meta-progression is later deliberately designed.
-- [ ] On a returning boss, choose one or a small capped number of visible mutations that alter attack sequencing, arena control, or adds. Include a trade-off or extra recovery opportunity; avoid only raising health/damage.
-- [ ] Show an arrival card/name, boss health bar, phase cues, mutation explanation, and post-fight reward. Add clear accessibility alternatives for color-only warnings.
-- [ ] Ensure boss scaling is bounded and tested at high run depths; use predictable authored mutation tiers rather than unbounded numeric growth.
-- [ ] Save a compact boss history into the run debrief. Do not persist mutable run boss state across app restarts unless a deliberate resumable-run feature is implemented.
+- [x] Define a `BossDefinition` resource/data format: stable boss ID, display name, scene, sector/depth eligibility, base stats, attack kit, phase thresholds, telegraph timings, and allowed mutation set.
+- [x] Implement at least three mechanically distinct bosses before scaling: retain Nexus Overlord and add two with different arena control/movement patterns. Reuse common health-bar, phase, warning, and defeat interfaces while keeping attacks authored per boss.
+- [x] Add a boss director that chooses a boss from the eligible roster using a run-seeded schedule and repetition cooldown. Ensure boss milestones recur during endless mode; do not make the first boss a run-ending event.
+- [x] Persist boss encounter history within a run: encounter count, player outcome, attacks/mutations used, and a bounded evolution level. Reset this history on new run unless permanent meta-progression is later deliberately designed.
+- [x] On a returning boss, choose one or a small capped number of visible mutations that alter attack sequencing, arena control, or adds. Include a trade-off or extra recovery opportunity; avoid only raising health/damage.
+- [x] Show an arrival card/name, boss health bar, phase cues, mutation explanation, and post-fight reward. Add clear accessibility alternatives for color-only warnings.
+- [x] Ensure boss scaling is bounded and tested at high run depths; use predictable authored mutation tiers rather than unbounded numeric growth.
+- [x] Save a compact boss history into the run debrief. Do not persist mutable run boss state across app restarts unless a deliberate resumable-run feature is implemented.
 
 **Acceptance:** At least three distinct bosses can recur in an endless run. A returned boss has an understandable changed pattern, remains counterable, and reaches no uncapped stat values. Boss schedule and evolution are reproducible for a seed.
 

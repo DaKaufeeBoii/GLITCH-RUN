@@ -22,6 +22,10 @@ var damage_flash := 0.0
 var phase_two_triggered := false
 
 var squad_coordinator: RefCounted = null
+var active_mutations: Array[Dictionary] = []
+var burst_projectile_count := 8
+var dash_speed := 420.0
+var post_burst_recovery := 1.0
 
 
 func _ready() -> void:
@@ -30,6 +34,17 @@ func _ready() -> void:
 	add_to_group("boss")
 	phase_timer = 2.0
 	queue_redraw()
+
+
+func apply_mutations(mutations: Array[Dictionary]) -> void:
+	active_mutations = mutations
+	for m in mutations:
+		var m_id: String = m.get("id", "")
+		if m_id == "BURST_OVERCLOCK":
+			burst_projectile_count = 10
+			post_burst_recovery = 1.35
+		elif m_id == "TITAN_DASH":
+			dash_speed = 500.0
 
 
 func _physics_process(delta: float) -> void:
@@ -73,7 +88,7 @@ func _physics_process(delta: float) -> void:
 			if phase_timer <= 0.0:
 				_execute_burst()
 				current_phase = AttackPhase.RECOVER
-				phase_timer = 1.0
+				phase_timer = post_burst_recovery
 
 		AttackPhase.CHARGING_DASH:
 			velocity = Vector2.ZERO
@@ -86,7 +101,7 @@ func _physics_process(delta: float) -> void:
 				dash_hit_player = false
 
 		AttackPhase.DASHING:
-			velocity = dash_target_dir * 420.0
+			velocity = dash_target_dir * dash_speed
 			if is_inside_tree():
 				move_and_slide()
 			if not dash_hit_player and to_target.length() < 46.0 and target.has_method("take_damage"):
@@ -108,7 +123,7 @@ func _physics_process(delta: float) -> void:
 
 
 func _execute_burst() -> void:
-	var count := 8
+	var count := burst_projectile_count
 	var angle_step := TAU / float(count)
 	var base_angle := orbital_angle
 	for i in range(count):

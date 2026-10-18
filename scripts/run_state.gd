@@ -45,6 +45,7 @@ var difficulty := "NORMAL"
 var tactics_log: Array[Dictionary] = []
 var evolution_log: Array[Dictionary] = []
 var dungeon_layout_summary: Array[Dictionary] = []
+var boss_encounter_history: Array[Dictionary] = []
 var current_seed := 1337
 
 
@@ -182,7 +183,20 @@ func start_new_run(p_seed: int = 0) -> void:
 	tactics_log.clear()
 	evolution_log.clear()
 	dungeon_layout_summary.clear()
+	boss_encounter_history.clear()
 	health_updated.emit(current_health, max_health)
+
+
+func record_boss_encounter(boss_id: String, sector: int, depth: int, outcome: String, mutations: Array = []) -> void:
+	boss_encounter_history.append({
+		"boss_id": boss_id,
+		"sector": sector,
+		"depth": depth,
+		"outcome": outcome,
+		"mutations": mutations
+	})
+	if boss_encounter_history.size() > MAX_LOG_HISTORY:
+		boss_encounter_history = boss_encounter_history.slice(boss_encounter_history.size() - MAX_LOG_HISTORY)
 
 
 func record_tactic(sector: int, tactic_name: String, trigger_reason: String, mutations_desc: String) -> void:

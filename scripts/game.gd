@@ -21,6 +21,8 @@ const PAUSE_MENU_SCRIPT := preload("res://scripts/pause_menu.gd")
 const DEBRIEF_TERMINAL_SCRIPT := preload("res://scripts/debrief_terminal.gd")
 const SPATIAL_INDEX_SCRIPT := preload("res://scripts/spatial_index.gd")
 const SQUAD_COORDINATOR_SCRIPT := preload("res://scripts/squad_coordinator.gd")
+const BOSS_DIRECTOR_SCRIPT := preload("res://scripts/boss_director.gd")
+const BOSS_DEFINITION_SCRIPT := preload("res://scripts/boss_definition.gd")
 
 const ROOM_RECT := Rect2(42.0, 64.0, 876.0, 424.0)
 
@@ -44,6 +46,9 @@ var room_cleared := false
 var run_over := false
 var boss_active := false
 var boss_ref: Node2D = null
+var boss_director: RefCounted = null
+var current_boss_def: RefCounted = null
+var current_boss_mutations: Array[Dictionary] = []
 
 # Screen Trauma & Glitch Post-Processing
 var camera: Camera2D
@@ -122,6 +127,7 @@ func _ready() -> void:
 	encounter_director = ENCOUNTER_DIR_SCRIPT.new()
 	spatial_index = SPATIAL_INDEX_SCRIPT.new()
 	squad_coordinator = SQUAD_COORDINATOR_SCRIPT.new()
+	boss_director = BOSS_DIRECTOR_SCRIPT.new()
 
 	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
 		DIRECTOR_TESTS_SCRIPT.run_all_tests()
@@ -587,23 +593,58 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 
 
 func _spawn_boss(pos: Vector2) -> void:
-	var boss: Node2D = BOSS_SCENE.instantiate()
+	var rs_node = get_node_or_null("/root/RunState")
+	var cur_sector: int = rs_node.progression.sector_index if (rs_node and rs_node.progression) else 1
+	var cur_seed: int = rs_node.current_seed if rs_node else 1337
+	var last_id: String = boss_director.last_scheduled_boss_id if boss_director else ""
+
+	current_boss_def = boss_director.select_boss_for_sector(cur_sector, cur_seed, last_id) if boss_director else null
+	var scene_path: String = current_boss_def.scene_path if current_boss_def else "res://scenes/enemies/boss.tscn"
+	var boss_packed: PackedScene = load(scene_path)
+	var boss: Node2D = boss_packed.instantiate()
+
 	boss.position = pos
 	boss.target = player
 	if "squad_coordinator" in boss:
 		boss.squad_coordinator = squad_coordinator
 	if spatial_index:
 		spatial_index.register_agent(boss)
+
+	# Assign returning mutations with trade-offs
+	current_boss_mutations = boss_director.get_mutations_for_encounter(current_boss_def.boss_id) if (boss_director and current_boss_def) else []
+	if boss.has_method("apply_mutations") and not current_boss_mutations.is_empty():
+		boss.apply_mutations(current_boss_mutations)
+
 	boss.connect("defeated", Callable(self, "_on_enemy_defeated").bind(boss))
 	add_child(boss)
 	active_enemies.append(boss)
 	boss_ref = boss
 	boss_active = true
+
+	# Update Boss Bar appearance
+	if current_boss_def:
+		boss_label.text = current_boss_def.display_name
+		boss_bar_fill.color = current_boss_def.accent_color
+	else:
+		boss_label.text = "NEXUS // OVERLORD"
+		boss_bar_fill.color = Color("f43f5e")
+
 	boss_bar_bg.visible = true
 	trigger_glitch(0.85)
 	add_trauma(0.4)
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("boss_alarm", 0.0, 0.0)
+
+	# Arrival holographic card / banner
+	if current_boss_def:
+		if current_boss_mutations.is_empty():
+			_show_director_banner("ALERT // " + current_boss_def.display_name, current_boss_def.subtitle)
+		else:
+			var m_dict: Dictionary = current_boss_mutations[0]
+			_show_director_banner(
+				"EVOLVED OVERLORD // " + current_boss_def.display_name,
+				"MUTATION: %s [%s]" % [m_dict.get("name", "OVERCLOCK"), m_dict.get("desc", "ADAPTATION ACTIVE")]
+			)
 
 
 func _spawn_enemy(
@@ -671,7 +712,16 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 		shard_color = Color("d946ef")
 	elif enemy_node.get_script() and "boss" in enemy_node.get_script().resource_path.to_lower():
 		shard_type = "hexagon"
-		shard_color = Color("f43f5e")
+		shard_color = current_boss_def.accent_color if current_boss_def else Color("f43f5e")
+		var rs_node = get_node_or_null("/root/RunState")
+		if current_boss_def and rs_node:
+			var cur_sec: int = rs_node.progression.sector_index if rs_node.progression else rs_node.current_sector
+			var cur_dep: int = rs_node.progression.run_depth if rs_node.progression else (rs_node.current_room_index + 1)
+			if boss_director:
+				boss_director.record_encounter(current_boss_def.boss_id, cur_sec, cur_dep, "VICTORY", current_boss_mutations)
+			rs_node.record_boss_encounter(current_boss_def.boss_id, cur_sec, cur_dep, "VICTORY", current_boss_mutations)
+			rs_node.heal(3)
+			_show_director_banner("NEXUS CORE PURGED // " + current_boss_def.display_name, "+3 REPAIR CELLS HARVESTED // HYPERGRID GATEWAY UNLOCKED")
 
 	DEBRIS_EMITTER_SCRIPT.spawn_shards(self, enemy_node.global_position, shard_color, shard_type, 9)
 	add_trauma(0.18)

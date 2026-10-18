@@ -273,6 +273,46 @@ func setup_debrief(
 				ev_trade.add_theme_color_override("font_color", Color("cbd5e1"))
 				ev_vbox.add_child(ev_trade)
 
+		# 3. Boss Encounters & Returning Mutations
+		if rs and not rs.boss_encounter_history.is_empty():
+			var boss_header := Label.new()
+			boss_header.text = "BOSS ENCOUNTERS & RETURNING MUTATIONS"
+			boss_header.add_theme_font_size_override("font_size", 12)
+			boss_header.add_theme_color_override("font_color", Color("f43f5e"))
+			tactics_vbox.add_child(boss_header)
+
+			for b_rec in rs.boss_encounter_history:
+				var b_card := PanelContainer.new()
+				var b_style := StyleBoxFlat.new()
+				b_style.bg_color = Color(0.12, 0.03, 0.05, 0.85)
+				b_style.border_color = Color("fb7185")
+				b_style.set_border_width_all(1)
+				b_style.set_corner_radius_all(3)
+				b_style.content_margin_left = 10
+				b_style.content_margin_top = 4
+				b_style.content_margin_right = 10
+				b_style.content_margin_bottom = 4
+				b_card.add_theme_stylebox_override("panel", b_style)
+				tactics_vbox.add_child(b_card)
+
+				var b_vbox := VBoxContainer.new()
+				b_vbox.add_theme_constant_override("separation", 2)
+				b_card.add_child(b_vbox)
+
+				var b_title := Label.new()
+				var muts: Array = b_rec.get("mutations", [])
+				var mut_desc: String = muts[0].get("name", "BASELINE") if not muts.is_empty() else "BASELINE CALIBRATION"
+				b_title.text = "SEC %d (DEPTH %d): %s // %s [%s]" % [
+					b_rec.get("sector", 1),
+					b_rec.get("depth", 1),
+					b_rec.get("boss_id", "BOSS").to_upper().replace("_", " "),
+					b_rec.get("outcome", "VICTORY"),
+					mut_desc
+				]
+				b_title.add_theme_font_size_override("font_size", 11)
+				b_title.add_theme_color_override("font_color", Color("fecdd3"))
+				b_vbox.add_child(b_title)
+
 	radar_node.queue_redraw()
 	visible = true
 
