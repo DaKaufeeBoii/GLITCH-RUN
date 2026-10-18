@@ -70,6 +70,7 @@ var empty_heart_tex: AtlasTexture
 var elims_label: Label
 var hint_label: Label
 var sector_label: Label
+var ammo_label: Label
 
 var boss_bar_bg: ColorRect
 var boss_bar_fill: ColorRect
@@ -210,7 +211,7 @@ func trigger_glitch(intensity: float = 0.75) -> void:
 
 func _init_glitch_layer() -> void:
 	glitch_layer = CanvasLayer.new()
-	glitch_layer.layer = 15
+	glitch_layer.layer = 1
 	glitch_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(glitch_layer)
 
@@ -458,7 +459,10 @@ func _create_player() -> void:
 	player.connect("damaged", Callable(self, "_on_player_damaged"))
 	player.connect("shot_fired", Callable(self, "_on_player_shot_fired"))
 	player.connect("shot_hit", Callable(self, "_on_player_shot_hit"))
+	player.connect("ammo_changed", Callable(self, "_on_player_ammo_changed"))
 	add_child(player)
+	if player.has_method("get_max_ammo"):
+		_on_player_ammo_changed(player.current_ammo, player.get_max_ammo(), player.is_reloading)
 
 	touch_controls = Control.new()
 	touch_controls.set_script(TOUCH_CONTROLS)
@@ -469,6 +473,20 @@ func _create_player() -> void:
 	touch_controls.connect("dash_pressed", Callable(player, "try_dash"))
 	ui_layer.add_child(touch_controls)
 	ui_layer.move_child(touch_controls, 0)
+
+
+func _on_player_ammo_changed(current: int, maximum: int, is_reloading: bool) -> void:
+	if not is_instance_valid(ammo_label):
+		return
+	if is_reloading:
+		ammo_label.text = "RELOAD..."
+		ammo_label.add_theme_color_override("font_color", Color("f59e0b"))
+	else:
+		ammo_label.text = "CELLS %02d/%02d" % [current, maximum]
+		if current <= 3:
+			ammo_label.add_theme_color_override("font_color", Color("ef4444"))
+		else:
+			ammo_label.add_theme_color_override("font_color", Color("38bdf8"))
 
 
 func _on_player_dashed() -> void:
@@ -599,6 +617,9 @@ func _handle_non_wave_room(room_type: String) -> void:
 
 
 func _show_shop_interface() -> void:
+	glitch_pulse = 0.0
+	if is_instance_valid(glitch_material):
+		glitch_material.set_shader_parameter("glitch_intensity", 0.0)
 	if touch_controls:
 		touch_controls.enabled = false
 	get_tree().paused = true
@@ -654,6 +675,9 @@ func _show_shop_interface() -> void:
 
 
 func _show_gift_interface() -> void:
+	glitch_pulse = 0.0
+	if is_instance_valid(glitch_material):
+		glitch_material.set_shader_parameter("glitch_intensity", 0.0)
 	if touch_controls:
 		touch_controls.enabled = false
 	get_tree().paused = true
@@ -987,6 +1011,9 @@ func _on_room_cleared() -> void:
 
 
 func _show_upgrade_draft() -> void:
+	glitch_pulse = 0.0
+	if is_instance_valid(glitch_material):
+		glitch_material.set_shader_parameter("glitch_intensity", 0.0)
 	if touch_controls:
 		touch_controls.enabled = false
 	get_tree().paused = true
@@ -1163,6 +1190,7 @@ func _return_to_main_menu() -> void:
 func _create_ui() -> void:
 	ui_layer = CanvasLayer.new()
 	ui_layer.name = "UI"
+	ui_layer.layer = 20
 	ui_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(ui_layer)
 
@@ -1193,6 +1221,13 @@ func _create_ui() -> void:
 	elims_label.add_theme_color_override("font_color", Color("38bdf8"))
 	elims_label.add_theme_font_size_override("font_size", 16)
 	top_bar.add_child(elims_label)
+
+	# Ammo Energy Cell Gauge Badge
+	ammo_label = Label.new()
+	ammo_label.text = "CELLS 16/16"
+	ammo_label.add_theme_color_override("font_color", Color("38bdf8"))
+	ammo_label.add_theme_font_size_override("font_size", 16)
+	top_bar.add_child(ammo_label)
 
 	# Sector & Room Badge (Top Right)
 	sector_label = Label.new()

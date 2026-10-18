@@ -39,6 +39,25 @@ var damage_multipliers: Dictionary = {
 	"hazard": 1.0
 }
 
+# Debuff status
+var debuff_slow_timer := 0.0
+var debuff_burn_timer := 0.0
+var debuff_burn_tick := 0.0
+var debuff_shock_timer := 0.0
+
+
+func apply_debuff(type: String, duration: float, _intensity: float = 1.0) -> void:
+	match type:
+		"CRYO", "SLOW":
+			debuff_slow_timer = maxf(debuff_slow_timer, duration)
+		"ACID", "BURN":
+			debuff_burn_timer = maxf(debuff_burn_timer, duration)
+			debuff_burn_tick = 0.5
+		"SHOCK":
+			debuff_shock_timer = maxf(debuff_shock_timer, duration)
+			is_charging_shot = false
+	queue_redraw()
+
 
 func _ready() -> void:
 	health = max_health
@@ -52,6 +71,23 @@ func _physics_process(delta: float) -> void:
 	damage_flash = maxf(0.0, damage_flash - delta)
 	ranged_cooldown = maxf(0.0, ranged_cooldown - delta)
 	recovery_timer = maxf(0.0, recovery_timer - delta)
+
+	# Debuff updates
+	if debuff_slow_timer > 0.0:
+		debuff_slow_timer = maxf(0.0, debuff_slow_timer - delta)
+
+	if debuff_burn_timer > 0.0:
+		debuff_burn_timer = maxf(0.0, debuff_burn_timer - delta)
+		debuff_burn_tick -= delta
+		if debuff_burn_tick <= 0.0:
+			debuff_burn_tick = 1.0
+			take_damage(1, "hazard")
+
+	if debuff_shock_timer > 0.0:
+		debuff_shock_timer = maxf(0.0, debuff_shock_timer - delta)
+		velocity = Vector2.ZERO
+		queue_redraw()
+		return
 
 	if not is_instance_valid(target):
 		return
@@ -114,7 +150,8 @@ func _physics_process(delta: float) -> void:
 					n_positions.append(node.global_position)
 			separation = EnemySteering.get_separation_vector(global_position, n_positions, 30.0, 4)
 
-		velocity = (approach_dir + separation * 0.45).normalized() * move_speed
+		var eff_speed: float = move_speed * (0.50 if debuff_slow_timer > 0.0 else 1.0)
+		velocity = (approach_dir + separation * 0.45).normalized() * eff_speed
 	else:
 		velocity = Vector2.ZERO
 		if contact_cooldown <= 0.0 and target.has_method("take_damage"):
@@ -222,3 +259,13 @@ func _draw() -> void:
 		var hit_points := float(health) / float(max_health)
 		draw_rect(Rect2(-14, -22, 28, 4), Color("181a26"))
 		draw_rect(Rect2(-13, -21, 26.0 * hit_points, 2), Color("f43f5e"))
+
+	# Debuff Visual Overlays
+	if debuff_slow_timer > 0.0:
+		draw_circle(Vector2.ZERO, 19.0, Color(0.2, 0.8, 1.0, 0.25))
+	if debuff_burn_timer > 0.0:
+		draw_circle(Vector2.ZERO, 16.0, Color(0.5, 1.0, 0.2, 0.25))
+	if debuff_shock_timer > 0.0:
+		for s in range(3):
+			var a := randf() * TAU
+			draw_line(Vector2.ZERO, Vector2(cos(a), sin(a)) * 20.0, Color("c084fc"), 1.8)

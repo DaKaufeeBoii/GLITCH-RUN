@@ -6,6 +6,7 @@ signal died
 signal dashed
 signal damaged(amount: int)
 signal shot_fired
+signal ammo_changed(current: int, maximum: int, is_reloading: bool)
 @warning_ignore("unused_signal")
 signal shot_hit(enemy: Node2D)
 
@@ -31,6 +32,18 @@ var damage_cooldown := 0.0
 var dead := false
 var is_firing := false
 
+# Player Ammo Battery System
+@export var base_max_ammo := 16
+var current_ammo := 16
+var is_reloading := false
+var reload_timer := 0.0
+var base_reload_duration := 1.1
+
+# Status Effect Debuffs
+var debuff_slow_timer := 0.0
+var debuff_burn_timer := 0.0
+var debuff_burn_tick := 0.0
+
 var ghost_spawn_timer := 0.0
 
 
@@ -43,6 +56,49 @@ func _ready() -> void:
 		rs.health_updated.connect(_on_runstate_health_updated)
 	else:
 		health = max_health
+	current_ammo = get_max_ammo()
+	ammo_changed.emit(current_ammo, get_max_ammo(), false)
+	queue_redraw()
+
+
+func get_max_ammo() -> int:
+	var bonus := 0
+	var rs = get_node_or_null("/root/RunState")
+	if rs and "max_ammo_bonus" in rs:
+		bonus = rs.max_ammo_bonus
+	return base_max_ammo + bonus
+
+
+func get_reload_time() -> float:
+	var mult := 1.0
+	var rs = get_node_or_null("/root/RunState")
+	if rs and "reload_speed_mult" in rs:
+		mult = rs.reload_speed_mult
+	return maxf(0.35, base_reload_duration * mult)
+
+
+func start_reload() -> void:
+	if dead or is_reloading:
+		return
+	if current_ammo >= get_max_ammo():
+		return
+	is_reloading = true
+	reload_timer = get_reload_time()
+	ammo_changed.emit(current_ammo, get_max_ammo(), true)
+	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+		get_node("/root/AudioSynth").play("player_hurt", 0.03, 8.0)
+	queue_redraw()
+
+
+func apply_debuff(type: String, duration: float, _intensity: float = 1.0) -> void:
+	match type:
+		"CRYO", "SLOW":
+			debuff_slow_timer = maxf(debuff_slow_timer, duration)
+		"ACID", "BURN":
+			debuff_burn_timer = maxf(debuff_burn_timer, duration)
+			debuff_burn_tick = 0.5
+		"SHOCK":
+			debuff_slow_timer = maxf(debuff_slow_timer, duration * 0.5)
 	queue_redraw()
 
 
@@ -61,10 +117,33 @@ func _physics_process(delta: float) -> void:
 	damage_cooldown = maxf(0.0, damage_cooldown - delta)
 	fire_cooldown = maxf(0.0, fire_cooldown - delta)
 
+	# Debuff status tracking
+	if debuff_slow_timer > 0.0:
+		debuff_slow_timer = maxf(0.0, debuff_slow_timer - delta)
+
+	if debuff_burn_timer > 0.0:
+		debuff_burn_timer = maxf(0.0, debuff_burn_timer - delta)
+		debuff_burn_tick -= delta
+		if debuff_burn_tick <= 0.0:
+			debuff_burn_tick = 1.0
+			take_damage(1)
+
+	# Ammo Reload Management
+	if is_reloading:
+		reload_timer -= delta
+		if reload_timer <= 0.0:
+			is_reloading = false
+			current_ammo = get_max_ammo()
+			ammo_changed.emit(current_ammo, get_max_ammo(), false)
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("powerup_pickup", 0.05, 5.0)
+
 	var move_mult := 1.0
 	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		move_mult = rs.move_speed_mult
+	if debuff_slow_timer > 0.0:
+		move_mult *= 0.55
 
 	var keyboard_move := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
 	keyboard_move += Vector2(
@@ -101,6 +180,10 @@ func _physics_process(delta: float) -> void:
 
 	if (Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_SPACE)) and dash_cooldown <= 0.0:
 		try_dash()
+
+	# Manual reload input (R key)
+	if Input.is_key_pressed(KEY_R) and not is_reloading and current_ammo < get_max_ammo():
+		start_reload()
 
 	var firing := touch_fire or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_key_pressed(KEY_J) or Input.is_key_pressed(KEY_K)
 	is_firing = firing
@@ -156,6 +239,12 @@ func try_dash() -> void:
 	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		cd_mult = rs.dash_cooldown_mult
+		# Tactical Reload upgrade perk: instant full reload on dash
+		if bool(rs.get("has_tactical_reload")):
+			current_ammo = get_max_ammo()
+			is_reloading = false
+			ammo_changed.emit(current_ammo, get_max_ammo(), false)
+
 	dash_cooldown = DASH_COOLDOWN * cd_mult
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("dash", 0.05, -2.0)
@@ -187,6 +276,10 @@ func take_damage(amount: int) -> void:
 	var rs = get_node_or_null("/root/RunState") if is_inside_tree() else null
 	if rs:
 		rs.current_health = health
+		# Reactive Plating Perk: Trigger EMP shockwave
+		if bool(rs.get("has_reactive_plating")):
+			_trigger_emp_shockwave()
+
 	queue_redraw()
 
 	if health == 0:
@@ -195,7 +288,27 @@ func take_damage(amount: int) -> void:
 		died.emit()
 
 
+func _trigger_emp_shockwave() -> void:
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if is_instance_valid(enemy):
+			var dist := global_position.distance_to(enemy.global_position)
+			if dist < 140.0:
+				var push_dir: Vector2 = (enemy.global_position - global_position).normalized()
+				if "velocity" in enemy:
+					enemy.velocity += push_dir * 380.0
+				if enemy.has_method("apply_debuff"):
+					enemy.apply_debuff("SHOCK", 1.0)
+				if enemy.has_method("take_damage"):
+					enemy.take_damage(1, "hazard")
+
+
 func _fire() -> void:
+	if is_reloading:
+		return
+	if current_ammo <= 0:
+		start_reload()
+		return
+
 	var interval_mult := 1.0
 	var extra_dmg := 0
 	var count := 1
@@ -204,8 +317,17 @@ func _fire() -> void:
 		interval_mult = rs.fire_interval_mult
 		extra_dmg = rs.damage_bonus
 		count = rs.projectile_count
+		# Overdrive Protocol perk: +50% dmg & +25% fire rate if at or below 2 HP
+		if bool(rs.get("has_overdrive_protocol")) and health <= 2:
+			extra_dmg += 1
+			interval_mult *= 0.75
 
 	fire_cooldown = FIRE_INTERVAL * interval_mult
+	current_ammo -= 1
+	ammo_changed.emit(current_ammo, get_max_ammo(), false)
+	if current_ammo <= 0:
+		start_reload()
+
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("blaster", 0.08, -3.0)
 
@@ -227,6 +349,19 @@ func _spawn_bullet(dir: Vector2, extra_dmg: int) -> void:
 	projectile.direction = shoot_dir
 	projectile.damage = 1 + extra_dmg
 	projectile.set("player_source", self)
+
+	# Pass elemental debuffs and piercing traits from active upgrades
+	var rs = get_node_or_null("/root/RunState")
+	if rs:
+		if bool(rs.get("has_cryo_rounds")):
+			projectile.set("debuff_type", "CRYO")
+		elif bool(rs.get("has_acid_plasma")):
+			projectile.set("debuff_type", "ACID")
+		elif bool(rs.get("has_arc_discharge")):
+			projectile.set("debuff_type", "SHOCK")
+		if bool(rs.get("has_piercing_beam")):
+			projectile.set("is_piercing", true)
+
 	get_parent().add_child(projectile)
 	shot_fired.emit()
 
@@ -269,3 +404,16 @@ func _draw() -> void:
 			var p1 := Vector2(cos(a), sin(a)) * 12.0
 			var p2 := Vector2(cos(a + 0.3), sin(a + 0.3)) * 32.0
 			draw_line(p1, p2, Color("c084fc"), 2.0)
+
+	# Reload Progress Arc
+	if is_reloading:
+		var total_t := get_reload_time()
+		var pct := 1.0 - (reload_timer / total_t)
+		draw_arc(Vector2(0, -20), 8.0, -PI * 0.5, -PI * 0.5 + pct * TAU, 16, Color("f59e0b"), 2.2)
+		draw_circle(Vector2(0, -20), 2.0, Color("fffbeb"))
+
+	# Debuff Shimmer Rings
+	if debuff_slow_timer > 0.0:
+		draw_circle(Vector2.ZERO, 19.0, Color(0.2, 0.8, 1.0, 0.22))
+	if debuff_burn_timer > 0.0:
+		draw_circle(Vector2.ZERO, 17.0, Color(0.5, 1.0, 0.2, 0.22))

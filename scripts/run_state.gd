@@ -31,6 +31,15 @@ var projectile_count := 1
 var dash_cooldown_mult := 1.0
 var dash_damage := false
 var siphon_chance := 0.0
+var has_cryo_rounds := false
+var has_acid_plasma := false
+var has_arc_discharge := false
+var has_tactical_reload := false
+var max_ammo_bonus := 0
+var reload_speed_mult := 1.0
+var has_reactive_plating := false
+var has_piercing_beam := false
+var has_overdrive_protocol := false
 var active_upgrade_ids: Array[String] = []
 
 # Persistent Run Statistics & Director Debrief History
@@ -138,6 +147,54 @@ const UPGRADE_CATALOG: Array[Dictionary] = [
 		"title": "ENERGY SIPHON",
 		"desc": "25% Chance to Reclaim 1 HP on Kill",
 		"flavor": "Converts downed hostiles into usable repair cells."
+	},
+	{
+		"id": "CRYO_ROUNDS",
+		"title": "CRYO MATRIX",
+		"desc": "Shots Inflict 50% Cryo Slow for 3s",
+		"flavor": "Sub-zero endothermic emitters chill enemy movement and thrusters."
+	},
+	{
+		"id": "ACID_PLASMA",
+		"title": "ACID CORROSION",
+		"desc": "Shots Inflict 1 DMG/sec for 3s",
+		"flavor": "Microscopic nanite swarm eats through hostile armor plating."
+	},
+	{
+		"id": "ARC_DISCHARGE",
+		"title": "ARC DISCHARGE",
+		"desc": "Bolt Hits Shock Adjacent Hostiles for 1 DMG",
+		"flavor": "Ionizes ambient atmosphere with devastating chain lightning."
+	},
+	{
+		"id": "TACTICAL_RELOAD",
+		"title": "TACTICAL RELOAD",
+		"desc": "Dash Instantly Refills Full Ammo Magazine",
+		"flavor": "Kinetic recycler converts dash momentum directly into cell cartridges."
+	},
+	{
+		"id": "EXPANDED_BATTERY",
+		"title": "EXPANDED BATTERY",
+		"desc": "+8 Max Ammo Capacity & 35% Faster Reload",
+		"flavor": "Installs high-density capacitors with micro-induction coils."
+	},
+	{
+		"id": "REACTIVE_PLATING",
+		"title": "REACTIVE PLATING",
+		"desc": "Taking Damage Emits Stun EMP Shockwave",
+		"flavor": "Discharges stored kinetic shock into a retaliatory concussive burst."
+	},
+	{
+		"id": "PIERCING_BEAM",
+		"title": "PIERCING BEAM",
+		"desc": "Bolts Pierce Through 1 Hostile",
+		"flavor": "Accelerates plasma cores to relativistic penetrative speeds."
+	},
+	{
+		"id": "OVERDRIVE_PROTOCOL",
+		"title": "OVERDRIVE PROTOCOL",
+		"desc": "+50% DMG & +25% Fire Rate when at <= 2 HP",
+		"flavor": "Emergency governor override unlocks lethal emergency output."
 	}
 ]
 
@@ -148,7 +205,15 @@ const UPGRADE_STACK_CAPS := {
 	"PHANTOM_DRIVE": 2,
 	"NANO_INFUSION": 3,
 	"STATIC_BLINK": 1,
-	"ENERGY_SIPHON": 2
+	"ENERGY_SIPHON": 2,
+	"CRYO_ROUNDS": 1,
+	"ACID_PLASMA": 1,
+	"ARC_DISCHARGE": 1,
+	"TACTICAL_RELOAD": 1,
+	"EXPANDED_BATTERY": 2,
+	"REACTIVE_PLATING": 1,
+	"PIERCING_BEAM": 1,
+	"OVERDRIVE_PROTOCOL": 1
 }
 
 
@@ -189,6 +254,15 @@ func start_new_run(p_seed: int = 0) -> void:
 	dash_cooldown_mult = 1.0
 	dash_damage = false
 	siphon_chance = 0.0
+	has_cryo_rounds = false
+	has_acid_plasma = false
+	has_arc_discharge = false
+	has_tactical_reload = false
+	max_ammo_bonus = 0
+	reload_speed_mult = 1.0
+	has_reactive_plating = false
+	has_piercing_beam = false
+	has_overdrive_protocol = false
 	active_upgrade_ids.clear()
 	tactics_log.clear()
 	evolution_log.clear()
@@ -309,6 +383,23 @@ func apply_upgrade(upgrade_id: String) -> bool:
 			dash_damage = true
 		"ENERGY_SIPHON":
 			siphon_chance = minf(0.5, siphon_chance + 0.25)
+		"CRYO_ROUNDS":
+			has_cryo_rounds = true
+		"ACID_PLASMA":
+			has_acid_plasma = true
+		"ARC_DISCHARGE":
+			has_arc_discharge = true
+		"TACTICAL_RELOAD":
+			has_tactical_reload = true
+		"EXPANDED_BATTERY":
+			max_ammo_bonus += 8
+			reload_speed_mult = maxf(0.45, reload_speed_mult * 0.65)
+		"REACTIVE_PLATING":
+			has_reactive_plating = true
+		"PIERCING_BEAM":
+			has_piercing_beam = true
+		"OVERDRIVE_PROTOCOL":
+			has_overdrive_protocol = true
 
 	upgrade_applied.emit(upgrade_id)
 	return true

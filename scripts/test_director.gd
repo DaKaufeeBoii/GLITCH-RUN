@@ -406,26 +406,40 @@ static func test_evolution_manager_layers_and_retention() -> bool:
 	var evo_mgr = EVOLUTION_MANAGER_SCRIPT.new()
 	assert(evo_mgr.generation == 1, "Evolution manager must start at Generation 1")
 
-	# Simulate high mobility player profile -> Shooters specialize with PREDICTIVE_OPTICS
+	# Simulate high mobility player profile -> Shooters specialize with AGILE_STRAFE then PREDICTIVE_OPTICS
 	var mobile_profile := {
 		"mobility": 0.85,
 		"ranged": 0.35,
 		"turret": 0.15,
 		"dashes_per_min": 12.0,
+		"active_families": ["SHOOTER"],
 		"successful_player_tactics": {}
 	}
 
 	# Grab shooter genome before encounter
 	var shooter_g = evo_mgr.get_genome_for_spawn("SHOOTER")
+	assert(not shooter_g.has_mutation("AGILE_STRAFE"), "Generation 1 shooter starts unmutated")
 	assert(not shooter_g.has_mutation("PREDICTIVE_OPTICS"), "Generation 1 shooter starts unmutated")
 
-	# Process encounter where player dashed frequently
+	# Encounter 1: Paced evolution -> does not evolve after just 1 battle
 	var _adaptations := evo_mgr.process_encounter_end(1, 1, 22.0, mobile_profile, "COUNTER_MOBILITY")
 	assert(evo_mgr.generation == 2, "Generation must advance after encounter")
+	var shooter_g1 = evo_mgr.get_genome_for_spawn("SHOOTER")
+	assert(not shooter_g1.has_mutation("AGILE_STRAFE"), "Enemies must not evolve too quickly: requires 2 battles")
 
-	# Check that shooter in population acquired PREDICTIVE_OPTICS
+	# Encounter 2: Reaches BATTLES_FOR_FIRST_EVOLUTION (2) -> Acquires Tier 1 AGILE_STRAFE
+	evo_mgr.get_genome_for_spawn("SHOOTER")
+	evo_mgr.process_encounter_end(1, 1, 20.0, mobile_profile, "COUNTER_MOBILITY")
 	var shooter_g2 = evo_mgr.get_genome_for_spawn("SHOOTER")
-	assert(shooter_g2.has_mutation("PREDICTIVE_OPTICS"), "Shooter must develop PREDICTIVE_OPTICS after high mobility encounter")
+	assert(shooter_g2.has_mutation("AGILE_STRAFE"), "Shooter must develop AGILE_STRAFE at Tier 1 after 2 battles")
+
+	# Encounters 3 & 4: Reaches BATTLES_FOR_SECOND_EVOLUTION (4) -> Acquires Tier 2 PREDICTIVE_OPTICS
+	evo_mgr.get_genome_for_spawn("SHOOTER")
+	evo_mgr.process_encounter_end(1, 1, 18.0, mobile_profile, "COUNTER_MOBILITY")
+	evo_mgr.get_genome_for_spawn("SHOOTER")
+	evo_mgr.process_encounter_end(1, 1, 19.0, mobile_profile, "COUNTER_MOBILITY")
+	var shooter_g4 = evo_mgr.get_genome_for_spawn("SHOOTER")
+	assert(shooter_g4.has_mutation("PREDICTIVE_OPTICS"), "Shooter must develop PREDICTIVE_OPTICS at Tier 2 after 4 battles")
 
 	# Test Population retention (Layer C): ensure bounds and population structure
 	assert(evo_mgr.active_genomes["SHOOTER"].size() == 3, "Population pool size must be preserved")
@@ -1380,8 +1394,8 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 	assert(evo_mgr.get_species_tier("SHOOTER") == 0, "Shooter starts at Tier 0")
 	assert(evo_mgr.get_species_health_multiplier("CHASER") == 1, "Chaser Tier 0 has 1x health multiplier")
 
-	# Test strict species isolation:
-	# Simulate encounter where ONLY Chaser participated. Player was kiting (ranged = 0.85).
+	# Test strict species isolation & paced evolution:
+	# Simulate encounters where ONLY Chaser participated. Player was kiting (ranged = 0.85).
 	var chaser_g = evo_mgr.get_genome_for_spawn("CHASER")
 	evo_mgr.register_spawned_combatant(chaser_g)
 
@@ -1390,18 +1404,26 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 		"mobility": 0.40,
 		"turret": 0.20
 	}
+	# Battle 1 for Chaser: Still Tier 0 due to pacing (requires 2 battles)
+	var _adaptations0 = evo_mgr.process_encounter_end(0, 0, 15.0, kite_profile, "DEFAULT")
+	assert(evo_mgr.get_species_tier("CHASER") == 0, "Chaser remains Tier 0 after 1 battle (paced evolution)")
+
+	# Battle 2 for Chaser: Evolved to Tier 1 (+45% speed, 2x HP)
+	evo_mgr.register_spawned_combatant(chaser_g)
 	var adaptations1 = evo_mgr.process_encounter_end(0, 0, 15.0, kite_profile, "DEFAULT")
-	assert(evo_mgr.get_species_tier("CHASER") == 1, "Chaser must evolve to Tier 1 after kited battle")
+	assert(evo_mgr.get_species_tier("CHASER") == 1, "Chaser must evolve to Tier 1 after 2 kited battles")
 	assert(evo_mgr.get_species_health_multiplier("CHASER") == 2, "Chaser Tier 1 must have 2x health multiplier")
 	assert(evo_mgr.get_species_tier("DASHER") == 0, "Dasher must remain Tier 0 because it did not fight")
 	assert(evo_mgr.get_species_tier("SHOOTER") == 0, "Shooter must remain Tier 0 because it did not fight")
 	assert(not adaptations1.is_empty(), "Must record Tier 1 adaptation")
 	assert(adaptations1[0].family == "CHASER", "Adaptation must be for Chaser")
 
-	# Second encounter for Chaser:
+	# Battles 3 & 4 for Chaser: Reaches Tier 2 (Learns to aim and shoot crimson blaster)
+	evo_mgr.register_spawned_combatant(chaser_g)
+	evo_mgr.process_encounter_end(0, 0, 12.0, kite_profile, "DEFAULT")
 	evo_mgr.register_spawned_combatant(chaser_g)
 	var _adaptations2 = evo_mgr.process_encounter_end(0, 0, 12.0, kite_profile, "DEFAULT")
-	assert(evo_mgr.get_species_tier("CHASER") == 2, "Chaser must evolve to Tier 2 after second battle")
+	assert(evo_mgr.get_species_tier("CHASER") == 2, "Chaser must evolve to Tier 2 after 4 battles")
 	assert(evo_mgr.get_species_health_multiplier("CHASER") == 4, "Chaser Tier 2 must have 4x health multiplier")
 	assert(evo_mgr.get_species_tier("DASHER") == 0, "Dasher must still be Tier 0")
 
@@ -1414,49 +1436,74 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 	assert(chaser_node.move_speed > 120.0, "Chaser Tier 2 must have Tier 1 speed buff preserved")
 	chaser_node.free()
 
-	# Now Dasher battles:
+	# Now Dasher battles (Tier 1: Speed + Mines, Tier 2: Hyper Speed, Tier 3: Armor)
 	var dasher_g = evo_mgr.get_genome_for_spawn("DASHER")
-	evo_mgr.register_spawned_combatant(dasher_g)
-	evo_mgr.process_encounter_end(1, 0, 10.0, {}, "DEFAULT")
-	assert(evo_mgr.get_species_tier("DASHER") == 1, "Dasher evolves to Tier 1 after 1 battle")
-	assert(evo_mgr.get_species_health_multiplier("DASHER") == 2, "Dasher Tier 1 has 2x health (4 HP)")
-	var dasher_node = DASHER_SCENE.instantiate()
-	dasher_g.apply_to_enemy(dasher_node)
-	assert(dasher_node.max_health == 4, "Dasher Tier 1 max health must be 4")
-	assert(dasher_node.has_hazard_trail, "Dasher Tier 1 must leave hazard trails")
-	dasher_node.free()
+	for _i in range(2):
+		evo_mgr.register_spawned_combatant(dasher_g)
+		evo_mgr.process_encounter_end(1, 0, 10.0, {}, "DEFAULT")
+	assert(evo_mgr.get_species_tier("DASHER") == 1, "Dasher evolves to Tier 1 after 2 battles")
+	var dasher_node1 = DASHER_SCENE.instantiate()
+	dasher_g.apply_to_enemy(dasher_node1)
+	assert(dasher_node1.has_hazard_trail, "Dasher Tier 1 must drop hazard mines")
+	assert(dasher_node1.lunge_speed >= 650.0, "Dasher Tier 1 speed boosted to 650.0")
+	dasher_node1.free()
 
-	evo_mgr.register_spawned_combatant(dasher_g)
-	evo_mgr.process_encounter_end(1, 0, 10.0, {}, "DEFAULT")
-	assert(evo_mgr.get_species_tier("DASHER") == 2, "Dasher evolves to Tier 2 after 2 battles")
-	assert(evo_mgr.get_species_health_multiplier("DASHER") == 4, "Dasher Tier 2 has 4x health (8 HP)")
+	# Dasher Tier 2: 4 battles total
+	for _i in range(2):
+		evo_mgr.register_spawned_combatant(dasher_g)
+		evo_mgr.process_encounter_end(1, 0, 10.0, {}, "DEFAULT")
+	assert(evo_mgr.get_species_tier("DASHER") == 2, "Dasher evolves to Tier 2 after 4 battles")
 	var dasher_node2 = DASHER_SCENE.instantiate()
 	dasher_g.apply_to_enemy(dasher_node2)
-	assert(dasher_node2.max_health == 8, "Dasher Tier 2 max health must be 8")
-	assert(dasher_node2.lunge_speed >= 700.0, "Dasher Tier 2 lunge speed must be 700.0 (+25%)")
+	assert(dasher_node2.lunge_speed >= 800.0, "Dasher Tier 2 hyper speed >= 800 px/s")
 	dasher_node2.free()
 
-	# Now Shooter battles:
-	var shooter_g = evo_mgr.get_genome_for_spawn("SHOOTER")
-	evo_mgr.register_spawned_combatant(shooter_g)
-	evo_mgr.process_encounter_end(2, 0, 10.0, {}, "DEFAULT")
-	assert(evo_mgr.get_species_tier("SHOOTER") == 1, "Shooter Tier 1 after 1 battle")
-	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 2, "Shooter Tier 1 has 2x health (6 HP)")
-	var shooter_node = SHOOTER_SCENE.instantiate()
-	shooter_g.apply_to_enemy(shooter_node)
-	assert(shooter_node.max_health == 6, "Shooter Tier 1 max health must be 6")
-	assert(shooter_node.lead_prediction == 0.75, "Shooter Tier 1 has lead prediction 0.75")
-	shooter_node.free()
+	# Dasher Tier 3: 6 battles total (Armor buff)
+	for _i in range(2):
+		evo_mgr.register_spawned_combatant(dasher_g)
+		evo_mgr.process_encounter_end(1, 0, 10.0, {}, "DEFAULT")
+	assert(evo_mgr.get_species_tier("DASHER") == 3, "Dasher evolves to Tier 3 after 6 battles")
+	assert(evo_mgr.get_species_health_multiplier("DASHER") == 3, "Dasher Tier 3 has 3x health multiplier")
+	var dasher_node3 = DASHER_SCENE.instantiate()
+	dasher_g.apply_to_enemy(dasher_node3)
+	assert(dasher_node3.max_health == 6, "Dasher Tier 3 max health must be 6")
+	dasher_node3.free()
 
-	evo_mgr.register_spawned_combatant(shooter_g)
-	evo_mgr.process_encounter_end(2, 0, 10.0, {}, "DEFAULT")
-	assert(evo_mgr.get_species_tier("SHOOTER") == 2, "Shooter Tier 2 after 2 battles")
-	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 4, "Shooter Tier 2 has 4x health (12 HP)")
+	# Now Shooter battles (Tier 1: Speed, Tier 2: Armor + Aim, Tier 3: 2-DMG Beam)
+	var shooter_g = evo_mgr.get_genome_for_spawn("SHOOTER")
+	for _i in range(2):
+		evo_mgr.register_spawned_combatant(shooter_g)
+		evo_mgr.process_encounter_end(2, 0, 10.0, {}, "DEFAULT")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 1, "Shooter Tier 1 after 2 battles")
+	var shooter_node1 = SHOOTER_SCENE.instantiate()
+	shooter_g.apply_to_enemy(shooter_node1)
+	assert(shooter_node1.move_speed >= 110.0, "Shooter Tier 1 has speed buff >= 110")
+	assert(shooter_node1.lead_prediction == 0.0, "Shooter Tier 1 still has bad aim")
+	shooter_node1.free()
+
+	# Shooter Tier 2: 4 battles total (Armor 6 HP + Pinpoint Lead Aim)
+	for _i in range(2):
+		evo_mgr.register_spawned_combatant(shooter_g)
+		evo_mgr.process_encounter_end(2, 0, 10.0, {}, "DEFAULT")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 2, "Shooter Tier 2 after 4 battles")
+	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 2, "Shooter Tier 2 has 2x health (6 HP)")
 	var shooter_node2 = SHOOTER_SCENE.instantiate()
 	shooter_g.apply_to_enemy(shooter_node2)
-	assert(shooter_node2.max_health == 12, "Shooter Tier 2 max health must be 12")
-	assert(shooter_node2.burst_count == 2, "Shooter Tier 2 has 2-round burst volley")
+	assert(shooter_node2.max_health == 6, "Shooter Tier 2 max health must be 6")
+	assert(shooter_node2.lead_prediction == 1.0, "Shooter Tier 2 has pinpoint lead prediction 1.0")
 	shooter_node2.free()
+
+	# Shooter Tier 3: 6 battles total (2-Damage Beam + 12 HP)
+	for _i in range(2):
+		evo_mgr.register_spawned_combatant(shooter_g)
+		evo_mgr.process_encounter_end(2, 0, 10.0, {}, "DEFAULT")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 3, "Shooter Tier 3 after 6 battles")
+	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 4, "Shooter Tier 3 has 4x health (12 HP)")
+	var shooter_node3 = SHOOTER_SCENE.instantiate()
+	shooter_g.apply_to_enemy(shooter_node3)
+	assert(shooter_node3.max_health == 12, "Shooter Tier 3 max health must be 12")
+	assert(shooter_node3.has_beam_attack, "Shooter Tier 3 has charged beam attack")
+	shooter_node3.free()
 
 	# Test Health Doubling Invariant: calling apply_to_enemy multiple times does NOT multiply health repeatedly!
 	var test_chaser = CHASER_SCENE.instantiate()
@@ -1473,7 +1520,7 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 	assert(evo_mgr.get_species_tier("SHOOTER") == 0, "Reset restores Shooter to Tier 0")
 	assert(evo_mgr.evolution_history.is_empty(), "Reset clears evolution history")
 
-	print("  [PASS] Strict Species Evidence Isolation & Tier Evolutions (Speed, Laser, Hazards, Volley)")
+	print("  [PASS] Strict Species Evidence Isolation & 3-Tier Evolutions (Speed, Aim, Beam, Mines, Armor)")
 	return true
 
 

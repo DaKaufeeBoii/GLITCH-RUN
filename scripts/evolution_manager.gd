@@ -11,8 +11,9 @@ const ENEMY_GENOME_SCRIPT := preload("res://scripts/enemy_genome.gd")
 
 const POOL_SIZE_PER_FAMILY := 3
 const MUTATION_PERTURBATION := 0.08 # Max 8% trait adjustment per generational mutation
-const BATTLES_FOR_FIRST_EVOLUTION := 1
-const BATTLES_FOR_SECOND_EVOLUTION := 2
+const BATTLES_FOR_FIRST_EVOLUTION := 2
+const BATTLES_FOR_SECOND_EVOLUTION := 4
+const BATTLES_FOR_THIRD_EVOLUTION := 6
 
 var generation := 1
 var active_genomes: Dictionary = {
@@ -109,7 +110,20 @@ func get_species_tier(family: String) -> int:
 
 
 func get_species_health_multiplier(family: String) -> int:
-	return int(pow(2, get_species_tier(family)))
+	var t: int = get_species_tier(family)
+	if family == "SHOOTER":
+		if t <= 1:
+			return 1
+		elif t == 2:
+			return 2
+		else:
+			return 4
+	elif family == "DASHER":
+		if t <= 2:
+			return 1
+		else:
+			return 3
+	return int(pow(2, mini(t, 2)))
 
 
 func process_encounter_end(
@@ -149,13 +163,12 @@ func process_encounter_end(
 		ev.encounters_fought += 1
 		ev.combat_time += combat_duration
 
-		# Did player kite or maintain distance?
 		var ranged_ratio: float = float(player_profile.get("ranged", 0.5))
 		var mobility_ratio: float = float(player_profile.get("mobility", 0.5))
 		if ranged_ratio >= 0.60 and mobility_ratio >= 0.50:
 			ev.player_kited_count += 1
 
-		# Tier 0 -> Tier 1: Enhanced Pursuit Speed (+35%) & 2x Health
+		# Tier 0 -> Tier 1: Enhanced Pursuit Speed (+45%) & 2x Health
 		if ev.tier == 0 and ev.encounters_fought >= BATTLES_FOR_FIRST_EVOLUTION:
 			ev.tier = 1
 			for g in active_genomes["CHASER"]:
@@ -167,15 +180,15 @@ func process_encounter_end(
 				"tier": 1,
 				"mutation": "RAPID_PURSUIT",
 				"health_mult": "2x (6 HP)",
-				"tradeoff": "Pursuit speed +35% (124.2 px/s), max armor doubled to 6 HP",
-				"reason": "After %d Chaser battles, long-range movement and repeated dodging met the adaptation threshold (range ratio %.2f)." % [ev.encounters_fought, ranged_ratio],
+				"tradeoff": "Pursuit speed +45% (135 px/s), max armor doubled to 6 HP",
+				"reason": "After %d Chaser battles, long-range movement and repeated dodging met the adaptation threshold." % ev.encounters_fought,
 				"counter": "Cut back across pursuit trajectory; use arena obstacles to break line of chase."
 			}
 			evolution_history.append(record)
 			new_adaptations.append(record)
 			ev.history.append(record)
 
-		# Tier 1 -> Tier 2: Crimson Laser Blaster (+committed aim) & 4x Health
+		# Tier 1 -> Tier 2: Teaches it to aim and shoot laser & 4x Health
 		elif ev.tier == 1 and ev.encounters_fought >= BATTLES_FOR_SECOND_EVOLUTION:
 			ev.tier = 2
 			for g in active_genomes["CHASER"]:
@@ -187,7 +200,7 @@ func process_encounter_end(
 				"tier": 2,
 				"mutation": "CRIMSON_BLASTER",
 				"health_mult": "4x (12 HP)",
-				"tradeoff": "Equipped with telegraphed laser projectile cannon, max armor doubled to 12 HP",
+				"tradeoff": "Learned to aim and shoot crimson laser projectiles, max armor doubled to 12 HP",
 				"reason": "Chasers engaged across %d battle(s). Evolved crimson laser projectile attack." % ev.encounters_fought,
 				"counter": "Watch for the 0.65s laser telegraph; aim locks at 0.25s remaining, allowing dash evasion."
 			}
@@ -201,7 +214,7 @@ func process_encounter_end(
 		ev.encounters_fought += 1
 		ev.combat_time += combat_duration
 
-		# Tier 0 -> Tier 1: Ion Hazard Trail & 2x Health
+		# Tier 0 -> Tier 1: Speed + Hazard Mines
 		if ev.tier == 0 and ev.encounters_fought >= BATTLES_FOR_FIRST_EVOLUTION:
 			ev.tier = 1
 			for g in active_genomes["DASHER"]:
@@ -212,8 +225,8 @@ func process_encounter_end(
 				"family": "DASHER",
 				"tier": 1,
 				"mutation": "ION_HAZARD_TRAIL",
-				"health_mult": "2x (4 HP)",
-				"tradeoff": "Leaves ionized electric hazard spheres along dash path, max armor doubled to 4 HP",
+				"health_mult": "1x (2 HP)",
+				"tradeoff": "Lunge speed +25% (650 px/s) and drops electric hazard mines along dash path",
 				"reason": "After %d Dasher battles with repeated player dash responses, the species adapted its attack path." % ev.encounters_fought,
 				"counter": "Avoid walking directly in Dasher wake; lure Dashers into open perimeter corridors."
 			}
@@ -221,7 +234,7 @@ func process_encounter_end(
 			new_adaptations.append(record)
 			ev.history.append(record)
 
-		# Tier 1 -> Tier 2: Overclocked Velocity (+25% stalk & lunge) & 4x Health
+		# Tier 1 -> Tier 2: Even More Speed (Hyper Speed Lunge)
 		elif ev.tier == 1 and ev.encounters_fought >= BATTLES_FOR_SECOND_EVOLUTION:
 			ev.tier = 2
 			for g in active_genomes["DASHER"]:
@@ -232,10 +245,30 @@ func process_encounter_end(
 				"family": "DASHER",
 				"tier": 2,
 				"mutation": "OVERCLOCKED_THRUSTERS",
-				"health_mult": "4x (8 HP)",
-				"tradeoff": "+25% stalking speed (118.8 px/s) & lunge speed (700 px/s), max armor doubled to 8 HP",
-				"reason": "Surviving Dashers analyzed %d battle(s). Evolved overclocked pursuit thrusters." % ev.encounters_fought,
+				"health_mult": "1x (2 HP)",
+				"tradeoff": "Overclocked hyper-lunge speed +57% (820 px/s), maintaining mine deployment",
+				"reason": "Surviving Dashers analyzed %d battle(s). Evolved hyper-speed interception thrusters." % ev.encounters_fought,
 				"counter": "Telegraph window remains readable; wait for telegraph commitment before dodging."
+			}
+			evolution_history.append(record)
+			new_adaptations.append(record)
+			ev.history.append(record)
+
+		# Tier 2 -> Tier 3: Reinforced Armor Plating (3x Health)
+		elif ev.tier == 2 and ev.encounters_fought >= BATTLES_FOR_THIRD_EVOLUTION:
+			ev.tier = 3
+			for g in active_genomes["DASHER"]:
+				g.tier = 3
+				g.apply_named_mutation("REINFORCED_CHASSIS")
+			var record := {
+				"sector": sector_index + 1,
+				"family": "DASHER",
+				"tier": 3,
+				"mutation": "REINFORCED_CHASSIS",
+				"health_mult": "3x (6 HP)",
+				"tradeoff": "Reinforced armored chevron hull doubling armor to 6 HP, preserving hyper speed and mines",
+				"reason": "Dashers persevered across %d battle(s). Evolved reinforced defensive plating." % ev.encounters_fought,
+				"counter": "Focus high-damage burst fire or static dash damage on armored Dashers."
 			}
 			evolution_history.append(record)
 			new_adaptations.append(record)
@@ -247,41 +280,61 @@ func process_encounter_end(
 		ev.encounters_fought += 1
 		ev.combat_time += combat_duration
 
-		# Tier 0 -> Tier 1: Predictive Lead Aiming Optics & 2x Health
+		# Tier 0 -> Tier 1: Speed Buff (Maneuver & Strafe)
 		if ev.tier == 0 and ev.encounters_fought >= BATTLES_FOR_FIRST_EVOLUTION:
 			ev.tier = 1
 			for g in active_genomes["SHOOTER"]:
 				g.tier = 1
-				g.apply_named_mutation("PREDICTIVE_OPTICS")
+				g.apply_named_mutation("AGILE_STRAFE")
 			var record := {
 				"sector": sector_index + 1,
 				"family": "SHOOTER",
 				"tier": 1,
+				"mutation": "AGILE_STRAFE",
+				"health_mult": "1x (3 HP)",
+				"tradeoff": "Repositioning & strafe speed +53% (115 px/s), bad aim remains uncalibrated",
+				"reason": "Shooters analyzed player encounters across %d battle(s). Evolved agile thruster repositioning." % ev.encounters_fought,
+				"counter": "Corner Shooters against arena walls and obstacles before they can kite away."
+			}
+			evolution_history.append(record)
+			new_adaptations.append(record)
+			ev.history.append(record)
+
+		# Tier 1 -> Tier 2: Armor & Really Good Aim (Predictive Lead Aiming)
+		elif ev.tier == 1 and ev.encounters_fought >= BATTLES_FOR_SECOND_EVOLUTION:
+			ev.tier = 2
+			for g in active_genomes["SHOOTER"]:
+				g.tier = 2
+				g.apply_named_mutation("PREDICTIVE_OPTICS")
+			var record := {
+				"sector": sector_index + 1,
+				"family": "SHOOTER",
+				"tier": 2,
 				"mutation": "PREDICTIVE_OPTICS",
 				"health_mult": "2x (6 HP)",
-				"tradeoff": "Calibrated predictive lead targeting optics (0.75), max armor doubled to 6 HP",
-				"reason": "Shooters analyzed player trajectory across %d battle(s). Evolved predictive lead calculations." % ev.encounters_fought,
+				"tradeoff": "Armor doubled to 6 HP and calibrated pinpoint predictive lead aiming optics",
+				"reason": "Surviving Shooters analyzed %d encounter(s). Evolved precision lead targeting optics." % ev.encounters_fought,
 				"counter": "Stop or change heading when laser telegraph locks; do not run in a straight line."
 			}
 			evolution_history.append(record)
 			new_adaptations.append(record)
 			ev.history.append(record)
 
-		# Tier 1 -> Tier 2: 2-Round Burst Volley & 4x Health
-		elif ev.tier == 1 and ev.encounters_fought >= BATTLES_FOR_SECOND_EVOLUTION:
-			ev.tier = 2
+		# Tier 2 -> Tier 3: Charged Particle Beam dealing 2 DMG & Heavy Armor (12 HP)
+		elif ev.tier == 2 and ev.encounters_fought >= BATTLES_FOR_THIRD_EVOLUTION:
+			ev.tier = 3
 			for g in active_genomes["SHOOTER"]:
-				g.tier = 2
-				g.apply_named_mutation("BURST_VOLLEY")
+				g.tier = 3
+				g.apply_named_mutation("HEAVY_BEAM")
 			var record := {
 				"sector": sector_index + 1,
 				"family": "SHOOTER",
-				"tier": 2,
-				"mutation": "BURST_VOLLEY",
+				"tier": 3,
+				"mutation": "HEAVY_BEAM",
 				"health_mult": "4x (12 HP)",
-				"tradeoff": "Rapid 2-round projectile volley, max armor doubled to 12 HP",
-				"reason": "Surviving Shooters analyzed %d encounter(s). Evolved dual capacitor discharge coils." % ev.encounters_fought,
-				"counter": "Use pillars and cover geometry to intercept the follow-up burst bolt."
+				"tradeoff": "Equipped with heavy charging particle beam dealing 2 HP damage, max armor doubled to 12 HP",
+				"reason": "Shooters mastered long-range telemetry over %d battle(s). Synthesized 2-damage particle beam cannon." % ev.encounters_fought,
+				"counter": "Watch for the red/amber widening charging ray; dash perpendicularly right as beam fires."
 			}
 			evolution_history.append(record)
 			new_adaptations.append(record)

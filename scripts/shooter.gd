@@ -10,6 +10,7 @@ const PROJECTILE_SCENE := preload("res://scenes/weapons/enemy_projectile.tscn")
 @export var ideal_distance := 210.0
 @export var lead_prediction := 0.0
 @export var burst_count := 1
+@export var has_beam_attack := false
 
 var health := 3
 var target: Node2D
@@ -21,6 +22,16 @@ const TELEGRAPH_DURATION := 0.65
 var aimed_direction := Vector2.RIGHT
 var damage_flash := 0.0
 var recovery_time := 0.0
+
+# Tier 3 Charged Beam Attack
+var is_firing_beam := false
+var beam_duration := 0.0
+
+# Debuff status
+var debuff_slow_timer := 0.0
+var debuff_burn_timer := 0.0
+var debuff_burn_tick := 0.0
+var debuff_shock_timer := 0.0
 
 var genome: RefCounted = null
 var spatial_index: RefCounted = null
@@ -34,6 +45,20 @@ var damage_multipliers: Dictionary = {
 }
 
 
+func apply_debuff(type: String, duration: float, _intensity: float = 1.0) -> void:
+	match type:
+		"CRYO", "SLOW":
+			debuff_slow_timer = maxf(debuff_slow_timer, duration)
+		"ACID", "BURN":
+			debuff_burn_timer = maxf(debuff_burn_timer, duration)
+			debuff_burn_tick = 0.5
+		"SHOCK":
+			debuff_shock_timer = maxf(debuff_shock_timer, duration)
+			telegraph_time = 0.0
+			is_firing_beam = false
+	queue_redraw()
+
+
 func _ready() -> void:
 	health = max_health
 	add_to_group("enemies")
@@ -44,6 +69,31 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	damage_flash = maxf(0.0, damage_flash - delta)
 	recovery_time = maxf(0.0, recovery_time - delta)
+
+	# Debuff updates
+	if debuff_slow_timer > 0.0:
+		debuff_slow_timer = maxf(0.0, debuff_slow_timer - delta)
+
+	if debuff_burn_timer > 0.0:
+		debuff_burn_timer = maxf(0.0, debuff_burn_timer - delta)
+		debuff_burn_tick -= delta
+		if debuff_burn_tick <= 0.0:
+			debuff_burn_tick = 1.0
+			take_damage(1, "hazard")
+
+	if debuff_shock_timer > 0.0:
+		debuff_shock_timer = maxf(0.0, debuff_shock_timer - delta)
+		velocity = Vector2.ZERO
+		queue_redraw()
+		return
+
+	if is_firing_beam:
+		beam_duration -= delta
+		velocity = Vector2.ZERO
+		if beam_duration <= 0.0:
+			is_firing_beam = false
+		queue_redraw()
+		return
 
 	if not is_instance_valid(target):
 		return
@@ -105,7 +155,8 @@ func _physics_process(delta: float) -> void:
 		if not obstacle_rects.is_empty():
 			move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 35.0)
 
-		velocity = move_dir * move_speed
+		var eff_speed: float = move_speed * (0.50 if debuff_slow_timer > 0.0 else 1.0)
+		velocity = move_dir * eff_speed
 
 	if is_inside_tree():
 		move_and_slide()
@@ -115,9 +166,31 @@ func _physics_process(delta: float) -> void:
 func _fire_shot() -> void:
 	if not get_parent():
 		return
+
+	if has_beam_attack:
+		is_firing_beam = true
+		beam_duration = 0.35
+		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+			get_node("/root/AudioSynth").play("laser_heavy", 0.08, -2.0)
+		# Heavy beam strike deals 2 damage if player is within beam line
+		if is_instance_valid(target) and target.has_method("take_damage"):
+			var p_pos: Vector2 = target.global_position
+			var b_start: Vector2 = global_position
+			var b_end: Vector2 = global_position + aimed_direction * 650.0
+			var closest_pt: Vector2 = Geometry2D.get_closest_point_to_segment(p_pos, b_start, b_end)
+			if p_pos.distance_to(closest_pt) <= 24.0:
+				target.take_damage(2)
+		queue_redraw()
+		return
+
+	# Normal shot: if lead_prediction is 0.0, apply bad aim spread
+	var shoot_dir := aimed_direction
+	if lead_prediction <= 0.01:
+		shoot_dir = aimed_direction.rotated(randf_range(-0.32, 0.32)) # ~18 deg bad aim spread
+
 	var proj = PROJECTILE_SCENE.instantiate()
-	proj.global_position = global_position + aimed_direction * 24.0
-	proj.direction = aimed_direction
+	proj.global_position = global_position + shoot_dir * 24.0
+	proj.direction = shoot_dir
 	if "shooter_enemy" in proj:
 		proj.shooter_enemy = self
 	get_parent().add_child(proj)
@@ -127,8 +200,8 @@ func _fire_shot() -> void:
 		await get_tree().create_timer(0.14).timeout
 		if is_instance_valid(self) and not defeated_already and is_inside_tree() and get_parent():
 			var proj2 = PROJECTILE_SCENE.instantiate()
-			proj2.global_position = global_position + aimed_direction * 24.0
-			proj2.direction = aimed_direction
+			proj2.global_position = global_position + shoot_dir * 24.0
+			proj2.direction = shoot_dir
 			if "shooter_enemy" in proj2:
 				proj2.shooter_enemy = self
 			get_parent().add_child(proj2)
@@ -153,13 +226,23 @@ func take_damage(amount: int, source: String = "plasma") -> void:
 
 
 func _draw() -> void:
+	# Active Heavy Particle Beam (Tier 3)
+	if is_firing_beam:
+		var beam_end := to_local(global_position + aimed_direction * 650.0)
+		draw_line(Vector2.ZERO, beam_end, Color(1.0, 0.65, 0.1, 0.95), 8.0)
+		draw_line(Vector2.ZERO, beam_end, Color(1.0, 0.98, 0.8, 1.0), 3.0)
+		draw_circle(beam_end, 7.0, Color("f59e0b"))
+		draw_circle(Vector2.ZERO, 9.0, Color("fffbeb"))
+
 	# Warning laser line when charging attack (shows exact predicted interception vector)
 	if telegraph_time > 0.0:
 		var pulse := 0.5 + sin(telegraph_time * 25.0) * 0.4
 		var line_color := Color(1.0, 0.6, 0.1, pulse)
-		if lead_prediction > 0.0:
+		if has_beam_attack:
+			line_color = Color(0.96, 0.25, 0.37, pulse + 0.2) # High-energy beam warning red/amber
+		elif lead_prediction > 0.0:
 			line_color = Color(0.22, 0.74, 0.97, pulse + 0.15) # Cyber cyan predictive laser
-		draw_line(Vector2.ZERO, to_local(global_position + aimed_direction * 380.0), line_color, 2.0)
+		draw_line(Vector2.ZERO, to_local(global_position + aimed_direction * 380.0), line_color, 2.5 if has_beam_attack else 2.0)
 		draw_line(Vector2.ZERO, to_local(global_position + aimed_direction * 380.0), Color(1.0, 0.95, 0.7, pulse * 0.6), 1.0)
 
 	# Enemy body: Faceted amber hexagon polygon
@@ -194,11 +277,28 @@ func _draw() -> void:
 	draw_circle(Vector2(5, 0), 4.0, Color("fffbeb"))
 	draw_circle(Vector2(5, 0), 2.0, Color("f59e0b"))
 
+	# Tier 3 Heavy Beam Emitter Focal Lens
+	if has_beam_attack:
+		draw_circle(Vector2(16, 0), 4.5, Color("f43f5e"))
+		draw_circle(Vector2(16, 0), 2.5, Color("fffbeb"))
+		draw_line(Vector2(6, -13), Vector2(16, 0), Color("be123c"), 2.0)
+		draw_line(Vector2(6, 13), Vector2(16, 0), Color("be123c"), 2.0)
+
+	# Evolved Armored Reinforcements (Tier 2 and Tier 3)
+	if max_health > 3:
+		# Draw top and bottom armored chassis plating
+		draw_line(Vector2(-12, -13), Vector2(6, -15), Color("38bdf8"), 2.0)
+		draw_line(Vector2(-12, 13), Vector2(6, 15), Color("38bdf8"), 2.0)
+
 	# Health bar & Evolution Tier indicator
 	if max_health > 3:
-		var tier_pips := 1 if max_health <= 6 else 2
+		var tier_pips := 1
+		if max_health >= 12:
+			tier_pips = 3
+		elif max_health >= 6:
+			tier_pips = 2
 		for p in range(tier_pips):
-			draw_circle(Vector2(-4.0 + float(p) * 8.0, -27), 2.2, Color("38bdf8"))
+			draw_circle(Vector2(-6.0 + float(p) * 6.0, -27), 2.0, Color("38bdf8"))
 		draw_rect(Rect2(-16, -22, 32, 4), Color("181a26"))
 		var hp_ratio := float(health) / float(max_health)
 		draw_rect(Rect2(-15, -21, 30.0 * hp_ratio, 2), Color("f59e0b"))
@@ -206,3 +306,13 @@ func _draw() -> void:
 		var hit_points := float(health) / float(max_health)
 		draw_rect(Rect2(-14, -22, 28, 4), Color("181a26"))
 		draw_rect(Rect2(-13, -21, 26.0 * hit_points, 2), Color("f59e0b"))
+
+	# Debuff Visual Overlays
+	if debuff_slow_timer > 0.0:
+		draw_circle(Vector2.ZERO, 19.0, Color(0.2, 0.8, 1.0, 0.25))
+	if debuff_burn_timer > 0.0:
+		draw_circle(Vector2.ZERO, 16.0, Color(0.5, 1.0, 0.2, 0.25))
+	if debuff_shock_timer > 0.0:
+		for s in range(3):
+			var a := randf() * TAU
+			draw_line(Vector2.ZERO, Vector2(cos(a), sin(a)) * 20.0, Color("c084fc"), 1.8)

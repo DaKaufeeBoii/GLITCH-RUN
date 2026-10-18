@@ -38,6 +38,27 @@ var damage_multipliers: Dictionary = {
 	"hazard": 1.0
 }
 
+# Debuff status
+var debuff_slow_timer := 0.0
+var debuff_burn_timer := 0.0
+var debuff_burn_tick := 0.0
+var debuff_shock_timer := 0.0
+
+
+func apply_debuff(type: String, duration: float, _intensity: float = 1.0) -> void:
+	match type:
+		"CRYO", "SLOW":
+			debuff_slow_timer = maxf(debuff_slow_timer, duration)
+		"ACID", "BURN":
+			debuff_burn_timer = maxf(debuff_burn_timer, duration)
+			debuff_burn_tick = 0.5
+		"SHOCK":
+			debuff_shock_timer = maxf(debuff_shock_timer, duration)
+			if state == State.TELEGRAPH or state == State.LUNGE:
+				state = State.STALK
+				state_timer = 0.6
+	queue_redraw()
+
 
 func _ready() -> void:
 	health = max_health
@@ -48,6 +69,23 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	damage_flash = maxf(0.0, damage_flash - delta)
+
+	# Debuff updates
+	if debuff_slow_timer > 0.0:
+		debuff_slow_timer = maxf(0.0, debuff_slow_timer - delta)
+
+	if debuff_burn_timer > 0.0:
+		debuff_burn_timer = maxf(0.0, debuff_burn_timer - delta)
+		debuff_burn_tick -= delta
+		if debuff_burn_tick <= 0.0:
+			debuff_burn_tick = 1.0
+			take_damage(1, "hazard")
+
+	if debuff_shock_timer > 0.0:
+		debuff_shock_timer = maxf(0.0, debuff_shock_timer - delta)
+		velocity = Vector2.ZERO
+		queue_redraw()
+		return
 
 	if not is_instance_valid(target):
 		return
@@ -64,7 +102,8 @@ func _physics_process(delta: float) -> void:
 			var separation: Vector2 = Vector2.ZERO
 			if spatial_index:
 				separation = spatial_index.get_separation_for_agent(self, 30.0, 3)
-			velocity = (move_dir + separation * 0.4).normalized() * patrol_speed
+			var eff_patrol: float = patrol_speed * (0.50 if debuff_slow_timer > 0.0 else 1.0)
+			velocity = (move_dir + separation * 0.4).normalized() * eff_patrol
 
 			if state_timer <= 0.0 and to_target.length() < 300.0:
 				var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects)
@@ -92,7 +131,8 @@ func _physics_process(delta: float) -> void:
 				hazard_timer = 0.0
 
 		State.LUNGE:
-			velocity = lunge_direction * lunge_speed
+			var eff_lunge: float = lunge_speed * (0.65 if debuff_slow_timer > 0.0 else 1.0)
+			velocity = lunge_direction * eff_lunge
 			rotation = lunge_direction.angle()
 			if not contact_dealt and to_target.length() < 32.0:
 				if target.has_method("take_damage"):
@@ -197,14 +237,25 @@ func _draw() -> void:
 		Vector2(16, 0)
 	]), body_color.lightened(0.4), 1.5)
 
+	# Evolved Armored Reinforcements (Tier 3)
+	if max_health >= 4:
+		draw_line(Vector2(-12, -14), Vector2(16, 0), Color("38bdf8"), 2.2)
+		draw_line(Vector2(-12, 14), Vector2(16, 0), Color("38bdf8"), 2.2)
+		draw_line(Vector2(-6, -8), Vector2(6, 0), Color("a855f7"), 1.8)
+		draw_line(Vector2(-6, 8), Vector2(6, 0), Color("a855f7"), 1.8)
+
 	# Central thruster plasma core
 	draw_circle(Vector2(-4, 0), 3.0, Color("fdf2f8"))
 
 	# Health bar & Evolution Tier indicator
 	if max_health > 2:
-		var tier_pips := 1 if max_health <= 4 else 2
+		var tier_pips := 1
+		if max_health >= 6:
+			tier_pips = 3
+		elif max_health >= 4:
+			tier_pips = 2
 		for p in range(tier_pips):
-			draw_circle(Vector2(-4.0 + float(p) * 8.0, -26), 2.2, Color("38bdf8"))
+			draw_circle(Vector2(-6.0 + float(p) * 6.0, -26), 2.0, Color("38bdf8"))
 		draw_rect(Rect2(-16, -21, 32, 4), Color("181a26"))
 		var hp_ratio := float(health) / float(max_health)
 		draw_rect(Rect2(-15, -20, 30.0 * hp_ratio, 2), Color("ec4899"))
@@ -212,3 +263,13 @@ func _draw() -> void:
 		var hit_points := float(health) / float(max_health)
 		draw_rect(Rect2(-14, -20, 28, 4), Color("181a26"))
 		draw_rect(Rect2(-13, -19, 26.0 * hit_points, 2), Color("ec4899"))
+
+	# Debuff Visual Overlays
+	if debuff_slow_timer > 0.0:
+		draw_circle(Vector2.ZERO, 19.0, Color(0.2, 0.8, 1.0, 0.25))
+	if debuff_burn_timer > 0.0:
+		draw_circle(Vector2.ZERO, 16.0, Color(0.5, 1.0, 0.2, 0.25))
+	if debuff_shock_timer > 0.0:
+		for s in range(3):
+			var a := randf() * TAU
+			draw_line(Vector2.ZERO, Vector2(cos(a), sin(a)) * 20.0, Color("c084fc"), 1.8)

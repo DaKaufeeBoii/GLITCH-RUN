@@ -27,6 +27,24 @@ var burst_projectile_count := 8
 var dash_speed := 420.0
 var post_burst_recovery := 1.0
 
+# Debuff status
+var debuff_slow_timer := 0.0
+var debuff_burn_timer := 0.0
+var debuff_burn_tick := 0.0
+var debuff_shock_timer := 0.0
+
+
+func apply_debuff(type: String, duration: float, _intensity: float = 1.0) -> void:
+	match type:
+		"CRYO", "SLOW":
+			debuff_slow_timer = maxf(debuff_slow_timer, duration * 0.70)
+		"ACID", "BURN":
+			debuff_burn_timer = maxf(debuff_burn_timer, duration)
+			debuff_burn_tick = 0.5
+		"SHOCK":
+			debuff_shock_timer = maxf(debuff_shock_timer, 0.40)
+	queue_redraw()
+
 
 func _ready() -> void:
 	health = max_health
@@ -42,15 +60,36 @@ func apply_mutations(mutations: Array[Dictionary]) -> void:
 		var m_id: String = m.get("id", "")
 		if m_id == "BURST_OVERCLOCK":
 			burst_projectile_count = 10
+			dash_speed = 490.0
 			post_burst_recovery = 1.35
 		elif m_id == "TITAN_DASH":
-			dash_speed = 500.0
+			dash_speed = 540.0
+		elif m_id == "TITAN_ARMOR":
+			max_health = int(roundf(float(max_health) * 1.45))
+			health = max_health
 
 
 func _physics_process(delta: float) -> void:
 	orbital_angle += delta * 2.2
 	phase_timer -= delta
 	damage_flash = maxf(0.0, damage_flash - delta)
+
+	# Debuff updates
+	if debuff_slow_timer > 0.0:
+		debuff_slow_timer = maxf(0.0, debuff_slow_timer - delta)
+
+	if debuff_burn_timer > 0.0:
+		debuff_burn_timer = maxf(0.0, debuff_burn_timer - delta)
+		debuff_burn_tick -= delta
+		if debuff_burn_tick <= 0.0:
+			debuff_burn_tick = 1.0
+			take_damage(1, "hazard")
+
+	if debuff_shock_timer > 0.0:
+		debuff_shock_timer = maxf(0.0, debuff_shock_timer - delta)
+		velocity = Vector2.ZERO
+		queue_redraw()
+		return
 
 	if not is_instance_valid(target):
 		return
@@ -136,7 +175,7 @@ func _execute_burst() -> void:
 		get_parent().add_child(proj)
 
 
-func take_damage(amount: int) -> void:
+func take_damage(amount: int, _source: String = "plasma") -> void:
 	if defeated_already:
 		return
 	health = maxi(0, health - amount)

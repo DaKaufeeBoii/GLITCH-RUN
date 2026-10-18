@@ -67,6 +67,26 @@ func _init(p_family: String = "CHASER", p_generation: int = 1) -> void:
 
 
 func get_max_health() -> int:
+	if family == "SHOOTER":
+		if tier == 0:
+			return 3
+		elif tier == 1:
+			return 3
+		elif tier == 2:
+			return 6
+		else:
+			return 12
+	elif family == "DASHER":
+		if tier == 0:
+			return 2
+		elif tier == 1:
+			return 2
+		elif tier == 2:
+			return 2
+		else:
+			return 6
+	elif family == "CHASER":
+		return base_max_health * int(pow(2, mini(tier, 2)))
 	return base_max_health * int(pow(2, tier))
 
 
@@ -158,68 +178,71 @@ func apply_named_mutation(mut_name: String) -> bool:
 
 	match mut_name:
 		"RAPID_PURSUIT":
-			# Chaser Tier 1: +35% pursuit speed, 2x HP
+			# Chaser Tier 1: Gets faster pursuit (+45% speed), 2x HP
 			tier = maxi(tier, 1)
 			active_mutations.append(mut_name)
 			variant_name = variant_name + " [Pursuit]"
 			return true
 
 		"CRIMSON_BLASTER":
-			# Chaser Tier 2: Learns telegraphed laser projectile attack, 4x HP
+			# Chaser Tier 2: Teaches it to aim and shoot laser, 4x HP
 			tier = maxi(tier, 2)
 			active_mutations.append(mut_name)
 			variant_name = variant_name + " [Blaster]"
 			return true
 
-		"ION_HAZARD_TRAIL":
-			# Dasher Tier 1: Leaves ion hazard trail along dash, 2x HP
+		"AGILE_STRAFE":
+			# Shooter Tier 1: Speed buff (+move speed)
 			tier = maxi(tier, 1)
-			attack_timing_mult = clampf(attack_timing_mult * 1.15, MIN_ATTACK_TIMING, MAX_ATTACK_TIMING)
 			active_mutations.append(mut_name)
-			variant_name = variant_name + " [IonTrail]"
-			return true
-
-		"OVERCLOCKED_THRUSTERS":
-			# Dasher Tier 2: +25% stalking and lunge speed, 4x HP
-			tier = maxi(tier, 2)
-			active_mutations.append(mut_name)
-			variant_name = variant_name + " [Overclocked]"
+			variant_name = variant_name + " [Agile]"
 			return true
 
 		"PREDICTIVE_OPTICS":
-			# Shooter Tier 1: Lead prediction aiming optics, 2x HP
-			tier = maxi(tier, 1)
-			prediction_strength = 0.75
+			# Shooter Tier 2: Armor and really good aim (predictive lead aim), 2x HP
+			tier = maxi(tier, 2)
+			prediction_strength = 1.0
 			attack_timing_mult = clampf(attack_timing_mult * 1.20, MIN_ATTACK_TIMING, MAX_ATTACK_TIMING)
 			active_mutations.append(mut_name)
 			variant_name = variant_name + " [Optics]"
 			return true
 
-		"BURST_VOLLEY":
-			# Shooter Tier 2: 2-round burst volley firing, 4x HP
+		"HEAVY_BEAM", "BURST_VOLLEY":
+			# Shooter Tier 3: Heavy particle beam dealing 2 damage, 4x HP
+			tier = maxi(tier, 3)
+			active_mutations.append(mut_name)
+			variant_name = variant_name + " [HeavyBeam]"
+			return true
+
+		"ION_HAZARD_TRAIL":
+			# Dasher Tier 1: Speed and hazard mines
+			tier = maxi(tier, 1)
+			active_mutations.append(mut_name)
+			variant_name = variant_name + " [Mines]"
+			return true
+
+		"OVERCLOCKED_THRUSTERS":
+			# Dasher Tier 2: Even more speed (hyper lunge)
 			tier = maxi(tier, 2)
 			active_mutations.append(mut_name)
-			variant_name = variant_name + " [BurstVolley]"
+			variant_name = variant_name + " [HyperSpeed]"
+			return true
+
+		"REINFORCED_CHASSIS":
+			# Dasher Tier 3: Armor buff (doubled health)
+			tier = maxi(tier, 3)
+			active_mutations.append(mut_name)
+			variant_name = variant_name + " [Armored]"
 			return true
 
 		"PINCER_WINGS":
-			# Wide pincer flanking angle
 			flanking_tendency = clampf(flanking_tendency + 0.55, MIN_FLANKING, MAX_FLANKING)
 			aggression = clampf(aggression * 0.90, MIN_AGGRESSION, MAX_AGGRESSION)
 			active_mutations.append(mut_name)
 			variant_name = variant_name + " [Pincer]"
 			return true
 
-		"RAPID_THRUSTERS":
-			# +20% movement speed, -20% evasion
-			aggression = clampf(aggression + 0.20, MIN_AGGRESSION, MAX_AGGRESSION)
-			evasion_tendency = clampf(evasion_tendency - 0.20, MIN_EVASION, MAX_EVASION)
-			active_mutations.append(mut_name)
-			variant_name = variant_name + " [Overclock]"
-			return true
-
 		"STATIC_GROUNDING":
-			# 40% resistance to player dash zaps, -8% movement speed
 			damage_multipliers["dash"] = 0.60
 			aggression = clampf(aggression * 0.92, MIN_AGGRESSION, MAX_AGGRESSION)
 			active_mutations.append(mut_name)
@@ -227,7 +250,6 @@ func apply_named_mutation(mut_name: String) -> bool:
 			return true
 
 		"DEFENSIVE_STRIKE":
-			# +30% evasive strafing, -12% direct aggression
 			evasion_tendency = clampf(evasion_tendency + 0.30, MIN_EVASION, MAX_EVASION)
 			aggression = clampf(aggression * 0.88, MIN_AGGRESSION, MAX_AGGRESSION)
 			active_mutations.append(mut_name)
@@ -244,7 +266,7 @@ func apply_to_enemy(enemy_node: Node2D) -> void:
 	# Bind genome reference
 	enemy_node.set("genome", self)
 
-	# Apply tier health doubling (1x at Tier 0, 2x at Tier 1, 4x at Tier 2)
+	# Apply tier health calculation
 	var calc_hp: int = get_max_health()
 	if "max_health" in enemy_node:
 		enemy_node.max_health = calc_hp
@@ -254,7 +276,7 @@ func apply_to_enemy(enemy_node: Node2D) -> void:
 	if family == "CHASER":
 		var speed: float = 92.0 * aggression
 		if tier >= 1 or has_mutation("RAPID_PURSUIT"):
-			speed *= 1.35
+			speed = maxf(135.0, 135.0 * aggression)
 		if "move_speed" in enemy_node:
 			enemy_node.move_speed = speed
 		if "has_ranged_attack" in enemy_node:
@@ -266,22 +288,35 @@ func apply_to_enemy(enemy_node: Node2D) -> void:
 
 	# 2. Shooter behavioral application
 	elif family == "SHOOTER":
-		if "lead_prediction" in enemy_node:
-			enemy_node.lead_prediction = 0.75 if (tier >= 1 or has_mutation("PREDICTIVE_OPTICS")) else prediction_strength
-		if "burst_count" in enemy_node:
-			enemy_node.burst_count = 2 if (tier >= 2 or has_mutation("BURST_VOLLEY")) else 1
+		var s_speed: float = 75.0 * aggression
+		if tier >= 1 or has_mutation("AGILE_STRAFE"):
+			s_speed = maxf(115.0, 115.0 * aggression)
 		if "move_speed" in enemy_node:
-			enemy_node.move_speed = 82.0 * aggression
+			enemy_node.move_speed = s_speed
+
+		if "lead_prediction" in enemy_node:
+			if tier >= 2 or has_mutation("PREDICTIVE_OPTICS"):
+				enemy_node.lead_prediction = 1.0
+			else:
+				enemy_node.lead_prediction = 0.0 # Bad aim at tier 0 and 1
+
+		if "has_beam_attack" in enemy_node:
+			enemy_node.has_beam_attack = (tier >= 3 or has_mutation("HEAVY_BEAM") or has_mutation("BURST_VOLLEY"))
+
 		if "ideal_distance" in enemy_node:
 			enemy_node.ideal_distance = preferred_distance
 
 	# 3. Dasher behavioral application
 	elif family == "DASHER":
 		var p_spd: float = 95.0 * aggression
-		var l_spd: float = 560.0 * aggression
+		var l_spd: float = 520.0 * aggression
 		if tier >= 2 or has_mutation("OVERCLOCKED_THRUSTERS"):
-			p_spd *= 1.25
-			l_spd *= 1.25
+			p_spd = maxf(150.0, 150.0 * aggression)
+			l_spd = maxf(820.0, 820.0 * aggression)
+		elif tier == 1 or has_mutation("ION_HAZARD_TRAIL"):
+			p_spd = maxf(120.0, 120.0 * aggression)
+			l_spd = maxf(650.0, 650.0 * aggression)
+
 		if "patrol_speed" in enemy_node:
 			enemy_node.patrol_speed = p_spd
 		if "lunge_speed" in enemy_node:
