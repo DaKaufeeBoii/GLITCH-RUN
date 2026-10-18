@@ -12,6 +12,9 @@ const ASSET_LOADER := preload("res://scripts/asset_loader.gd")
 
 const BEHAVIOR_TRACKER_SCRIPT := preload("res://scripts/behavior_tracker.gd")
 const ADAPTIVE_DIRECTOR_SCRIPT := preload("res://scripts/adaptive_director.gd")
+const DUNGEON_GEN_SCRIPT := preload("res://scripts/dungeon_generator.gd")
+const ENCOUNTER_DIR_SCRIPT := preload("res://scripts/encounter_director.gd")
+const ENEMY_GENOME_SCRIPT := preload("res://scripts/enemy_genome.gd")
 const DIRECTOR_TESTS_SCRIPT := preload("res://scripts/test_director.gd")
 const DEBRIS_EMITTER_SCRIPT := preload("res://scripts/debris_emitter.gd")
 const PAUSE_MENU_SCRIPT := preload("res://scripts/pause_menu.gd")
@@ -71,11 +74,20 @@ var upgrade_cards_box: HBoxContainer
 var pause_menu: Control
 var debrief_terminal: Control
 
-# Milestone 2: Adaptive Director & Behavior Tracker
+# Priority 1 & 2: Procedural Generator, Evolved AI & Encounter Director
 var tracker: RefCounted
 var director: RefCounted
+var dungeon_generator: RefCounted
+var dungeon_layout: RefCounted
+var encounter_director: RefCounted
+var current_room_data: RefCounted
 var current_sector_tactic := "DEFAULT"
 var damage_taken_this_sector := 0
+var sector_combat_time := 0.0
+
+var debug_overlay: PanelContainer
+var debug_content: Label
+var debug_visible := false
 
 var director_banner: PanelContainer
 var banner_title: Label
@@ -98,6 +110,8 @@ func _ready() -> void:
 
 	tracker = BEHAVIOR_TRACKER_SCRIPT.new()
 	director = ADAPTIVE_DIRECTOR_SCRIPT.new()
+	dungeon_generator = DUNGEON_GEN_SCRIPT.new()
+	encounter_director = ENCOUNTER_DIR_SCRIPT.new()
 
 	if OS.is_debug_build():
 		DIRECTOR_TESTS_SCRIPT.run_all_tests()
@@ -109,6 +123,12 @@ func _ready() -> void:
 	get_tree().paused = false
 	run_over = false
 	room_cleared = false
+
+	# Generate deterministic procedural dungeon layout from run seed
+	dungeon_layout = dungeon_generator.generate_dungeon(rs.current_seed, rs.TOTAL_ROOMS)
+	rs.dungeon_layout_summary.clear()
+	for r in dungeon_layout.rooms:
+		rs.dungeon_layout_summary.append(r.to_dict())
 
 	# Initialize Camera2D for trauma screen shake
 	camera = Camera2D.new()
@@ -126,6 +146,10 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F1:
+		toggle_debug_overlay()
+		return
+
 	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and (event.keycode == KEY_ESCAPE or event.keycode == KEY_P)):
 		if not run_over and is_instance_valid(upgrade_container) and not upgrade_container.visible:
 			if is_instance_valid(pause_menu):
@@ -327,6 +351,8 @@ func _create_player() -> void:
 	player.connect("died", Callable(self, "_on_player_died"))
 	player.connect("dashed", Callable(self, "_on_player_dashed"))
 	player.connect("damaged", Callable(self, "_on_player_damaged"))
+	player.connect("shot_fired", Callable(self, "_on_player_shot_fired"))
+	player.connect("shot_hit", Callable(self, "_on_player_shot_hit"))
 	add_child(player)
 
 	touch_controls = Control.new()
@@ -355,11 +381,22 @@ func _on_player_damaged(amount: int) -> void:
 		tracker.record_damage_taken(amount, t)
 
 
+func _on_player_shot_fired() -> void:
+	if tracker:
+		tracker.record_shot_fired()
+
+
+func _on_player_shot_hit(_enemy: Node2D) -> void:
+	if tracker:
+		tracker.record_shot_hit()
+
+
 func _load_room(index: int) -> void:
 	room_cleared = false
 	boss_active = false
 	boss_ref = null
 	boss_bar_bg.visible = false
+	sector_combat_time = 0.0
 
 	for obs in active_obstacles:
 		if is_instance_valid(obs):
@@ -371,118 +408,94 @@ func _load_room(index: int) -> void:
 		if child.is_in_group("projectiles") or child.has_method("_on_body_entered"):
 			child.queue_free()
 
-	if is_instance_valid(player):
-		player.position = Vector2(ROOM_RECT.position.x + 120.0, ROOM_RECT.get_center().y)
-
 	active_enemies.clear()
 
-	var speed_mult := 1.0
-	var telegraph_mult := 1.0
-	var pincer_active := false
-	var shooter_lead := 0.0
-	var hazard_trail := false
+	var rs_node = get_node_or_null("/root/RunState")
+	if not dungeon_layout or dungeon_layout.rooms.is_empty():
+		var run_seed: int = rs_node.current_seed if rs_node else 1337
+		dungeon_layout = dungeon_generator.generate_dungeon(run_seed, rs_node.TOTAL_ROOMS if rs_node else 6)
 
-	if index > 0 and tracker and director:
-		director.record_tactic_result(current_sector_tactic, damage_taken_this_sector)
-		var decision: Dictionary = director.evaluate_sector_tactics(
-			tracker.get_profile(),
-			index,
-			player.health,
-			player.max_health
-		)
-		current_sector_tactic = decision.tactic
-		speed_mult = decision.enemy_speed_mult
-		telegraph_mult = decision.enemy_telegraph_mult
-		pincer_active = decision.get("pincer_flanking", false)
-		shooter_lead = decision.get("shooter_lead", 0.0)
-		hazard_trail = decision.get("has_hazard_trail", false)
-		_show_director_banner(decision.banner_title, decision.banner_sub)
-		var rs_node = get_node_or_null("/root/RunState")
-		if rs_node:
-			var muts: Array[String] = []
-			if pincer_active: muts.append("Chaser Pincer Flank (+/-38°)")
-			if shooter_lead > 0.0: muts.append("Shooter Lead Aim (λ=%.2f)" % shooter_lead)
-			if hazard_trail: muts.append("Dasher Hazard Trails")
-			var mut_str: String = ", ".join(muts) if not muts.is_empty() else "Standard swarm aggression"
-			rs_node.record_tactic(index + 1, decision.tactic, decision.banner_sub, mut_str)
+	current_room_data = dungeon_layout.get_room(index)
+	if not current_room_data:
+		current_room_data = dungeon_generator._build_fallback_room(index, "BOSS" if (rs_node and index >= rs_node.TOTAL_ROOMS - 1) else "COMBAT")
 
-		if decision.extra_dashers > 0:
-			_spawn_enemy(DASHER_SCENE, Vector2(620, 150), speed_mult, telegraph_mult, 0.0, 0.0, hazard_trail)
-		if decision.extra_shooters > 0:
-			_spawn_enemy(SHOOTER_SCENE, Vector2(760, 276), speed_mult, telegraph_mult, 0.0, shooter_lead, false)
-		if decision.extra_chasers > 0:
-			_spawn_enemy(CHASER_SCENE, Vector2(480, 276), speed_mult, telegraph_mult, 0.65 if pincer_active else 0.0, 0.0, false)
+	# Position player at designated reachable spawn
+	if is_instance_valid(player):
+		player.position = current_room_data.player_spawn
+
+	# Place procedural obstacle geometry
+	for r in current_room_data.obstacles:
+		_add_obstacle(r.get_center(), r.size)
+
+	# Prepare encounter via EncounterDirector
+	var profile: Dictionary = tracker.get_profile() if tracker else {}
+	var p_hp: int = player.health if is_instance_valid(player) else 5
+	var p_max: int = player.max_health if is_instance_valid(player) else 5
+
+	var encounter: Dictionary = encounter_director.prepare_encounter(
+		current_room_data,
+		profile,
+		p_hp,
+		p_max
+	)
+
+	current_sector_tactic = encounter.tactic
+	_show_director_banner(encounter.banner_title, encounter.banner_sub)
+
+	if rs_node:
+		var active_muts: Array[String] = encounter_director.evolution_manager.get_active_mutations_summary()
+		var mut_desc := ", ".join(active_muts) if not active_muts.is_empty() else "Standard swarm baseline"
+		rs_node.record_tactic(index + 1, encounter.tactic, encounter.banner_sub, mut_desc)
 
 	damage_taken_this_sector = 0
 
-	match index:
-		0:
-			# Room 1: Calibration (Open room, 3 Chasers)
-			_spawn_enemy(CHASER_SCENE, Vector2(620, 200), speed_mult, telegraph_mult, 0.55 if pincer_active else 0.0, 0.0, false)
-			_spawn_enemy(CHASER_SCENE, Vector2(740, 276), speed_mult, telegraph_mult, 0.0, 0.0, false)
-			_spawn_enemy(CHASER_SCENE, Vector2(620, 360), speed_mult, telegraph_mult, -0.55 if pincer_active else 0.0, 0.0, false)
+	# Spawn enemies from procedural encounter spawn list
+	for espawn in encounter.spawn_list:
+		var stype: String = espawn.type
+		var pos: Vector2 = espawn.pos
+		var flank: float = espawn.flank_angle
+		var genome: RefCounted = espawn.genome
 
-		1:
-			# Room 2: Firing Line (2 Cover barriers, 2 Chasers, 1 Shooter)
-			_add_obstacle(Vector2(380, 276), Vector2(24, 150))
-			_add_obstacle(Vector2(620, 276), Vector2(24, 150))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(740, 276), speed_mult, telegraph_mult, 0.0, shooter_lead, false)
-			_spawn_enemy(CHASER_SCENE, Vector2(520, 180), speed_mult, telegraph_mult, 0.65 if pincer_active else 0.0, 0.0, false)
-			_spawn_enemy(CHASER_SCENE, Vector2(520, 370), speed_mult, telegraph_mult, -0.65 if pincer_active else 0.0, 0.0, false)
+		if stype == "BOSS":
+			_spawn_boss(pos)
+		else:
+			var scene: PackedScene = CHASER_SCENE
+			if stype == "SHOOTER":
+				scene = SHOOTER_SCENE
+			elif stype == "DASHER":
+				scene = DASHER_SCENE
 
-		2:
-			# Room 3: Vector Ambush (4 Pillar obstacles, 2 Dashers, 2 Chasers)
-			_add_obstacle(Vector2(320, 180), Vector2(40, 40))
-			_add_obstacle(Vector2(640, 180), Vector2(40, 40))
-			_add_obstacle(Vector2(320, 370), Vector2(40, 40))
-			_add_obstacle(Vector2(640, 370), Vector2(40, 40))
-			_spawn_enemy(DASHER_SCENE, Vector2(680, 200), speed_mult, telegraph_mult, 0.0, 0.0, hazard_trail)
-			_spawn_enemy(DASHER_SCENE, Vector2(680, 350), speed_mult, telegraph_mult, 0.0, 0.0, hazard_trail)
-			_spawn_enemy(CHASER_SCENE, Vector2(520, 276), speed_mult, telegraph_mult, 0.65 if pincer_active else 0.0, 0.0, false)
-			_spawn_enemy(CHASER_SCENE, Vector2(760, 276), speed_mult, telegraph_mult, -0.65 if pincer_active else 0.0, 0.0, false)
-
-		3:
-			# Room 4: Chokepoint (Central divider, 2 Shooters, 2 Dashers)
-			_add_obstacle(Vector2(480, 276), Vector2(280, 26))
-			_spawn_enemy(SHOOTER_SCENE, Vector2(680, 180), speed_mult, telegraph_mult, 0.0, shooter_lead, false)
-			_spawn_enemy(SHOOTER_SCENE, Vector2(680, 370), speed_mult, telegraph_mult, 0.0, shooter_lead, false)
-			_spawn_enemy(DASHER_SCENE, Vector2(480, 140), speed_mult, telegraph_mult, 0.0, 0.0, hazard_trail)
-			_spawn_enemy(DASHER_SCENE, Vector2(480, 410), speed_mult, telegraph_mult, 0.0, 0.0, hazard_trail)
-
-		4:
-			# Room 5: Overload Horde (Fortress blocks, mixed wave)
-			_add_obstacle(Vector2(350, 190), Vector2(64, 28))
-			_add_obstacle(Vector2(610, 190), Vector2(64, 28))
-			_add_obstacle(Vector2(350, 360), Vector2(64, 28))
-			_add_obstacle(Vector2(610, 360), Vector2(64, 28))
-			_spawn_enemy(CHASER_SCENE, Vector2(740, 276), speed_mult, telegraph_mult, 0.65 if pincer_active else 0.0, 0.0, false)
-			_spawn_enemy(CHASER_SCENE, Vector2(600, 276), speed_mult, telegraph_mult, -0.65 if pincer_active else 0.0, 0.0, false)
-			_spawn_enemy(SHOOTER_SCENE, Vector2(760, 160), speed_mult, telegraph_mult, 0.0, shooter_lead, false)
-			_spawn_enemy(SHOOTER_SCENE, Vector2(760, 390), speed_mult, telegraph_mult, 0.0, shooter_lead, false)
-			_spawn_enemy(DASHER_SCENE, Vector2(480, 276), speed_mult, telegraph_mult, 0.0, 0.0, hazard_trail)
-
-		5:
-			# Room 6: Boss Room (Corner cover blocks, NEXUS OVERLORD)
-			_add_obstacle(Vector2(180, 150), Vector2(36, 36))
-			_add_obstacle(Vector2(780, 150), Vector2(36, 36))
-			_add_obstacle(Vector2(180, 400), Vector2(36, 36))
-			_add_obstacle(Vector2(780, 400), Vector2(36, 36))
-
-			var boss: Node2D = BOSS_SCENE.instantiate()
-			boss.position = Vector2(680, 276)
-			boss.target = player
-			boss.connect("defeated", Callable(self, "_on_enemy_defeated").bind(boss))
-			add_child(boss)
-			active_enemies.append(boss)
-			boss_ref = boss
-			boss_active = true
-			boss_bar_bg.visible = true
-			trigger_glitch(0.85)
-			add_trauma(0.4)
-			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
-				get_node("/root/AudioSynth").play("boss_alarm", 0.0, 0.0)
+			var enemy = _spawn_enemy(
+				scene,
+				pos,
+				encounter.enemy_speed_mult,
+				encounter.enemy_telegraph_mult,
+				flank,
+				encounter.shooter_lead,
+				encounter.hazard_trail
+			)
+			if genome and enemy:
+				genome.apply_to_enemy(enemy)
+				encounter_director.evolution_manager.register_spawned_combatant(genome)
 
 	queue_redraw()
+	_update_debug_overlay()
+
+
+func _spawn_boss(pos: Vector2) -> void:
+	var boss: Node2D = BOSS_SCENE.instantiate()
+	boss.position = pos
+	boss.target = player
+	boss.connect("defeated", Callable(self, "_on_enemy_defeated").bind(boss))
+	add_child(boss)
+	active_enemies.append(boss)
+	boss_ref = boss
+	boss_active = true
+	boss_bar_bg.visible = true
+	trigger_glitch(0.85)
+	add_trauma(0.4)
+	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+		get_node("/root/AudioSynth").play("boss_alarm", 0.0, 0.0)
 
 
 func _spawn_enemy(
@@ -559,6 +572,18 @@ func _on_room_cleared() -> void:
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("wave_clear", 0.0, 0.0)
 	var rs = get_node("/root/RunState")
+
+	# Report combat outcome to EncounterDirector & EvolutionManager
+	if encounter_director and tracker and rs:
+		encounter_director.record_encounter_result(
+			rs.current_room_index,
+			damage_taken_this_sector,
+			sector_combat_time,
+			tracker.get_profile(),
+			current_sector_tactic
+		)
+		rs.evolution_log = encounter_director.evolution_manager.evolution_history.duplicate(true)
+
 	if rs.current_room_index >= rs.TOTAL_ROOMS - 1:
 		_show_end_screen(true)
 	else:
@@ -604,6 +629,18 @@ func _on_player_died() -> void:
 	for enemy in active_enemies:
 		if is_instance_valid(enemy):
 			enemy.set_physics_process(false)
+
+	var rs = get_node_or_null("/root/RunState")
+	if encounter_director and tracker and rs:
+		encounter_director.record_encounter_result(
+			rs.current_room_index,
+			damage_taken_this_sector,
+			sector_combat_time,
+			tracker.get_profile(),
+			current_sector_tactic
+		)
+		rs.evolution_log = encounter_director.evolution_manager.evolution_history.duplicate(true)
+
 	_show_end_screen(false)
 
 
@@ -616,7 +653,7 @@ func _show_end_screen(won: bool) -> void:
 	rs.finalize_run_stats(won)
 
 	var metrics: Dictionary = tracker.get_combat_metrics() if tracker else {}
-	debrief_terminal.setup_debrief(won, metrics, rs.tactics_log)
+	debrief_terminal.setup_debrief(won, metrics, rs.tactics_log, rs.evolution_log, rs.current_seed)
 
 
 func _restart_run() -> void:
@@ -668,15 +705,110 @@ func _create_ui() -> void:
 
 	# Sector Badge (Top Right)
 	sector_label = Label.new()
-	sector_label.position = Vector2(760, 16)
+	sector_label.position = Vector2(740, 16)
 	sector_label.text = "SECTOR  1 / 6"
 	sector_label.add_theme_color_override("font_color", Color("38bdf8"))
 	sector_label.add_theme_font_size_override("font_size", 16)
 	ui_layer.add_child(sector_label)
 
+	# HUD Touch Pause Button (Top Right corner)
+	var pause_btn := Button.new()
+	pause_btn.position = Vector2(870, 12)
+	pause_btn.custom_minimum_size = Vector2(46, 30)
+	pause_btn.text = "||"
+	var pause_btn_style := StyleBoxFlat.new()
+	pause_btn_style.bg_color = Color(0.06, 0.10, 0.20, 0.85)
+	pause_btn_style.border_color = Color("38bdf8")
+	pause_btn_style.set_border_width_all(1)
+	pause_btn_style.set_corner_radius_all(4)
+	pause_btn.add_theme_stylebox_override("normal", pause_btn_style)
+	pause_btn.add_theme_stylebox_override("hover", pause_btn_style)
+	pause_btn.add_theme_stylebox_override("pressed", pause_btn_style)
+	pause_btn.add_theme_color_override("font_color", Color("38bdf8"))
+	pause_btn.pressed.connect(func():
+		if not run_over and is_instance_valid(pause_menu):
+			pause_menu.open_pause()
+	)
+	ui_layer.add_child(pause_btn)
+
+	# HUD Debug Overlay Toggle Button
+	var dbg_btn := Button.new()
+	dbg_btn.position = Vector2(816, 12)
+	dbg_btn.custom_minimum_size = Vector2(46, 30)
+	dbg_btn.text = "DBG"
+	var dbg_btn_style := StyleBoxFlat.new()
+	dbg_btn_style.bg_color = Color(0.06, 0.08, 0.18, 0.85)
+	dbg_btn_style.border_color = Color("c084fc")
+	dbg_btn_style.set_border_width_all(1)
+	dbg_btn_style.set_corner_radius_all(4)
+	dbg_btn.add_theme_stylebox_override("normal", dbg_btn_style)
+	dbg_btn.add_theme_stylebox_override("hover", dbg_btn_style)
+	dbg_btn.add_theme_stylebox_override("pressed", dbg_btn_style)
+	dbg_btn.add_theme_color_override("font_color", Color("c084fc"))
+	dbg_btn.pressed.connect(toggle_debug_overlay)
+	ui_layer.add_child(dbg_btn)
+
+	# Telemetry & Evolution Debug Inspector Panel
+	debug_overlay = PanelContainer.new()
+	debug_overlay.position = Vector2(42, 54)
+	debug_overlay.custom_minimum_size = Vector2(440, 380)
+	var dbg_panel_style := StyleBoxFlat.new()
+	dbg_panel_style.bg_color = Color(0.02, 0.035, 0.08, 0.94)
+	dbg_panel_style.border_color = Color("c084fc")
+	dbg_panel_style.set_border_width_all(1)
+	dbg_panel_style.set_corner_radius_all(4)
+	dbg_panel_style.content_margin_left = 14
+	dbg_panel_style.content_margin_top = 10
+	dbg_panel_style.content_margin_right = 14
+	dbg_panel_style.content_margin_bottom = 10
+	debug_overlay.add_theme_stylebox_override("panel", dbg_panel_style)
+	debug_overlay.visible = false
+	ui_layer.add_child(debug_overlay)
+
+	var dbg_vbox := VBoxContainer.new()
+	dbg_vbox.add_theme_constant_override("separation", 6)
+	debug_overlay.add_child(dbg_vbox)
+
+	var dbg_header := Label.new()
+	dbg_header.text = "SYSTEM TELEMETRY & ADAPTIVE EVOLUTION INSPECTOR"
+	dbg_header.add_theme_font_size_override("font_size", 12)
+	dbg_header.add_theme_color_override("font_color", Color("c084fc"))
+	dbg_vbox.add_child(dbg_header)
+
+	debug_content = Label.new()
+	debug_content.add_theme_font_size_override("font_size", 11)
+	debug_content.add_theme_color_override("font_color", Color("cbd5e1"))
+	debug_content.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	dbg_vbox.add_child(debug_content)
+
+	var dbg_btns_hbox := HBoxContainer.new()
+	dbg_btns_hbox.add_theme_constant_override("separation", 10)
+	dbg_vbox.add_child(dbg_btns_hbox)
+
+	var replay_seed_btn := Button.new()
+	replay_seed_btn.text = "Replay Seed"
+	replay_seed_btn.pressed.connect(func():
+		var rs_node = get_node_or_null("/root/RunState")
+		var s_val: int = rs_node.current_seed if rs_node else 1337
+		_restart_run_with_seed(s_val)
+	)
+	dbg_btns_hbox.add_child(replay_seed_btn)
+
+	var next_seed_btn := Button.new()
+	next_seed_btn.text = "New Seed"
+	next_seed_btn.pressed.connect(func():
+		_restart_run_with_seed(0)
+	)
+	dbg_btns_hbox.add_child(next_seed_btn)
+
+	var close_dbg_btn := Button.new()
+	close_dbg_btn.text = "Close (F1)"
+	close_dbg_btn.pressed.connect(toggle_debug_overlay)
+	dbg_btns_hbox.add_child(close_dbg_btn)
+
 	hint_label = Label.new()
 	hint_label.position = Vector2(44, 44)
-	hint_label.text = "WASD/Move   •   Aim + Fire   •   Shift/Space Dash (I-Frames)   •   ESC/P Pause"
+	hint_label.text = "WASD/Move   •   Aim + Fire   •   Shift/Space Dash (I-Frames)   •   ESC/P/|| Pause"
 	hint_label.add_theme_color_override("font_color", Color("64748b"))
 	hint_label.add_theme_font_size_override("font_size", 12)
 	ui_layer.add_child(hint_label)
@@ -790,3 +922,66 @@ func _show_director_banner(title: String, sub: String) -> void:
 	add_trauma(0.28)
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("mutation_alert", 0.05, 0.0)
+
+
+func toggle_debug_overlay() -> void:
+	debug_visible = not debug_visible
+	if is_instance_valid(debug_overlay):
+		debug_overlay.visible = debug_visible
+	if debug_visible:
+		_update_debug_overlay()
+
+
+func _restart_run_with_seed(seed_val: int) -> void:
+	get_tree().paused = false
+	var rs = get_node_or_null("/root/RunState")
+	if rs:
+		rs.start_new_run(seed_val)
+	get_tree().reload_current_scene()
+
+
+func _update_debug_overlay() -> void:
+	if not is_instance_valid(debug_content):
+		return
+	var rs = get_node_or_null("/root/RunState")
+	var profile: Dictionary = tracker.get_profile() if tracker else {}
+	var cur_seed: int = rs.current_seed if rs else 1337
+	var sec_idx: int = (rs.current_room_index + 1) if rs else 1
+	var t_name: String = current_room_data.template_name if current_room_data else "UNKNOWN"
+	var r_type: String = current_room_data.room_type if current_room_data else "COMBAT"
+
+	var active_muts: Array[String] = encounter_director.evolution_manager.get_active_mutations_summary() if encounter_director else []
+	var mut_str: String = "\n    • ".join(active_muts) if not active_muts.is_empty() else "None (Baseline)"
+
+	debug_content.text = """SEED: #%d  |  SECTOR: %d / %d  |  GEN: %d
+ROOM TEMPLATE: %s (%s)
+TACTICAL ACTION: %s
+
+PLAYER COMBAT PROFILE:
+  • Mobility (Dashes/min): %.2f (%.1f/m)
+  • Ranged Positioning: %.2f
+  • Stationary Turret: %.2f
+  • Aggression: %.2f
+  • Blaster Accuracy: %.1f%% (%d/%d)
+  • Movement Consistency: %.2f
+
+ACTIVE ENEMY GENOME MUTATIONS:
+    • %s""" % [
+		cur_seed,
+		sec_idx,
+		rs.TOTAL_ROOMS if rs else 6,
+		encounter_director.evolution_manager.generation if encounter_director else 1,
+		t_name,
+		r_type,
+		current_sector_tactic,
+		profile.get("mobility", 0.5),
+		profile.get("dashes_per_min", 0.0),
+		profile.get("ranged", 0.5),
+		profile.get("turret", 0.5),
+		profile.get("aggression", 0.5),
+		profile.get("accuracy", 0.5) * 100.0,
+		profile.get("shots_hit", 0),
+		profile.get("shots_fired", 0),
+		profile.get("movement_consistency", 0.5),
+		mut_str
+	]

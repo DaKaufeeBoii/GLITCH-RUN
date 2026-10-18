@@ -94,7 +94,10 @@ All entities and projectiles utilize clean, vibrant geometric vector rendering w
 - [x] Milestone 3: Cyberpunk Main Menu (`main_menu.gd`) with persistent high score archive and Director threat taxonomy modal.
 - [x] Milestone 3: In-Game Tactical Pause Menu (`pause_menu.gd`) with upgrade review and run stats.
 - [x] Milestone 3: End-of-Run Director Telemetry Debrief Terminal (`debrief_terminal.gd`) featuring procedural 4-axis radar chart and AI adaptation timeline log.
-- [x] Automated Headless Test Suite: All 10 deterministic scenarios pass with zero errors, zero warnings, and zero memory leaks.
+- [x] Local Persistence: Real disk-backed storage in user://save_data.json surviving application restarts.
+- [x] Behavior Tracker Rolling Window Decay: Exponential moving average decay preventing cumulative drift.
+- [x] HUD Touch Pause Button & Viewport: On-screen pause button, aspect ratio locking, and landscape orientation.
+- [x] Automated Headless Test Suite: All 12 deterministic scenarios pass with zero errors, zero warnings, and zero memory leaks.
 
 ## Milestone 0 — Confirm the first playable slice
 

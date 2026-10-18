@@ -14,6 +14,13 @@ var contact_cooldown := 0.0
 var defeated_already := false
 var damage_flash := 0.0
 
+var genome: RefCounted = null
+var damage_multipliers: Dictionary = {
+	"plasma": 1.0,
+	"dash": 1.0,
+	"hazard": 1.0
+}
+
 
 func _ready() -> void:
 	health = max_health
@@ -51,7 +58,10 @@ func _physics_process(delta: float) -> void:
 		velocity = Vector2.ZERO
 		if contact_cooldown <= 0.0 and target.has_method("take_damage"):
 			target.take_damage(1)
-			contact_cooldown = 0.9
+			var timing_mult: float = float(genome.attack_timing_mult) if (genome and "attack_timing_mult" in genome) else 1.0
+			contact_cooldown = 0.9 * timing_mult
+			if genome and "damage_dealt_to_player" in genome:
+				genome.damage_dealt_to_player += 1
 
 	rotation = to_target.angle()
 	if is_inside_tree():
@@ -59,10 +69,12 @@ func _physics_process(delta: float) -> void:
 	queue_redraw()
 
 
-func take_damage(amount: int) -> void:
+func take_damage(amount: int, source: String = "plasma") -> void:
 	if defeated_already:
 		return
-	health = maxi(0, health - amount)
+	var mult: float = damage_multipliers.get(source, 1.0)
+	var final_amount: int = maxi(1, int(roundf(float(amount) * mult)))
+	health = maxi(0, health - final_amount)
 	damage_flash = 0.12
 	queue_redraw()
 	if health == 0:

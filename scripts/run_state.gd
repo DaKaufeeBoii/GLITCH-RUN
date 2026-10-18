@@ -27,10 +27,52 @@ var siphon_chance := 0.0
 var active_upgrade_ids: Array[String] = []
 
 # Persistent Run Statistics & Director Debrief History
+const SAVE_FILE_PATH := "user://save_data.json"
 var best_sector := 1
 var best_score := 0
 var best_time := 0.0
 var tactics_log: Array[Dictionary] = []
+var evolution_log: Array[Dictionary] = []
+var dungeon_layout_summary: Array[Dictionary] = []
+var current_seed := 1337
+
+
+func _ready() -> void:
+	load_persistent_data()
+
+
+func load_persistent_data() -> void:
+	if not FileAccess.file_exists(SAVE_FILE_PATH):
+		return
+	var file := FileAccess.open(SAVE_FILE_PATH, FileAccess.READ)
+	if not file:
+		return
+	var json_str := file.get_as_text()
+	file.close()
+
+	var test_json := JSON.new()
+	var err := test_json.parse(json_str)
+	if err != OK or not (test_json.data is Dictionary):
+		return
+
+	var d: Dictionary = test_json.data
+	best_sector = clampi(int(d.get("best_sector", 1)), 1, TOTAL_ROOMS)
+	best_score = maxi(0, int(d.get("best_score", 0)))
+	best_time = maxf(0.0, float(d.get("best_time", 0.0)))
+
+
+func save_persistent_data() -> void:
+	var file := FileAccess.open(SAVE_FILE_PATH, FileAccess.WRITE)
+	if not file:
+		return
+	var d := {
+		"version": 1,
+		"best_sector": best_sector,
+		"best_score": best_score,
+		"best_time": best_time
+	}
+	file.store_string(JSON.stringify(d, "\t"))
+	file.close()
 
 const UPGRADE_CATALOG: Array[Dictionary] = [
 	{
@@ -78,7 +120,7 @@ const UPGRADE_CATALOG: Array[Dictionary] = [
 ]
 
 
-func start_new_run() -> void:
+func start_new_run(p_seed: int = 0) -> void:
 	max_health = 5
 	current_health = max_health
 	current_room_index = 0
@@ -86,6 +128,13 @@ func start_new_run() -> void:
 	run_time = 0.0
 	run_active = true
 	run_won = false
+
+	if p_seed != 0:
+		current_seed = p_seed
+	else:
+		current_seed = int(Time.get_ticks_usec() ^ randi()) & 0x7FFFFFFF
+		if current_seed == 0:
+			current_seed = 1337
 
 	move_speed_mult = 1.0
 	fire_interval_mult = 1.0
@@ -96,6 +145,8 @@ func start_new_run() -> void:
 	siphon_chance = 0.0
 	active_upgrade_ids.clear()
 	tactics_log.clear()
+	evolution_log.clear()
+	dungeon_layout_summary.clear()
 	health_updated.emit(current_health, max_health)
 
 
@@ -116,6 +167,7 @@ func finalize_run_stats(won: bool) -> void:
 		best_score = score
 	if won and (best_time == 0.0 or run_time < best_time):
 		best_time = run_time
+	save_persistent_data()
 
 
 func get_random_upgrade_choices(count: int = 3) -> Array[Dictionary]:

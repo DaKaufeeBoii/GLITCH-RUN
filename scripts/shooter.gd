@@ -20,6 +20,13 @@ const TELEGRAPH_DURATION := 0.65
 var aimed_direction := Vector2.RIGHT
 var damage_flash := 0.0
 
+var genome: RefCounted = null
+var damage_multipliers: Dictionary = {
+	"plasma": 1.0,
+	"dash": 1.0,
+	"hazard": 1.0
+}
+
 
 func _ready() -> void:
 	health = max_health
@@ -57,9 +64,10 @@ func _physics_process(delta: float) -> void:
 	else:
 		fire_timer -= delta
 		if fire_timer <= 0.0 and dist < 450.0:
-			telegraph_time = TELEGRAPH_DURATION
+			var timing_mult: float = float(genome.attack_timing_mult) if (genome and "attack_timing_mult" in genome) else 1.0
+			telegraph_time = TELEGRAPH_DURATION * timing_mult
 			aimed_direction = predicted_dir
-			fire_timer = randf_range(2.0, 3.0)
+			fire_timer = randf_range(2.0, 3.0) * timing_mult
 			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 				get_node("/root/AudioSynth").play("enemy_laser_charge", 0.05, -4.0)
 
@@ -81,14 +89,18 @@ func _fire_shot() -> void:
 	var proj = PROJECTILE_SCENE.instantiate()
 	proj.global_position = global_position + aimed_direction * 24.0
 	proj.direction = aimed_direction
+	if "shooter_enemy" in proj:
+		proj.shooter_enemy = self
 	get_parent().add_child(proj)
 	queue_redraw()
 
 
-func take_damage(amount: int) -> void:
+func take_damage(amount: int, source: String = "plasma") -> void:
 	if defeated_already:
 		return
-	health = maxi(0, health - amount)
+	var mult: float = damage_multipliers.get(source, 1.0)
+	var final_amount: int = maxi(1, int(roundf(float(amount) * mult)))
+	health = maxi(0, health - final_amount)
 	damage_flash = 0.12
 	queue_redraw()
 	if health == 0:

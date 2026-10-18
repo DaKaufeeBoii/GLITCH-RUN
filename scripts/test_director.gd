@@ -4,13 +4,18 @@ class_name DirectorTests
 
 const BEHAVIOR_TRACKER_SCRIPT := preload("res://scripts/behavior_tracker.gd")
 const ADAPTIVE_DIRECTOR_SCRIPT := preload("res://scripts/adaptive_director.gd")
+const ENEMY_GENOME_SCRIPT := preload("res://scripts/enemy_genome.gd")
+const EVOLUTION_MANAGER_SCRIPT := preload("res://scripts/evolution_manager.gd")
+const LEARNING_POLICY_SCRIPT := preload("res://scripts/learning_policy.gd")
+const DUNGEON_GEN_SCRIPT := preload("res://scripts/dungeon_generator.gd")
+const ENCOUNTER_DIR_SCRIPT := preload("res://scripts/encounter_director.gd")
 
 func _ready() -> void:
 	run_all_tests()
 
 
 static func run_all_tests() -> bool:
-	print("--- Running Adaptive Director Scenario Tests ---")
+	print("--- Running Adaptive Director & Procedural Dungeon Scenario Tests ---")
 	var all_passed := true
 
 	all_passed = test_insufficient_data() and all_passed
@@ -23,9 +28,16 @@ static func run_all_tests() -> bool:
 	all_passed = test_tactical_micro_ai() and all_passed
 	all_passed = test_audio_synth() and all_passed
 	all_passed = test_ui_and_telemetry() and all_passed
+	all_passed = test_local_persistence() and all_passed
+	all_passed = test_rolling_window_decay() and all_passed
+	all_passed = test_enemy_genome_bounds_and_mutations() and all_passed
+	all_passed = test_evolution_manager_layers_and_retention() and all_passed
+	all_passed = test_learning_policy_robustness_and_fairness() and all_passed
+	all_passed = test_procedural_dungeon_100_seeds() and all_passed
+	all_passed = test_encounter_director_integration() and all_passed
 
 	if all_passed:
-		print("--- ALL 10 DIRECTOR, AUDIO & EVOLVED AI SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 17 DIRECTOR, EVOLUTION, LEARNING & 100-SEED DUNGEON SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -258,4 +270,240 @@ static func test_ui_and_telemetry() -> bool:
 	pause_menu.free()
 	print("  [PASS] Director Telemetry Debrief Terminal & Tactical Pause UI")
 	return true
+
+
+static func test_local_persistence() -> bool:
+	var rs_script := load("res://scripts/run_state.gd")
+	var rs: Node = rs_script.new()
+	rs.best_sector = 4
+	rs.best_score = 42
+	rs.best_time = 128.5
+	rs.save_persistent_data()
+
+	# Re-instantiate to simulate application restart
+	var rs_reloaded: Node = rs_script.new()
+	rs_reloaded.load_persistent_data()
+	assert(rs_reloaded.best_sector == 4, "Best sector must survive application restart")
+	assert(rs_reloaded.best_score == 42, "Best score must survive application restart")
+	assert(absf(rs_reloaded.best_time - 128.5) < 0.1, "Best time must survive application restart")
+
+	rs.free()
+	rs_reloaded.free()
+	print("  [PASS] Local Persistence (user://save_data.json Survival Scenario)")
+	return true
+
+
+static func test_rolling_window_decay() -> bool:
+	var tracker = BEHAVIOR_TRACKER_SCRIPT.new()
+	var dummy_enemy := Node2D.new()
+	dummy_enemy.global_position = Vector2(500, 300)
+	var enemies: Array[Node2D] = [dummy_enemy]
+
+	# Phase 1: Stationary firing for 50 seconds (exceeding 45s window)
+	for i in range(50):
+		tracker.update(1.0, Vector2(300, 300), Vector2.ZERO, enemies, true, float(i))
+
+	var prof1: Dictionary = tracker.get_profile()
+	assert(prof1.turret > 0.8, "Should have high turret score after stationary firing")
+
+	# Phase 2: Active mobile movement without firing for 60 seconds
+	for i in range(60):
+		tracker.update(1.0, Vector2(300, 300), Vector2(150, 0), enemies, false, 50.0 + float(i))
+
+	# Stationary firing should have decayed significantly
+	assert(tracker.stationary_firing_time < 15.0, "Old stationary firing time must decay in rolling window")
+
+	dummy_enemy.free()
+	print("  [PASS] Behavior Tracker Rolling Window Decay Scenario")
+	return true
+
+
+static func test_enemy_genome_bounds_and_mutations() -> bool:
+	var g = ENEMY_GENOME_SCRIPT.new("SHOOTER", 1)
+	assert(g.prediction_strength == 0.0, "Initial prediction strength should be 0.0")
+	assert(g.attack_timing_mult == 1.0, "Initial attack timing mult should be 1.0")
+
+	# Apply named mutation PREDICTIVE_OPTICS
+	var applied := g.apply_named_mutation("PREDICTIVE_OPTICS")
+	assert(applied, "Should successfully apply PREDICTIVE_OPTICS")
+	assert(g.has_mutation("PREDICTIVE_OPTICS"), "Genome must register active mutation")
+	assert(g.prediction_strength > 0.4, "Prediction strength must increase")
+	assert(g.attack_timing_mult > 1.1, "Attack timing multiplier must increase (slower firing tradeoff)")
+
+	# Repeated identical mutation should be rejected without double-buffing
+	var applied_again := g.apply_named_mutation("PREDICTIVE_OPTICS")
+	assert(not applied_again, "Should not re-apply identical mutation")
+
+	# Bounded trait check: perturb traits repeatedly and verify hard clamp bounds
+	for i in range(100):
+		g.aggression += 0.5
+		g.prediction_strength += 0.5
+		g.flanking_tendency += 0.5
+		g.clamp_all_traits()
+		assert(g.aggression <= ENEMY_GENOME_SCRIPT.MAX_AGGRESSION, "Aggression must never exceed MAX_AGGRESSION (1.35)")
+		assert(g.prediction_strength <= ENEMY_GENOME_SCRIPT.MAX_PREDICTION, "Prediction must never exceed MAX_PREDICTION (1.0)")
+		assert(g.flanking_tendency <= ENEMY_GENOME_SCRIPT.MAX_FLANKING, "Flanking must never exceed MAX_FLANKING (1.0)")
+
+	# Test serialization round-trip
+	var d: Dictionary = g.to_dict()
+	var g_reconstructed = ENEMY_GENOME_SCRIPT.from_dict(d)
+	assert(g_reconstructed.family == "SHOOTER", "Family must survive serialization")
+	assert(g_reconstructed.has_mutation("PREDICTIVE_OPTICS"), "Active mutations must survive serialization")
+	assert(absf(g_reconstructed.aggression - g.aggression) < 0.01, "Aggression must survive serialization")
+
+	print("  [PASS] Enemy Genome Evolvable Traits, Trade-offs & Bounded Caps Scenario")
+	return true
+
+
+static func test_evolution_manager_layers_and_retention() -> bool:
+	var evo_mgr = EVOLUTION_MANAGER_SCRIPT.new()
+	assert(evo_mgr.generation == 1, "Evolution manager must start at Generation 1")
+
+	# Simulate high mobility player profile -> Shooters specialize with PREDICTIVE_OPTICS
+	var mobile_profile := {
+		"mobility": 0.85,
+		"ranged": 0.35,
+		"turret": 0.15,
+		"dashes_per_min": 12.0,
+		"successful_player_tactics": {}
+	}
+
+	# Grab shooter genome before encounter
+	var shooter_g = evo_mgr.get_genome_for_spawn("SHOOTER")
+	assert(not shooter_g.has_mutation("PREDICTIVE_OPTICS"), "Generation 1 shooter starts unmutated")
+
+	# Process encounter where player dashed frequently
+	var adaptations := evo_mgr.process_encounter_end(1, 1, 22.0, mobile_profile, "COUNTER_MOBILITY")
+	assert(evo_mgr.generation == 2, "Generation must advance after encounter")
+
+	# Check that shooter in population acquired PREDICTIVE_OPTICS
+	var shooter_g2 = evo_mgr.get_genome_for_spawn("SHOOTER")
+	assert(shooter_g2.has_mutation("PREDICTIVE_OPTICS"), "Shooter must develop PREDICTIVE_OPTICS after high mobility encounter")
+
+	# Test Population retention (Layer C): ensure bounds and population structure
+	assert(evo_mgr.active_genomes["SHOOTER"].size() == 3, "Population pool size must be preserved")
+	for g in evo_mgr.active_genomes["SHOOTER"]:
+		assert(g.aggression <= ENEMY_GENOME_SCRIPT.MAX_AGGRESSION, "Population traits must remain bounded")
+
+	# Reset must restore Generation 1 clean slate
+	evo_mgr.reset()
+	assert(evo_mgr.generation == 1, "Reset must restore Generation 1")
+	assert(evo_mgr.evolution_history.is_empty(), "Reset must clear evolution history")
+
+	print("  [PASS] Multi-Layer Evolution Manager (Specialization & Population Retention) Scenario")
+	return true
+
+
+static func test_learning_policy_robustness_and_fairness() -> bool:
+	var policy = LEARNING_POLICY_SCRIPT.new()
+
+	# 1. Context feature extraction
+	var profile := {
+		"mobility": 0.80,
+		"ranged": 0.20,
+		"turret": 0.10,
+		"aggression": 0.40
+	}
+	var ctx := policy.extract_context(profile, 0.45)
+	assert(ctx.size() == 6, "Context vector must be exactly 6 dimensions")
+	assert(absf(ctx[1] - 0.80) < 0.01, "Mobility feature must match profile")
+	assert(absf(ctx[5] - 0.45) < 0.01, "Chokepoint ratio feature must match room context")
+
+	# 2. Strict Fairness / Mercy Stabilization when player is critically low on health
+	var mercy_decision := policy.select_action(ctx, 1, 5) # 20% HP
+	assert(mercy_decision.action_name == "STABILIZATION", "Policy must force STABILIZATION when player HP <= 35%")
+
+	# 3. Healthy action selection
+	var normal_decision := policy.select_action(ctx, 5, 5)
+	assert(normal_decision.action_name in LEARNING_POLICY_SCRIPT.ACTION_NAMES, "Selected action must be in action space")
+
+	# 4. Graceful handling of missing / empty / malformed profile data
+	var malformed_ctx := policy.extract_context({}, 0.0)
+	var safe_decision := policy.select_action(malformed_ctx, 5, 5)
+	assert(safe_decision.action_name != "", "Policy must handle empty context safely without crashing")
+
+	# 5. Reward computation and policy weights export / load
+	var reward_fair := policy.compute_reward(1, 20.0, profile, 0)
+	var reward_overkill := policy.compute_reward(4, 20.0, profile, 0)
+	assert(reward_fair > reward_overkill, "Fair encounter must receive higher reward than overkill encounter")
+
+	var exported := policy.export_weights()
+	var reloaded_policy = LEARNING_POLICY_SCRIPT.new()
+	var load_ok := reloaded_policy.load_weights(exported)
+	assert(load_ok, "Exported weights must reload successfully")
+
+	print("  [PASS] LinUCB Learning Policy Robustness, Fairness Mercy & Export Scenario")
+	return true
+
+
+static func test_procedural_dungeon_100_seeds() -> bool:
+	var gen = DUNGEON_GEN_SCRIPT.new()
+	var total_tested := 100
+
+	# Test 100 distinct procedural dungeon seeds
+	for s in range(1001, 1001 + total_tested):
+		var layout = gen.generate_dungeon(s, 6)
+		assert(layout != null, "Generator returned null layout for seed %d" % s)
+		assert(layout.rooms.size() == 6, "Seed %d must produce exactly 6 rooms" % s)
+		assert(layout.rooms[0].room_type == "START", "Seed %d room 0 must be START room" % s)
+		assert(layout.rooms[5].room_type == "BOSS", "Seed %d room 5 must be BOSS room" % s)
+
+		# Validate every room in the dungeon
+		for room in layout.rooms:
+			assert(room.is_validated, "Seed %d Room %d failed reachability validation!" % [s, room.index])
+			assert(room.bounds.has_point(room.player_spawn), "Player spawn outside bounds in seed %d" % s)
+			assert(room.bounds.has_point(room.exit_door), "Exit door outside bounds in seed %d" % s)
+			assert(room.enemy_spawns.size() >= 1, "Room must have at least 1 enemy spawn in seed %d" % s)
+
+			# Ensure minimum distance between player spawn and all enemy spawns
+			for espawn in room.enemy_spawns:
+				var dist: float = room.player_spawn.distance_to(espawn.pos)
+				assert(dist >= 195.0, "Player to enemy distance too close (%.1fpx) in seed %d room %d" % [dist, s, room.index])
+
+	# Test Deterministic Reproducibility
+	# The exact same seed must produce the exact same obstacles and spawns
+	var layout_a = gen.generate_dungeon(778899, 6)
+	var layout_b = gen.generate_dungeon(778899, 6)
+	assert(layout_a.rooms.size() == layout_b.rooms.size(), "Dungeons from same seed must have identical room count")
+	for r_idx in range(6):
+		var ra = layout_a.rooms[r_idx]
+		var rb = layout_b.rooms[r_idx]
+		assert(ra.template_name == rb.template_name, "Rooms from identical seed must share template name")
+		assert(ra.obstacles.size() == rb.obstacles.size(), "Obstacle counts must be identical for identical seed")
+		for o_idx in range(ra.obstacles.size()):
+			assert(ra.obstacles[o_idx] == rb.obstacles[o_idx], "Obstacle rects must match identically for identical seed")
+		for e_idx in range(ra.enemy_spawns.size()):
+			assert(ra.enemy_spawns[e_idx].pos == rb.enemy_spawns[e_idx].pos, "Enemy spawn positions must match identically")
+
+	print("  [PASS] Procedural Dungeon 100-Seed Reachability & Deterministic Reproducibility Scenario")
+	return true
+
+
+static func test_encounter_director_integration() -> bool:
+	var enc_dir = ENCOUNTER_DIR_SCRIPT.new()
+	var dgen = DUNGEON_GEN_SCRIPT.new()
+	var layout = dgen.generate_dungeon(999, 6)
+
+	var room = layout.get_room(1)
+	var profile := {
+		"has_data": true,
+		"mobility": 0.40,
+		"ranged": 0.85, # Heavy sniper
+		"turret": 0.20,
+		"aggression": 0.20
+	}
+
+	var encounter: Dictionary = enc_dir.prepare_encounter(room, profile, 5, 5)
+	assert(encounter.has("tactic"), "Encounter must have selected tactic")
+	assert(encounter.has("spawn_list"), "Encounter must have prepared spawn list")
+	assert(not encounter.spawn_list.is_empty(), "Spawn list must not be empty")
+
+	# Check that spawned enemies have genomes assigned
+	for espawn in encounter.spawn_list:
+		if espawn.type in ["CHASER", "SHOOTER", "DASHER"]:
+			assert(espawn.genome != null, "Enemy spawn must be equipped with an EnemyGenome")
+
+	print("  [PASS] Encounter Director & Genome Pipeline Integration Scenario")
+	return true
+
 

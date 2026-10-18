@@ -5,6 +5,7 @@ extends Area2D
 @export var damage := 1
 var direction := Vector2.RIGHT
 var lifetime := 1.6
+var player_source: Node2D = null
 
 
 func _ready() -> void:
@@ -26,6 +27,8 @@ func _on_body_entered(body: Node2D) -> void:
 		return
 
 	if body.is_in_group("enemies"):
+		if is_instance_valid(player_source) and player_source.has_signal("shot_hit"):
+			player_source.shot_hit.emit(body)
 		if body.has_method("take_damage"):
 			body.take_damage(damage)
 		queue_free()

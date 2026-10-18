@@ -5,6 +5,8 @@ signal health_changed(current: int, maximum: int)
 signal died
 signal dashed
 signal damaged(amount: int)
+signal shot_fired
+signal shot_hit(enemy: Node2D)
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/projectile.tscn")
 
@@ -217,7 +219,9 @@ func _spawn_bullet(dir: Vector2, extra_dmg: int) -> void:
 	projectile.global_position = global_position + shoot_dir * 24.0
 	projectile.direction = shoot_dir
 	projectile.damage = 1 + extra_dmg
+	projectile.set("player_source", self)
 	get_parent().add_child(projectile)
+	shot_fired.emit()
 
 
 func _draw() -> void:

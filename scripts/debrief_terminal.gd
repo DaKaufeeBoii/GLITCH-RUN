@@ -150,7 +150,13 @@ func _build_ui() -> void:
 	footer_hbox.add_child(restart_btn)
 
 
-func setup_debrief(won: bool, metrics: Dictionary, tactics_history: Array) -> void:
+func setup_debrief(
+	won: bool,
+	metrics: Dictionary,
+	tactics_history: Array,
+	evolution_history: Array = [],
+	dungeon_seed: int = 0
+) -> void:
 	current_metrics = metrics
 	var rs: Node = get_node_or_null("/root/RunState") if is_inside_tree() else null
 
@@ -161,10 +167,12 @@ func setup_debrief(won: bool, metrics: Dictionary, tactics_history: Array) -> vo
 		title_label.text = "SUBJECT TERMINATED // HOSTILES PREVAILED"
 		title_label.add_theme_color_override("font_color", Color("f43f5e"))
 
+	var seed_to_display: int = dungeon_seed if dungeon_seed != 0 else (rs.current_seed if rs else 1337)
 	if rs:
 		var mins := int(rs.run_time / 60.0)
 		var secs := int(rs.run_time) % 60
-		stats_label.text = "SECTORS CLEARED: %d / %d  •  HOSTILES PURGED: %d  •  TIME: %02d:%02d  •  UPGRADES: %d" % [
+		stats_label.text = "SEED: #%d  •  SECTORS: %d/%d  •  PURGED: %d  •  TIME: %02d:%02d  •  UPGRADES: %d" % [
+			seed_to_display,
 			rs.current_room_index + (1 if won else 0),
 			rs.TOTAL_ROOMS,
 			rs.score,
@@ -172,20 +180,23 @@ func setup_debrief(won: bool, metrics: Dictionary, tactics_history: Array) -> vo
 			secs,
 			rs.active_upgrade_ids.size()
 		]
+	else:
+		stats_label.text = "SEED: #%d  •  METRICS RECORDED DETERMINISTICALLY" % seed_to_display
 
 	# Analyze Archetype & Radar values
 	_classify_archetype(metrics)
 
-	# Populate Director Mutation Log
+	# Populate Director Mutation Log & Evolution Lineage
 	for child in tactics_vbox.get_children():
 		child.queue_free()
 
-	if tactics_history.is_empty():
+	if tactics_history.is_empty() and evolution_history.is_empty():
 		var empty_lbl := Label.new()
 		empty_lbl.text = "Director remained in baseline calibration state."
 		empty_lbl.add_theme_color_override("font_color", Color("64748b"))
 		tactics_vbox.add_child(empty_lbl)
 	else:
+		# 1. Tactical Decisions
 		for entry in tactics_history:
 			var card := PanelContainer.new()
 			var style := StyleBoxFlat.new()
@@ -221,6 +232,44 @@ func setup_debrief(won: bool, metrics: Dictionary, tactics_history: Array) -> vo
 			muts.add_theme_font_size_override("font_size", 11)
 			muts.add_theme_color_override("font_color", Color("38bdf8"))
 			card_vbox.add_child(muts)
+
+		# 2. Enemy Genome Evolution Lineage
+		if not evolution_history.is_empty():
+			var evo_header := Label.new()
+			evo_header.text = "ENEMY EVOLUTION LINEAGE (LAYERS B & C)"
+			evo_header.add_theme_font_size_override("font_size", 12)
+			evo_header.add_theme_color_override("font_color", Color("a855f7"))
+			tactics_vbox.add_child(evo_header)
+
+			for evo in evolution_history:
+				var evo_card := PanelContainer.new()
+				var evo_style := StyleBoxFlat.new()
+				evo_style.bg_color = Color(0.06, 0.03, 0.10, 0.85)
+				evo_style.border_color = Color("c084fc")
+				evo_style.set_border_width_all(1)
+				evo_style.set_corner_radius_all(3)
+				evo_style.content_margin_left = 10
+				evo_style.content_margin_top = 4
+				evo_style.content_margin_right = 10
+				evo_style.content_margin_bottom = 4
+				evo_card.add_theme_stylebox_override("panel", evo_style)
+				tactics_vbox.add_child(evo_card)
+
+				var ev_vbox := VBoxContainer.new()
+				ev_vbox.add_theme_constant_override("separation", 2)
+				evo_card.add_child(ev_vbox)
+
+				var ev_title := Label.new()
+				ev_title.text = "SECTOR %d: %s -> %s" % [evo.get("sector", 1), evo.get("family", "ENEMY"), evo.get("mutation", "MUTATION")]
+				ev_title.add_theme_font_size_override("font_size", 11)
+				ev_title.add_theme_color_override("font_color", Color("e9d5ff"))
+				ev_vbox.add_child(ev_title)
+
+				var ev_trade := Label.new()
+				ev_trade.text = "Trade-off: %s" % evo.get("tradeoff", "Balanced adaptation")
+				ev_trade.add_theme_font_size_override("font_size", 10)
+				ev_trade.add_theme_color_override("font_color", Color("cbd5e1"))
+				ev_vbox.add_child(ev_trade)
 
 	radar_node.queue_redraw()
 	visible = true

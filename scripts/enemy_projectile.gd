@@ -5,6 +5,7 @@ extends Area2D
 @export var damage := 1
 var direction := Vector2.RIGHT
 var lifetime := 2.8
+var shooter_enemy: Node2D = null
 
 
 func _ready() -> void:
@@ -26,6 +27,9 @@ func _on_body_entered(body: Node2D) -> void:
 		return
 
 	if body.is_in_group("player") or body.has_method("take_damage"):
+		if is_instance_valid(shooter_enemy) and "genome" in shooter_enemy and shooter_enemy.genome:
+			if "damage_dealt_to_player" in shooter_enemy.genome:
+				shooter_enemy.genome.damage_dealt_to_player += damage
 		body.take_damage(damage)
 		queue_free()
 		return

@@ -107,7 +107,7 @@ func _is_dash_button(point: Vector2) -> bool:
 
 
 func _draw() -> void:
-	if not OS.has_feature("mobile"):
+	if not OS.has_feature("mobile") and not DisplayServer.is_touchscreen_available():
 		return
 	# Movement virtual joystick (left)
 	var move_center := move_origin if move_finger != -1 else Vector2(120.0, size.y - 110.0)
