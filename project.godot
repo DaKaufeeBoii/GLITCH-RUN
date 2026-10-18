@@ -14,6 +14,7 @@ config/name="GLITCH//RUN"
 config/description="An offline-first adaptive action roguelite prototype."
 run/main_scene="res://scenes/ui/start_screen.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
+config/icon="res://icon.png"
 
 [autoload]
 

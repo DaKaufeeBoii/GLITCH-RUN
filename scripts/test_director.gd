@@ -1283,6 +1283,9 @@ static func test_android_configuration_and_touch_targets() -> bool:
 	var ctrl = MOBILE_CONTROLS_SCRIPT.new()
 	assert(float(ctrl.get("JOYSTICK_RADIUS")) >= 48.0, "Joystick radius must exceed 48dp touch threshold")
 	assert(float(ctrl.get("DASH_RADIUS")) >= 48.0, "Dash radius must be at least 48dp touch threshold")
+	assert(float(ctrl.get("RELOAD_RADIUS")) * 2.0 >= 48.0, "Reload button diameter must exceed 48dp touch threshold")
+	assert(ctrl.has_signal("reload_pressed"), "Mobile controls must expose reload_pressed signal")
+	assert("android_icon_192.png" in content, "Launcher 192 icon must be configured")
 	ctrl.free()
 
 	print("  [PASS] Android Export Preset Configuration & Touch Targets Scenario")

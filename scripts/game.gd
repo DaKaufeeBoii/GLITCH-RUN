@@ -72,16 +72,17 @@ var hint_label: Label
 var sector_label: Label
 var ammo_label: Label
 
+var boss_bar_container: PanelContainer
 var boss_bar_bg: ColorRect
+var boss_bar_ghost: ColorRect
 var boss_bar_fill: ColorRect
 var boss_label: Label
+var boss_hp_label: Label
 
 var upgrade_container: Control
 var upgrade_cards_box: HBoxContainer
 
 var doors_unlocked := false
-var route_ui_container: PanelContainer
-var route_buttons_box: HBoxContainer
 
 var pause_menu: Control
 var debrief_terminal: Control
@@ -284,9 +285,15 @@ func _process(delta: float) -> void:
 
 	# Update Boss Bar if in Boss room
 	if boss_active and is_instance_valid(boss_ref):
-		var pct: float = float(boss_ref.health) / float(boss_ref.max_health)
-		boss_bar_fill.size.x = 340.0 * pct
+		var pct: float = clampf(float(boss_ref.health) / float(maxi(1, boss_ref.max_health)), 0.0, 1.0)
+		boss_bar_fill.size.x = 420.0 * pct
+		if is_instance_valid(boss_bar_ghost):
+			boss_bar_ghost.size.x = move_toward(boss_bar_ghost.size.x, boss_bar_fill.size.x, delta * 140.0)
+		if is_instance_valid(boss_hp_label):
+			boss_hp_label.text = "%d / %d HP" % [boss_ref.health, boss_ref.max_health]
 	elif boss_active and not is_instance_valid(boss_ref):
+		if is_instance_valid(boss_bar_container):
+			boss_bar_container.visible = false
 		boss_bar_bg.visible = false
 
 	# Check Player Proximity to Unlocked Exit Doors
@@ -471,6 +478,7 @@ func _create_player() -> void:
 	touch_controls.connect("aim_changed", Callable(player, "set_touch_aim"))
 	touch_controls.connect("fire_changed", Callable(player, "set_touch_fire"))
 	touch_controls.connect("dash_pressed", Callable(player, "try_dash"))
+	touch_controls.connect("reload_pressed", Callable(player, "start_reload"))
 	ui_layer.add_child(touch_controls)
 	ui_layer.move_child(touch_controls, 0)
 
@@ -517,11 +525,12 @@ func _on_player_shot_hit(_enemy: Node2D) -> void:
 func _load_room(index: int) -> void:
 	room_cleared = false
 	doors_unlocked = false
-	if is_instance_valid(route_ui_container):
-		route_ui_container.visible = false
 	boss_active = false
 	boss_ref = null
-	boss_bar_bg.visible = false
+	if is_instance_valid(boss_bar_container):
+		boss_bar_container.visible = false
+	if is_instance_valid(boss_bar_bg):
+		boss_bar_bg.visible = false
 	sector_combat_time = 0.0
 
 	for obs in active_obstacles:
@@ -825,12 +834,20 @@ func _spawn_boss(pos: Vector2) -> void:
 
 	# Update Boss Bar appearance
 	if current_boss_def:
-		boss_label.text = current_boss_def.display_name
+		boss_label.text = "[ BOSS // %s ]" % current_boss_def.display_name.to_upper()
 		boss_bar_fill.color = current_boss_def.accent_color
 	else:
-		boss_label.text = "NEXUS // OVERLORD"
+		boss_label.text = "[ BOSS // NEXUS OVERLORD ]"
 		boss_bar_fill.color = Color("f43f5e")
 
+	if is_instance_valid(boss_hp_label):
+		boss_hp_label.text = "%d / %d HP" % [boss.health, boss.max_health]
+	if is_instance_valid(boss_bar_ghost):
+		boss_bar_ghost.size.x = 420.0
+	boss_bar_fill.size.x = 420.0
+
+	if is_instance_valid(boss_bar_container):
+		boss_bar_container.visible = true
 	boss_bar_bg.visible = true
 	trigger_glitch(0.85)
 	add_trauma(0.4)
@@ -1057,57 +1074,12 @@ func _unlock_exit_doors() -> void:
 	doors_unlocked = true
 	queue_redraw()
 	_show_director_banner("CHAMBER SECURED // ROUTE DOORS UNLOCKED", "Proceed to forward gate to continue expedition.")
-	_update_route_ui()
-
-
-func _update_route_ui() -> void:
-	if not is_instance_valid(route_ui_container) or not is_instance_valid(route_buttons_box):
-		return
-	for child in route_buttons_box.get_children():
-		child.queue_free()
-
-	if not current_room_data or current_room_data.exit_doors.is_empty():
-		return
-
-	for door in current_room_data.exit_doors:
-		var btn := Button.new()
-		btn.custom_minimum_size = Vector2(210, 44)
-		var lbl_text: String = door.get("label", "FORWARD")
-		btn.text = "➔ %s" % lbl_text
-		var ttype: String = door.get("target_type", "COMBAT")
-		var btn_style := StyleBoxFlat.new()
-		btn_style.bg_color = Color(0.04, 0.08, 0.16, 0.92)
-		var border_col := Color("38bdf8")
-		if ttype == "RECOVERY":
-			border_col = Color("22c55e")
-		elif ttype == "SHOP":
-			border_col = Color("facc15")
-		elif ttype == "GIFT":
-			border_col = Color("c084fc")
-		elif ttype == "ELITE":
-			border_col = Color("f59e0b")
-		elif ttype == "BOSS" or ttype == "NEXT_SECTOR":
-			border_col = Color("ec4899")
-		btn_style.border_color = border_col
-		btn_style.set_border_width_all(2)
-		btn_style.set_corner_radius_all(4)
-		btn.add_theme_stylebox_override("normal", btn_style)
-		btn.add_theme_stylebox_override("hover", btn_style)
-		btn.add_theme_stylebox_override("pressed", btn_style)
-		btn.add_theme_color_override("font_color", border_col)
-		btn.add_theme_font_size_override("font_size", 12)
-		btn.pressed.connect(_enter_door.bind(door))
-		route_buttons_box.add_child(btn)
-
-	route_ui_container.visible = true
 
 
 func _enter_door(door: Dictionary) -> void:
 	if not doors_unlocked or run_over:
 		return
 	doors_unlocked = false
-	if is_instance_valid(route_ui_container):
-		route_ui_container.visible = false
 
 	var rs = get_node_or_null("/root/RunState")
 	if not rs:
@@ -1205,41 +1177,60 @@ func _create_ui() -> void:
 		empty_heart_tex.region = Rect2(32, 0, 32, 32)
 
 	# Top Status Bar Container
-	var top_bar := HBoxContainer.new()
-	top_bar.position = Vector2(44, 16)
-	top_bar.add_theme_constant_override("separation", 24)
-	ui_layer.add_child(top_bar)
+	# Top HUD - Left Column: Health / Hearts
+	var hearts_container := HBoxContainer.new()
+	hearts_container.position = Vector2(24, 16)
+	hearts_container.add_theme_constant_override("separation", 8)
+	ui_layer.add_child(hearts_container)
 
-	# Heart Icons Container
 	hearts_box = HBoxContainer.new()
 	hearts_box.add_theme_constant_override("separation", 4)
-	top_bar.add_child(hearts_box)
+	hearts_container.add_child(hearts_box)
 
-	# Elims Counter Badge
+	# Top HUD - Center Column: Cyber Telemetry Pill (Elims + Energy Cells)
+	var telemetry_pill := PanelContainer.new()
+	telemetry_pill.position = Vector2(270, 12)
+	telemetry_pill.custom_minimum_size = Vector2(300, 36)
+	var pill_style := StyleBoxFlat.new()
+	pill_style.bg_color = Color(0.03, 0.06, 0.12, 0.88)
+	pill_style.border_color = Color("1e293b")
+	pill_style.set_border_width_all(1)
+	pill_style.set_corner_radius_all(18)
+	pill_style.content_margin_left = 18
+	pill_style.content_margin_right = 18
+	pill_style.content_margin_top = 4
+	pill_style.content_margin_bottom = 4
+	telemetry_pill.add_theme_stylebox_override("panel", pill_style)
+	ui_layer.add_child(telemetry_pill)
+
+	var telemetry_hbox := HBoxContainer.new()
+	telemetry_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	telemetry_hbox.add_theme_constant_override("separation", 24)
+	telemetry_pill.add_child(telemetry_hbox)
+
 	elims_label = Label.new()
 	elims_label.text = "ELIMS  00"
 	elims_label.add_theme_color_override("font_color", Color("38bdf8"))
-	elims_label.add_theme_font_size_override("font_size", 16)
-	top_bar.add_child(elims_label)
+	elims_label.add_theme_font_size_override("font_size", 14)
+	telemetry_hbox.add_child(elims_label)
 
-	# Ammo Energy Cell Gauge Badge
 	ammo_label = Label.new()
 	ammo_label.text = "CELLS 16/16"
 	ammo_label.add_theme_color_override("font_color", Color("38bdf8"))
-	ammo_label.add_theme_font_size_override("font_size", 16)
-	top_bar.add_child(ammo_label)
+	ammo_label.add_theme_font_size_override("font_size", 14)
+	telemetry_hbox.add_child(ammo_label)
 
-	# Sector & Room Badge (Top Right)
+	# Top HUD - Right Column: Sector & Room Badge
 	sector_label = Label.new()
-	sector_label.position = Vector2(650, 24)
-	sector_label.text = "SEC 1  •  ROOM 1/6"
+	sector_label.position = Vector2(600, 20)
+	sector_label.text = "SEC 1  •  RM 1/6"
 	sector_label.add_theme_color_override("font_color", Color("38bdf8"))
-	sector_label.add_theme_font_size_override("font_size", 16)
+	sector_label.add_theme_font_size_override("font_size", 14)
 	ui_layer.add_child(sector_label)
 
-	# HUD Touch Pause Button (Top Right corner, 48dp+ touch target)
+	# HUD Touch Pause Button (Top Right corner, 48dp+ touch target, inset from edge)
 	var pause_btn := Button.new()
-	pause_btn.position = Vector2(896, 12)
+	pause_btn.position = Vector2(888, 12)
 	pause_btn.custom_minimum_size = Vector2(48, 48)
 	pause_btn.text = "||"
 	var pause_btn_style := StyleBoxFlat.new()
@@ -1259,7 +1250,7 @@ func _create_ui() -> void:
 
 	# HUD Debug Overlay Toggle Button (48dp+ touch target)
 	var dbg_btn := Button.new()
-	dbg_btn.position = Vector2(840, 12)
+	dbg_btn.position = Vector2(830, 12)
 	dbg_btn.custom_minimum_size = Vector2(48, 48)
 	dbg_btn.text = "DBG"
 	var dbg_btn_style := StyleBoxFlat.new()
@@ -1333,32 +1324,67 @@ func _create_ui() -> void:
 	dbg_btns_hbox.add_child(close_dbg_btn)
 
 	hint_label = Label.new()
-	hint_label.position = Vector2(44, 44)
+	hint_label.position = Vector2(24, 46)
 	hint_label.text = "WASD/Move   •   Aim + Fire   •   Shift/Space Dash (I-Frames)   •   ESC/P/|| Pause"
 	hint_label.add_theme_color_override("font_color", Color("64748b"))
-	hint_label.add_theme_font_size_override("font_size", 12)
+	hint_label.add_theme_font_size_override("font_size", 11)
+	if OS.has_feature("mobile") or DisplayServer.is_touchscreen_available():
+		hint_label.visible = false
 	ui_layer.add_child(hint_label)
 
-	# Boss Health Bar
+	# Boss Health Bar (Bottom Center - Zero HUD Collisions)
+	boss_bar_container = PanelContainer.new()
+	boss_bar_container.position = Vector2(250, 480)
+	boss_bar_container.custom_minimum_size = Vector2(460, 48)
+	var boss_panel_style := StyleBoxFlat.new()
+	boss_panel_style.bg_color = Color(0.04, 0.015, 0.04, 0.90)
+	boss_panel_style.border_color = Color("ec4899")
+	boss_panel_style.set_border_width_all(1)
+	boss_panel_style.set_corner_radius_all(6)
+	boss_panel_style.content_margin_left = 14
+	boss_panel_style.content_margin_right = 14
+	boss_panel_style.content_margin_top = 4
+	boss_panel_style.content_margin_bottom = 6
+	boss_bar_container.add_theme_stylebox_override("panel", boss_panel_style)
+	boss_bar_container.visible = false
+	ui_layer.add_child(boss_bar_container)
+
+	var boss_vbox := VBoxContainer.new()
+	boss_vbox.add_theme_constant_override("separation", 3)
+	boss_bar_container.add_child(boss_vbox)
+
+	boss_label = Label.new()
+	boss_label.text = "[ BOSS // NEXUS OVERLORD ]"
+	boss_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	boss_label.add_theme_font_size_override("font_size", 11)
+	boss_label.add_theme_color_override("font_color", Color("fda4af"))
+	boss_vbox.add_child(boss_label)
+
 	boss_bar_bg = ColorRect.new()
-	boss_bar_bg.position = Vector2(310, 18)
-	boss_bar_bg.size = Vector2(340, 16)
-	boss_bar_bg.color = Color("271020")
-	boss_bar_bg.visible = false
-	ui_layer.add_child(boss_bar_bg)
+	boss_bar_bg.custom_minimum_size = Vector2(420, 16)
+	boss_bar_bg.color = Color("1a0612")
+	boss_vbox.add_child(boss_bar_bg)
+
+	boss_bar_ghost = ColorRect.new()
+	boss_bar_ghost.position = Vector2.ZERO
+	boss_bar_ghost.size = Vector2(420, 16)
+	boss_bar_ghost.color = Color(0.9, 0.65, 0.25, 0.45)
+	boss_bar_bg.add_child(boss_bar_ghost)
 
 	boss_bar_fill = ColorRect.new()
 	boss_bar_fill.position = Vector2.ZERO
-	boss_bar_fill.size = Vector2(340, 16)
+	boss_bar_fill.size = Vector2(420, 16)
 	boss_bar_fill.color = Color("f43f5e")
 	boss_bar_bg.add_child(boss_bar_fill)
 
-	boss_label = Label.new()
-	boss_label.text = "NEXUS // OVERLORD"
-	boss_label.position = Vector2(0, -18)
-	boss_label.add_theme_font_size_override("font_size", 12)
-	boss_label.add_theme_color_override("font_color", Color("fda4af"))
-	boss_bar_bg.add_child(boss_label)
+	boss_hp_label = Label.new()
+	boss_hp_label.text = "35 / 35 HP"
+	boss_hp_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	boss_hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	boss_hp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	boss_hp_label.add_theme_font_size_override("font_size", 10)
+	boss_hp_label.add_theme_color_override("font_color", Color("ffffff"))
+	boss_bar_bg.add_child(boss_hp_label)
 
 	# Adaptive Director Notification Banner
 	director_banner = PanelContainer.new()
@@ -1421,26 +1447,6 @@ func _create_ui() -> void:
 	upgrade_cards_box.add_theme_constant_override("separation", 24)
 	upgrade_cards_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	draft_vbox.add_child(upgrade_cards_box)
-
-	# Tactical Route Selection Container (Touch-Friendly)
-	route_ui_container = PanelContainer.new()
-	route_ui_container.position = Vector2(230, 474)
-	route_ui_container.custom_minimum_size = Vector2(500, 52)
-	var route_style := StyleBoxFlat.new()
-	route_style.bg_color = Color(0.02, 0.035, 0.07, 0.92)
-	route_style.border_color = Color("38bdf8")
-	route_style.set_border_width_all(1)
-	route_style.set_corner_radius_all(6)
-	route_style.content_margin_left = 12
-	route_style.content_margin_right = 12
-	route_ui_container.add_theme_stylebox_override("panel", route_style)
-	route_ui_container.visible = false
-	ui_layer.add_child(route_ui_container)
-
-	route_buttons_box = HBoxContainer.new()
-	route_buttons_box.alignment = BoxContainer.ALIGNMENT_CENTER
-	route_buttons_box.add_theme_constant_override("separation", 16)
-	route_ui_container.add_child(route_buttons_box)
 
 	# In-Game Tactical Pause Menu
 	pause_menu = PAUSE_MENU_SCRIPT.new()

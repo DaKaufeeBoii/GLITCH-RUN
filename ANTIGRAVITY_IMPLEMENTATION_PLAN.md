@@ -91,3 +91,31 @@ All requested tasks have been fully implemented, integrated, and verified agains
   - `--- ALL 45 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---`
 - Zero compiler errors, zero runtime warnings in Godot 4.7.2 headless execution.
 
+---
+
+## 6. Android Friendliness, Touch Reload, Boss Bar Relocation, UI Overhaul & Official Branding [COMPLETED]
+
+### Implemented Behavior:
+- **Dedicated Android Touch Reload Button**:
+  - Implemented `reload_pressed` signal in [`scripts/mobile_controls.gd`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/scripts/mobile_controls.gd) with touch target radius $36\text{px}$ (diameter $72\text{px} \ge 48\text{dp}$).
+  - Situated ergonomically above the Dash button at right-thumb coordinates `Vector2(size.x - 78, size.y - 180)` with cyber cyan border, circular arrows glyph, and real-time touch detection.
+  - Connected in [`scripts/game.gd`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/scripts/game.gd) directly to `player.start_reload()`.
+- **Feature Removal (Floating Route Popup Bar)**:
+  - Removed `route_ui_container` and `route_buttons_box` from [`scripts/game.gd`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/scripts/game.gd).
+  - Navigation now flows seamlessly through the physical, glowing floor exit gates in the arena with no intrusive popup button obstruction.
+- **Boss Health Bar Relocation & Modernization**:
+  - Relocated from colliding with the top bar (`Vector2(310, 18)`) to **Bottom Center** (`Vector2(250, 480)`, width $420\text{px}$).
+  - Equipped with dark glassmorphic outer panel (`#ec4899` border), centered boss nameplate `[ BOSS // NEXUS OVERLORD ]`, smooth trailing damage ghost bar, neon crimson primary fill, and real-time numerical readout (`35 / 35 HP`).
+  - Zero collision with top HUD or bottom touch controls.
+- **Top HUD Layout Overhaul**:
+  - Restructured top bar into a modular 3-zone layout:
+    - **Left**: Heart containers (`hearts_box`) at `Vector2(24, 16)`.
+    - **Center**: Cyberpunk Telemetry Pill at `Vector2(270, 12)` displaying `ELIMS 00` and battery status `CELLS 16/16` (`RELOAD...` flash).
+    - **Right**: Sector & Room pill at `Vector2(600, 20)`, Inset Debug button at `Vector2(830, 12)`, and Inset Pause button at `Vector2(888, 12)`.
+  - Hidden desktop keyboard prompt (`"WASD/Move..."`) on mobile devices and touchscreens.
+- **Official Branding & App Icons Integration**:
+  - Installed provided vector logo into [`res://assets/ui/glitch_run_logo.png`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/assets/ui/glitch_run_logo.png) and integrated into [`scripts/start_screen.gd`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/scripts/start_screen.gd) and [`scripts/main_menu.gd`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/scripts/main_menu.gd).
+  - Converted square icon to standard app icon [`res://icon.png`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/icon.png), 192x192 launcher icon [`res://assets/icon/android_icon_192.png`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/assets/icon/android_icon_192.png), and 432x432 adaptive foreground icon [`res://assets/icon/android_icon_adaptive.png`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/assets/icon/android_icon_adaptive.png).
+  - Configured [`project.godot`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/project.godot) and [`export_presets.cfg`](file:///d:/Kaufee/projects/personal/GLITCH__RUN/export_presets.cfg).
+
+

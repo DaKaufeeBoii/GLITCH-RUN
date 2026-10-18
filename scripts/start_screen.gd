@@ -58,13 +58,23 @@ func _build_screen() -> void:
 	stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	center.add_child(stack)
 
-	var title := Label.new()
-	title.text = "GLITCH // RUN"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	title.add_theme_font_size_override("font_size", 58)
-	title.add_theme_color_override("font_color", Color("38bdf8"))
-	stack.add_child(title)
+	var logo_tex = load("res://assets/ui/glitch_run_logo.png")
+	if logo_tex:
+		var logo_rect := TextureRect.new()
+		logo_rect.texture = logo_tex
+		logo_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		logo_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		logo_rect.custom_minimum_size = Vector2(480, 110)
+		logo_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		stack.add_child(logo_rect)
+	else:
+		var title := Label.new()
+		title.text = "GLITCH // RUN"
+		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		title.add_theme_font_size_override("font_size", 58)
+		title.add_theme_color_override("font_color", Color("38bdf8"))
+		stack.add_child(title)
 
 	var subtitle := Label.new()
 	subtitle.text = "ADAPT. SURVIVE. DESCEND."

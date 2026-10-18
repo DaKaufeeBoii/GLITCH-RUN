@@ -103,12 +103,22 @@ func _build_ui() -> void:
 	title_vbox.add_theme_constant_override("separation", 2)
 	identity_column.add_child(title_vbox)
 
-	var title_lbl := Label.new()
-	title_lbl.text = "GLITCH // RUN"
-	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	title_lbl.add_theme_font_size_override("font_size", 38)
-	title_lbl.add_theme_color_override("font_color", Color("38bdf8"))
-	title_vbox.add_child(title_lbl)
+	var logo_tex = load("res://assets/ui/glitch_run_logo.png")
+	if logo_tex:
+		var logo_rect := TextureRect.new()
+		logo_rect.texture = logo_tex
+		logo_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		logo_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+		logo_rect.custom_minimum_size = Vector2(340, 75)
+		logo_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		title_vbox.add_child(logo_rect)
+	else:
+		var title_lbl := Label.new()
+		title_lbl.text = "GLITCH // RUN"
+		title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		title_lbl.add_theme_font_size_override("font_size", 38)
+		title_lbl.add_theme_color_override("font_color", Color("38bdf8"))
+		title_vbox.add_child(title_lbl)
 
 	var sub_lbl := Label.new()
 	sub_lbl.text = "AN ADAPTIVE ROGUELITE SIMULATION"

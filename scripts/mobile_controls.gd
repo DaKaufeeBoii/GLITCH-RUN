@@ -5,6 +5,7 @@ signal move_changed(direction: Vector2)
 signal aim_changed(direction: Vector2)
 signal fire_changed(is_firing: bool)
 signal dash_pressed
+signal reload_pressed
 
 var enabled := true:
 	set(val):
@@ -27,8 +28,10 @@ var fire_origin := Vector2.ZERO
 var fire_position := Vector2.ZERO
 var fire_vector := Vector2.ZERO
 var dash_ready := true
+var reload_ready := true
 const JOYSTICK_RADIUS := 66.0
 const DASH_RADIUS := 48.0
+const RELOAD_RADIUS := 36.0
 
 
 func _ready() -> void:
@@ -52,6 +55,11 @@ func _handle_touch(event: InputEventScreenTouch) -> void:
 				dash_pressed.emit()
 				dash_ready = false
 			return
+		if _is_reload_button(point):
+			if reload_ready:
+				reload_pressed.emit()
+				reload_ready = false
+			return
 		if point.x < size.x * 0.48 and move_finger == -1:
 			move_finger = event.index
 			move_origin = point
@@ -74,6 +82,8 @@ func _handle_touch(event: InputEventScreenTouch) -> void:
 			aim_changed.emit(Vector2.ZERO)
 		if _is_dash_button(point):
 			dash_ready = true
+		if _is_reload_button(point):
+			reload_ready = true
 	queue_redraw()
 
 
@@ -106,8 +116,13 @@ func _is_dash_button(point: Vector2) -> bool:
 	return point.distance_to(center) <= DASH_RADIUS
 
 
+func _is_reload_button(point: Vector2) -> bool:
+	var center := Vector2(size.x - 78.0, size.y - 180.0)
+	return point.distance_to(center) <= RELOAD_RADIUS
+
+
 func _draw() -> void:
-	if not OS.has_feature("mobile") and not DisplayServer.is_touchscreen_available():
+	if not OS.has_feature("mobile") and not DisplayServer.is_touchscreen_available() and not ProjectSettings.get_setting("input_devices/pointing/emulate_touch_from_mouse", false):
 		return
 	# Movement virtual joystick (left)
 	var move_center := move_origin if move_finger != -1 else Vector2(120.0, size.y - 110.0)
@@ -121,6 +136,13 @@ func _draw() -> void:
 	draw_circle(dash_center, DASH_RADIUS, Color(0.72, 0.24, 0.54, 0.48))
 	draw_arc(dash_center, DASH_RADIUS, 0.0, TAU, 48, Color("ff83d0"), 3.0)
 	draw_string(ThemeDB.fallback_font, dash_center + Vector2(-18, 6), "DASH", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)
+
+	# Reload button (above dash button, right side)
+	var reload_center := Vector2(size.x - 78.0, size.y - 180.0)
+	draw_circle(reload_center, RELOAD_RADIUS, Color(0.12, 0.22, 0.38, 0.55))
+	draw_arc(reload_center, RELOAD_RADIUS, 0.0, TAU, 36, Color("38bdf8"), 2.5)
+	draw_arc(reload_center, RELOAD_RADIUS * 0.55, 0.4, 5.6, 24, Color("7dd3fc"), 2.0)
+	draw_string(ThemeDB.fallback_font, reload_center + Vector2(-20, 4), "RELOAD", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color("e0f2fe"))
 
 	# Aim / Fire virtual joystick (right)
 	if fire_finger != -1:
