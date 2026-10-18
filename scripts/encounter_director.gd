@@ -41,7 +41,7 @@ func prepare_encounter(
 
 	var room_idx: int = room.index
 	var chokepoint_ratio: float = float(room.tactical_context.get("chokepoint_ratio", 0.0))
-	var has_cover: bool = bool(room.tactical_context.get("has_cover", false))
+	var _has_cover: bool = bool(room.tactical_context.get("has_cover", false))
 	var flanking_lanes: int = int(room.tactical_context.get("flanking_lanes", 1))
 
 	var chosen_tactic := "DEFAULT"

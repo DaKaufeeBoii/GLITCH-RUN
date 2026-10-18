@@ -75,10 +75,10 @@ func register_spawned_combatant(genome: RefCounted) -> void:
 
 func process_encounter_end(
 	sector_index: int,
-	damage_taken_by_player: int,
+	_damage_taken_by_player: int,
 	combat_duration: float,
 	player_profile: Dictionary,
-	selected_tactic: String
+	_selected_tactic: String
 ) -> Array[Dictionary]:
 	## Evaluates combat outcomes, updates Layer B specialization and Layer C population fitness.
 	## Returns a list of newly applied mutations and evolutionary adaptations.
@@ -94,7 +94,7 @@ func process_encounter_end(
 	# Evaluate if player tactics warrant specific named counter-mutations
 	var mob: float = float(player_profile.get("mobility", 0.5))
 	var rng: float = float(player_profile.get("ranged", 0.5))
-	var tur: float = float(player_profile.get("turret", 0.5))
+	var _tur: float = float(player_profile.get("turret", 0.5))
 	var player_tactics: Dictionary = player_profile.get("successful_player_tactics", {})
 
 	# High Mobility -> Shooters gain PREDICTIVE_OPTICS & Dashers gain ION_HAZARD_TRAIL
@@ -177,7 +177,7 @@ func process_encounter_end(
 	return new_adaptations
 
 
-func _evolve_family_pool(family: String, sector_index: int, new_adaptations: Array[Dictionary]) -> void:
+func _evolve_family_pool(family: String, sector_index: int, _new_adaptations: Array[Dictionary]) -> void:
 	var pool: Array = active_genomes[family]
 	if pool.size() < 2:
 		return

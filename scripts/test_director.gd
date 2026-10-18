@@ -411,7 +411,7 @@ static func test_evolution_manager_layers_and_retention() -> bool:
 	assert(not shooter_g.has_mutation("PREDICTIVE_OPTICS"), "Generation 1 shooter starts unmutated")
 
 	# Process encounter where player dashed frequently
-	var adaptations := evo_mgr.process_encounter_end(1, 1, 22.0, mobile_profile, "COUNTER_MOBILITY")
+	var _adaptations := evo_mgr.process_encounter_end(1, 1, 22.0, mobile_profile, "COUNTER_MOBILITY")
 	assert(evo_mgr.generation == 2, "Generation must advance after encounter")
 
 	# Check that shooter in population acquired PREDICTIVE_OPTICS
@@ -1185,8 +1185,10 @@ static func test_android_configuration_and_touch_targets() -> bool:
 	assert("gradle_build/target_sdk=\"34\"" in content, "Target SDK must be 34 (Android 14)")
 
 	# Verify mobile virtual controls sizing exceeds 48dp
-	assert(MOBILE_CONTROLS_SCRIPT.JOYSTICK_RADIUS >= 48.0, "Joystick radius must exceed 48dp touch threshold")
-	assert(MOBILE_CONTROLS_SCRIPT.DASH_RADIUS >= 48.0, "Dash radius must be at least 48dp touch threshold")
+	var ctrl = MOBILE_CONTROLS_SCRIPT.new()
+	assert(float(ctrl.get("JOYSTICK_RADIUS")) >= 48.0, "Joystick radius must exceed 48dp touch threshold")
+	assert(float(ctrl.get("DASH_RADIUS")) >= 48.0, "Dash radius must be at least 48dp touch threshold")
+	ctrl.free()
 
 	print("  [PASS] Android Export Preset Configuration & Touch Targets Scenario")
 	return true
@@ -1263,7 +1265,8 @@ static func test_android_back_and_lifecycle_navigation() -> bool:
 
 
 static func test_debris_and_entity_bounding() -> bool:
-	assert(DEBRIS_EMITTER_SCRIPT.MAX_ACTIVE_SHARDS <= 64, "Debris emitter must bound max active shards for mobile GPU/CPU safety")
+	var emitter = DEBRIS_EMITTER_SCRIPT.new()
+	assert(int(emitter.get("MAX_ACTIVE_SHARDS")) <= 64, "Debris emitter must bound max active shards for mobile GPU/CPU safety")
 	var orig_count: int = int(DEBRIS_EMITTER_SCRIPT.active_shard_count)
 	var test_parent := Node2D.new()
 	DEBRIS_EMITTER_SCRIPT.active_shard_count = DEBRIS_EMITTER_SCRIPT.MAX_ACTIVE_SHARDS

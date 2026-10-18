@@ -209,7 +209,7 @@ func _get_door_label(target_idx: int, room_type: String) -> String:
 			return "CHAMBER %d // COMBAT" % (target_idx + 1)
 
 
-func _pick_template_name(index: int, room_type: String, rng: RandomNumberGenerator) -> String:
+func _pick_template_name(_index: int, room_type: String, rng: RandomNumberGenerator) -> String:
 	if room_type == "START":
 		return "CALIBRATION_OPEN"
 	if room_type == "BOSS":
@@ -226,7 +226,7 @@ func _pick_template_name(index: int, room_type: String, rng: RandomNumberGenerat
 	return templates[rng.randi() % templates.size()]
 
 
-func _apply_template_geometry(room: RoomData, template_name: String, rng: RandomNumberGenerator) -> void:
+func _apply_template_geometry(room: RoomData, template_name: String, _rng: RandomNumberGenerator) -> void:
 	room.obstacles.clear()
 	var center := room.bounds.get_center()
 

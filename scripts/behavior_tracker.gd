@@ -96,7 +96,7 @@ func record_shot_hit() -> void:
 	shots_hit += 1
 
 
-func record_enemy_kill(enemy_family: String, player_dist: float, is_dash_kill: bool = false) -> void:
+func record_enemy_kill(_enemy_family: String, player_dist: float, is_dash_kill: bool = false) -> void:
 	if is_dash_kill:
 		kills_by_player_tactic["DASH_STATIC"] += 1
 	elif player_dist > 280.0:

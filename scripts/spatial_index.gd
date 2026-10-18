@@ -4,7 +4,7 @@ class_name SpatialIndex
 ## Replaces per-agent full-tree group scans with a centralized neighbor cache,
 ## using squared distances and neighbor count capping to maintain high frame rates on mobile.
 
-const EnemySteering := preload("res://scripts/enemy_steering.gd")
+const ENEMY_STEERING_SCRIPT := preload("res://scripts/enemy_steering.gd")
 
 var registered_agents: Array[Node2D] = []
 var cached_positions: Array[Vector2] = []
@@ -74,4 +74,4 @@ func get_separation_for_agent(
 		return Vector2.ZERO
 	var origin := agent.global_position
 	var neighbors := get_neighbor_positions(origin, radius, max_neighbors, origin)
-	return EnemySteering.get_separation_vector(origin, neighbors, radius, max_neighbors)
+	return ENEMY_STEERING_SCRIPT.get_separation_vector(origin, neighbors, radius, max_neighbors)

@@ -755,7 +755,6 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 		rs.on_enemy_eliminated()
 
 	if active_enemies.is_empty() and not room_cleared:
-		var rs = get_node_or_null("/root/RunState")
 		if rs and rs.progression and rs.progression.advance_wave():
 			rs.current_wave = rs.progression.current_wave
 			_trigger_next_wave()

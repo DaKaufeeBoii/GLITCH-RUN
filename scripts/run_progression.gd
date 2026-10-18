@@ -61,7 +61,7 @@ func calculate_waves_for_current_room(room_type: String) -> int:
 		if difficulty == "EASY":
 			waves_in_room = 3
 		elif difficulty == "HARD":
-			waves_in_room = clampi(3 + int(run_depth / 4), 3, MAX_WAVES_PER_ROOM)
+			waves_in_room = clampi(3 + int(float(run_depth) / 4.0), 3, MAX_WAVES_PER_ROOM)
 		else: # NORMAL
 			if run_depth <= 3:
 				waves_in_room = 3
@@ -85,7 +85,7 @@ func calculate_spawn_budget(wave: int) -> int:
 			base_count = 3
 
 	# Gradual scaling with depth and wave index
-	var depth_bonus := clampi(int(run_depth / 3), 0, 4)
+	var depth_bonus := clampi(int(float(run_depth) / 3.0), 0, 4)
 	var wave_bonus := clampi(wave - 1, 0, 2)
 	var total_budget: int = clampi(base_count + depth_bonus + wave_bonus, 2, 9)
 	return total_budget

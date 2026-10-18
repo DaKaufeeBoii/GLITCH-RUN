@@ -5,8 +5,7 @@ class_name BossDirector
 ## tracks within-run boss encounter history, and assigns bounded authored mutations
 ## with visible trade-offs when bosses return in endless runs.
 
-const BossDefinition := preload("res://scripts/boss_definition.gd")
-const BOSS_DEFINITION_SCRIPT := BossDefinition
+const BOSS_DEFINITION_SCRIPT := preload("res://scripts/boss_definition.gd")
 
 var definitions: Dictionary = {} # boss_id -> BossDefinition
 var encounter_history: Array[Dictionary] = []
