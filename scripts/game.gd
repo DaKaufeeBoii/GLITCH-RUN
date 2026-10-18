@@ -169,6 +169,13 @@ func _notification(what: int) -> void:
 		if not run_over and is_instance_valid(pause_menu) and not pause_menu.visible:
 			if is_instance_valid(upgrade_container) and not upgrade_container.visible:
 				pause_menu.open_pause()
+	elif what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		if not run_over and is_instance_valid(upgrade_container) and not upgrade_container.visible:
+			if is_instance_valid(pause_menu):
+				if pause_menu.visible:
+					pause_menu._handle_back_request()
+				else:
+					pause_menu.open_pause()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -176,11 +183,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		toggle_debug_overlay()
 		return
 
-	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and (event.keycode == KEY_ESCAPE or event.keycode == KEY_P)):
+	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and (event.keycode == KEY_ESCAPE or event.keycode == KEY_P or event.keycode == KEY_BACK)):
 		if not run_over and is_instance_valid(upgrade_container) and not upgrade_container.visible:
 			if is_instance_valid(pause_menu):
 				if pause_menu.visible:
-					pause_menu.close_pause()
+					pause_menu._handle_back_request()
 				else:
 					pause_menu.open_pause()
 
@@ -984,22 +991,22 @@ func _create_ui() -> void:
 
 	# Sector & Room Badge (Top Right)
 	sector_label = Label.new()
-	sector_label.position = Vector2(720, 16)
+	sector_label.position = Vector2(650, 24)
 	sector_label.text = "SEC 1  •  ROOM 1/6"
 	sector_label.add_theme_color_override("font_color", Color("38bdf8"))
 	sector_label.add_theme_font_size_override("font_size", 16)
 	ui_layer.add_child(sector_label)
 
-	# HUD Touch Pause Button (Top Right corner)
+	# HUD Touch Pause Button (Top Right corner, 48dp+ touch target)
 	var pause_btn := Button.new()
-	pause_btn.position = Vector2(870, 12)
-	pause_btn.custom_minimum_size = Vector2(46, 30)
+	pause_btn.position = Vector2(896, 12)
+	pause_btn.custom_minimum_size = Vector2(48, 48)
 	pause_btn.text = "||"
 	var pause_btn_style := StyleBoxFlat.new()
 	pause_btn_style.bg_color = Color(0.06, 0.10, 0.20, 0.85)
 	pause_btn_style.border_color = Color("38bdf8")
 	pause_btn_style.set_border_width_all(1)
-	pause_btn_style.set_corner_radius_all(4)
+	pause_btn_style.set_corner_radius_all(6)
 	pause_btn.add_theme_stylebox_override("normal", pause_btn_style)
 	pause_btn.add_theme_stylebox_override("hover", pause_btn_style)
 	pause_btn.add_theme_stylebox_override("pressed", pause_btn_style)
@@ -1010,16 +1017,16 @@ func _create_ui() -> void:
 	)
 	ui_layer.add_child(pause_btn)
 
-	# HUD Debug Overlay Toggle Button
+	# HUD Debug Overlay Toggle Button (48dp+ touch target)
 	var dbg_btn := Button.new()
-	dbg_btn.position = Vector2(816, 12)
-	dbg_btn.custom_minimum_size = Vector2(46, 30)
+	dbg_btn.position = Vector2(840, 12)
+	dbg_btn.custom_minimum_size = Vector2(48, 48)
 	dbg_btn.text = "DBG"
 	var dbg_btn_style := StyleBoxFlat.new()
 	dbg_btn_style.bg_color = Color(0.06, 0.08, 0.18, 0.85)
 	dbg_btn_style.border_color = Color("c084fc")
 	dbg_btn_style.set_border_width_all(1)
-	dbg_btn_style.set_corner_radius_all(4)
+	dbg_btn_style.set_corner_radius_all(6)
 	dbg_btn.add_theme_stylebox_override("normal", dbg_btn_style)
 	dbg_btn.add_theme_stylebox_override("hover", dbg_btn_style)
 	dbg_btn.add_theme_stylebox_override("pressed", dbg_btn_style)

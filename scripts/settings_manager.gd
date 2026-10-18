@@ -45,9 +45,11 @@ func load_settings() -> void:
 	var json_str := file.get_as_text()
 	file.close()
 
-	var data = JSON.parse_string(json_str)
-	if typeof(data) != TYPE_DICTIONARY:
+	var json := JSON.new()
+	var err := json.parse(json_str)
+	if err != OK or not (json.data is Dictionary):
 		return
+	var data: Dictionary = json.data
 
 	master_volume = clampf(float(data.get("master_volume", 1.0)), 0.0, 1.0)
 	music_volume = clampf(float(data.get("music_volume", 0.75)), 0.0, 1.0)

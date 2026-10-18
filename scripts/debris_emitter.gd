@@ -5,11 +5,20 @@ extends RefCounted
 class_name DebrisEmitter
 
 
+const MAX_ACTIVE_SHARDS := 64
+static var active_shard_count := 0
+
+
 static func spawn_shards(parent: Node2D, origin: Vector2, color: Color, shard_shape: String = "diamond", count: int = 8) -> void:
 	if not is_instance_valid(parent):
 		return
 
-	for i in range(count):
+	var allowed_count: int = mini(count, maxi(0, MAX_ACTIVE_SHARDS - active_shard_count))
+	if allowed_count <= 0:
+		return
+
+	for i in range(allowed_count):
+		active_shard_count += 1
 		var shard := Node2D.new()
 		shard.global_position = origin
 		shard.z_index = 5
@@ -44,4 +53,8 @@ static func spawn_shards(parent: Node2D, origin: Vector2, color: Color, shard_sh
 		tween.tween_property(shard, "rotation", shard.rotation + spin * lifetime, lifetime)
 		tween.tween_property(shard, "scale", Vector2.ZERO, lifetime).set_delay(lifetime * 0.4)
 		tween.tween_property(shard, "modulate:a", 0.0, lifetime)
-		tween.chain().tween_callback(Callable(shard, "queue_free"))
+		tween.chain().tween_callback(func():
+			active_shard_count = maxi(0, active_shard_count - 1)
+			if is_instance_valid(shard):
+				shard.queue_free()
+		)

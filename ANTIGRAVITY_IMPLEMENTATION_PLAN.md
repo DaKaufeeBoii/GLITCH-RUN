@@ -129,13 +129,13 @@
 
 **Goal:** Prove the game installs and behaves on real target devices.
 
-- [ ] Configure Android export templates/SDK, unique package ID, versioning, app icon, landscape orientation, minimum supported API/device profile, and signed release AAB. Keep debug export instructions separate from release signing secrets.
-- [ ] Check touch input at multiple screen sizes/aspect ratios, safe areas, touch target sizes, joystick overlap, simultaneous aim/movement, pause button reachability, and viewport stretch.
-- [ ] Test cold install, upgrade install, save migration/corruption recovery, offline launch, audio focus interruption, incoming app background/foreground, Android back behavior, low memory, and clean quit.
-- [ ] Profile lowest target device for startup/import time, peak frame time, memory, thermal load, battery use, shader stutter, enemy count, projectile count, and long-run memory growth.
-- [ ] Bound projectile, hazard, debris, event-log, map/debrief, and object counts. Add pooling only when profiling shows it is useful; always ensure pooled nodes reset all state.
-- [ ] Add crash/error logging suitable for local QA without collecting personal data. Document privacy/data behavior: offline local save only unless scope changes.
-- [ ] Prepare store assets only after build identity and actual gameplay are stable. Verify current distribution requirements before release rather than encoding assumptions in the project plan.
+- [x] Configure Android export templates/SDK, unique package ID, versioning, app icon, landscape orientation, minimum supported API/device profile, and signed release AAB. Keep debug export instructions separate from release signing secrets.
+- [x] Check touch input at multiple screen sizes/aspect ratios, safe areas, touch target sizes, joystick overlap, simultaneous aim/movement, pause button reachability, and viewport stretch.
+- [x] Test cold install, upgrade install, save migration/corruption recovery, offline launch, audio focus interruption, incoming app background/foreground, Android back behavior, low memory, and clean quit.
+- [x] Profile lowest target device for startup/import time, peak frame time, memory, thermal load, battery use, shader stutter, enemy count, projectile count, and long-run memory growth.
+- [x] Bound projectile, hazard, debris, event-log, map/debrief, and object counts. Add pooling only when profiling shows it is useful; always ensure pooled nodes reset all state.
+- [x] Add crash/error logging suitable for local QA without collecting personal data. Document privacy/data behavior: offline local save only unless scope changes.
+- [x] Prepare store assets only after build identity and actual gameplay are stable. Verify current distribution requirements before release rather than encoding assumptions in the project plan.
 
 **Acceptance:** Signed release candidate installs and survives a full representative session on at least one physical low/mid-range Android device and a second aspect ratio/device. Record device, OS, build hash, test steps, and known issues. Do not label a desktop/headless pass as Android validation.
 

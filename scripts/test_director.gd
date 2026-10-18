@@ -18,6 +18,9 @@ const BOSS_DEFINITION_SCRIPT := preload("res://scripts/boss_definition.gd")
 const SETTINGS_MANAGER_SCRIPT := preload("res://scripts/settings_manager.gd")
 const MAIN_MENU_SCRIPT := preload("res://scripts/main_menu.gd")
 const PAUSE_MENU_SCRIPT := preload("res://scripts/pause_menu.gd")
+const CRASH_LOGGER_SCRIPT := preload("res://scripts/crash_logger.gd")
+const DEBRIS_EMITTER_SCRIPT := preload("res://scripts/debris_emitter.gd")
+const MOBILE_CONTROLS_SCRIPT := preload("res://scripts/mobile_controls.gd")
 
 func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
@@ -65,9 +68,14 @@ static func run_all_tests() -> bool:
 	all_passed = test_boss_history_run_persistence() and all_passed
 	all_passed = test_settings_persistence_and_audio_buses() and all_passed
 	all_passed = test_menu_and_pause_modal_flows() and all_passed
+	all_passed = test_android_configuration_and_touch_targets() and all_passed
+	all_passed = test_save_corruption_and_offline_recovery() and all_passed
+	all_passed = test_android_back_and_lifecycle_navigation() and all_passed
+	all_passed = test_debris_and_entity_bounding() and all_passed
+	all_passed = test_crash_logger_offline_diagnostics() and all_passed
 
 	if all_passed:
-		print("--- ALL 37 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS & UI SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 42 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -1161,5 +1169,124 @@ static func test_menu_and_pause_modal_flows() -> bool:
 
 	print("  [PASS] Touch Navigation, Modals & Confirmation Flows Scenario")
 	return true
+
+
+static func test_android_configuration_and_touch_targets() -> bool:
+	assert(FileAccess.file_exists("res://export_presets.cfg"), "Android export_presets.cfg must exist")
+	var f := FileAccess.open("res://export_presets.cfg", FileAccess.READ)
+	assert(f != null, "export_presets.cfg must be readable")
+	var content := f.get_as_text()
+	f.close()
+	assert("com.antigravity.glitchrun" in content, "Must configure unique Android package ID")
+	assert("permissions/vibrate=true" in content, "Haptics permission must be enabled")
+	assert("permissions/internet=false" in content, "Internet permission must be explicitly false for offline safety")
+	assert("screen/orientation=1" in content, "Landscape orientation must be enforced in export preset")
+	assert("gradle_build/min_sdk=\"24\"" in content, "Min SDK must be 24 (Android 7.0)")
+	assert("gradle_build/target_sdk=\"34\"" in content, "Target SDK must be 34 (Android 14)")
+
+	# Verify mobile virtual controls sizing exceeds 48dp
+	assert(MOBILE_CONTROLS_SCRIPT.JOYSTICK_RADIUS >= 48.0, "Joystick radius must exceed 48dp touch threshold")
+	assert(MOBILE_CONTROLS_SCRIPT.DASH_RADIUS >= 48.0, "Dash radius must be at least 48dp touch threshold")
+
+	print("  [PASS] Android Export Preset Configuration & Touch Targets Scenario")
+	return true
+
+
+static func test_save_corruption_and_offline_recovery() -> bool:
+	var rs_script := preload("res://scripts/run_state.gd")
+	var rs = rs_script.new()
+
+	# Create a corrupt save file
+	var sf := FileAccess.open("user://save_data.json", FileAccess.WRITE)
+	sf.store_string("CORRUPTED_NON_JSON_DATA{{{{")
+	sf.close()
+
+	# Load must gracefully recover without crashing or corrupting state
+	rs.load_persistent_data()
+	assert(rs.best_depth >= 1, "Corrupted save must fall back to valid depth")
+	assert(rs.best_score >= 0, "Corrupted save must fall back to valid score")
+
+	# Test corrupt settings file
+	var sm = SETTINGS_MANAGER_SCRIPT.new()
+	var set_f := FileAccess.open("user://settings.json", FileAccess.WRITE)
+	set_f.store_string("12345_NOT_A_DICT")
+	set_f.close()
+
+	sm.load_settings()
+	assert(sm.master_volume >= 0.0 and sm.master_volume <= 1.0, "Corrupted settings must maintain clamped volume")
+	assert(sm.screen_shake_intensity >= 0.0, "Corrupted settings must maintain valid shake intensity")
+
+	# Restore clean valid state
+	rs.save_persistent_data()
+	sm.save_settings()
+	rs.free()
+	sm.free()
+
+	print("  [PASS] Save File Corruption & Offline Recovery Scenario")
+	return true
+
+
+static func test_android_back_and_lifecycle_navigation() -> bool:
+	var menu = MAIN_MENU_SCRIPT.new()
+	menu._build_ui()
+
+	# When a modal is open, _handle_back_request closes the modal
+	menu.settings_panel.visible = true
+	menu._handle_back_request()
+	assert(not menu.settings_panel.visible, "Back request must dismiss settings modal")
+
+	menu.how_to_play_panel.visible = true
+	menu._handle_back_request()
+	assert(not menu.how_to_play_panel.visible, "Back request must dismiss how to play modal")
+
+	menu.archive_panel.visible = true
+	menu._handle_back_request()
+	assert(not menu.archive_panel.visible, "Back request must dismiss threat archive modal")
+
+	var pause = PAUSE_MENU_SCRIPT.new()
+	pause._build_ui()
+	pause.visible = true
+	pause._show_confirmation("TEST", "MSG", func(): pass)
+	assert(pause.confirm_panel.visible, "Confirmation modal must be open")
+	pause._handle_back_request()
+	assert(not pause.confirm_panel.visible, "Back request must dismiss confirmation modal")
+
+	# Back request when no modal is open in pause menu should close pause / resume simulation
+	pause._handle_back_request()
+	assert(not pause.visible, "Back request on pause menu must resume simulation")
+
+	menu.free()
+	pause.free()
+
+	print("  [PASS] Android Back Key & Navigation Hierarchy Scenario")
+	return true
+
+
+static func test_debris_and_entity_bounding() -> bool:
+	assert(DEBRIS_EMITTER_SCRIPT.MAX_ACTIVE_SHARDS <= 64, "Debris emitter must bound max active shards for mobile GPU/CPU safety")
+	var orig_count: int = int(DEBRIS_EMITTER_SCRIPT.active_shard_count)
+	var test_parent := Node2D.new()
+	DEBRIS_EMITTER_SCRIPT.active_shard_count = DEBRIS_EMITTER_SCRIPT.MAX_ACTIVE_SHARDS
+	DEBRIS_EMITTER_SCRIPT.spawn_shards(test_parent, Vector2.ZERO, Color.WHITE, "diamond", 12)
+	assert(test_parent.get_child_count() == 0, "Spawning shards when at max cap must produce zero new nodes")
+	DEBRIS_EMITTER_SCRIPT.active_shard_count = orig_count
+	test_parent.free()
+
+	print("  [PASS] Mobile Debris & Particle Bounding Scenario")
+	return true
+
+
+static func test_crash_logger_offline_diagnostics() -> bool:
+	CRASH_LOGGER_SCRIPT.log_info("DIAGNOSTIC_QA_TEST_ENTRY_ALPHA")
+	CRASH_LOGGER_SCRIPT.log_warning("DIAGNOSTIC_QA_TEST_WARN_BETA")
+	var logs: String = CRASH_LOGGER_SCRIPT.read_recent_logs()
+	assert("DIAGNOSTIC_QA_TEST_ENTRY_ALPHA" in logs, "Local QA logger must record info logs to disk")
+	assert("DIAGNOSTIC_QA_TEST_WARN_BETA" in logs, "Local QA logger must record warning logs to disk")
+	assert("Mem:" in logs, "Local QA logger must record memory footprint")
+	assert(FileAccess.file_exists(CRASH_LOGGER_SCRIPT.LOG_FILE), "Local log file must exist on user storage")
+
+	print("  [PASS] Offline QA Crash Logger & Diagnostics Scenario")
+	return true
+
 
 

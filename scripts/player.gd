@@ -158,6 +158,9 @@ func try_dash() -> void:
 	dash_cooldown = DASH_COOLDOWN * cd_mult
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("dash", 0.05, -2.0)
+	var sm: Node = get_node_or_null("/root/Settings") if is_inside_tree() else null
+	if sm and sm.has_method("trigger_haptic"):
+		sm.trigger_haptic(35)
 	dashed.emit()
 
 
@@ -175,6 +178,9 @@ func take_damage(amount: int) -> void:
 	if is_inside_tree():
 		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 			get_node("/root/AudioSynth").play("player_hurt", 0.05, 0.0)
+		var sm_hurt: Node = get_node_or_null("/root/Settings")
+		if sm_hurt and sm_hurt.has_method("trigger_haptic"):
+			sm_hurt.trigger_haptic(75)
 	damaged.emit(amount)
 	health_changed.emit(health, max_health)
 	var rs = get_node_or_null("/root/RunState") if is_inside_tree() else null

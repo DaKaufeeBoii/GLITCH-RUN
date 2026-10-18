@@ -30,19 +30,21 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and (event.keycode == KEY_ESCAPE or event.keycode == KEY_P)):
-		if confirm_panel and confirm_panel.visible:
-			confirm_panel.visible = false
+	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and (event.keycode == KEY_ESCAPE or event.keycode == KEY_P or event.keycode == KEY_BACK)):
+		_handle_back_request()
+		if is_inside_tree():
 			get_viewport().set_input_as_handled()
-		elif settings_panel and settings_panel.visible:
-			settings_panel.visible = false
-			get_viewport().set_input_as_handled()
-		elif how_to_play_panel and how_to_play_panel.visible:
-			how_to_play_panel.visible = false
-			get_viewport().set_input_as_handled()
-		else:
-			close_pause()
-			get_viewport().set_input_as_handled()
+
+
+func _handle_back_request() -> void:
+	if confirm_panel and confirm_panel.visible:
+		confirm_panel.visible = false
+	elif settings_panel and settings_panel.visible:
+		settings_panel.visible = false
+	elif how_to_play_panel and how_to_play_panel.visible:
+		how_to_play_panel.visible = false
+	else:
+		close_pause()
 
 
 func _build_ui() -> void:

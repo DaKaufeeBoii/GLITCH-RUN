@@ -39,20 +39,27 @@ func _sync_difficulty_from_state() -> void:
 			difficulty_index = 0
 
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		_handle_back_request()
+
+
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE):
-		if settings_panel and settings_panel.visible:
-			settings_panel.visible = false
+	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and (event.keycode == KEY_ESCAPE or event.keycode == KEY_BACK)):
+		_handle_back_request()
+		if is_inside_tree():
 			get_viewport().set_input_as_handled()
-		elif how_to_play_panel and how_to_play_panel.visible:
-			how_to_play_panel.visible = false
-			get_viewport().set_input_as_handled()
-		elif archive_panel and archive_panel.visible:
-			archive_panel.visible = false
-			get_viewport().set_input_as_handled()
-		else:
-			_on_quit_pressed()
-			get_viewport().set_input_as_handled()
+
+
+func _handle_back_request() -> void:
+	if settings_panel and settings_panel.visible:
+		settings_panel.visible = false
+	elif how_to_play_panel and how_to_play_panel.visible:
+		how_to_play_panel.visible = false
+	elif archive_panel and archive_panel.visible:
+		archive_panel.visible = false
+	else:
+		_on_quit_pressed()
 
 
 func _build_ui() -> void:
