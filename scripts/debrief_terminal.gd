@@ -171,10 +171,12 @@ func setup_debrief(
 	if rs:
 		var mins := int(rs.run_time / 60.0)
 		var secs := int(rs.run_time) % 60
-		stats_label.text = "SEED: #%d  •  SECTORS: %d/%d  •  PURGED: %d  •  TIME: %02d:%02d  •  UPGRADES: %d" % [
+		var cur_depth: int = rs.progression.run_depth if rs.progression else (rs.current_room_index + 1)
+		var cur_sec: int = rs.progression.sector_index if rs.progression else rs.current_sector
+		stats_label.text = "SEED: #%d  •  DEPTH: %d (SEC %d)  •  PURGED: %d  •  TIME: %02d:%02d  •  UPGRADES: %d" % [
 			seed_to_display,
-			rs.current_room_index + (1 if won else 0),
-			rs.TOTAL_ROOMS,
+			cur_depth,
+			cur_sec,
 			rs.score,
 			mins,
 			secs,

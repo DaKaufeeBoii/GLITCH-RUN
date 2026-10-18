@@ -71,6 +71,10 @@ var boss_label: Label
 var upgrade_container: Control
 var upgrade_cards_box: HBoxContainer
 
+var doors_unlocked := false
+var route_ui_container: PanelContainer
+var route_buttons_box: HBoxContainer
+
 var pause_menu: Control
 var debrief_terminal: Control
 
@@ -113,7 +117,7 @@ func _ready() -> void:
 	dungeon_generator = DUNGEON_GEN_SCRIPT.new()
 	encounter_director = ENCOUNTER_DIR_SCRIPT.new()
 
-	if OS.is_debug_build():
+	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
 		DIRECTOR_TESTS_SCRIPT.run_all_tests()
 
 	if not Engine.has_singleton("RunState") and get_node_or_null("/root/RunState") == null:
@@ -128,7 +132,7 @@ func _ready() -> void:
 	dungeon_layout = dungeon_generator.generate_dungeon(rs.current_seed, rs.TOTAL_ROOMS)
 	rs.dungeon_layout_summary.clear()
 	for r in dungeon_layout.rooms:
-		rs.dungeon_layout_summary.append(r.to_dict())
+		rs.record_room_summary(r.to_dict())
 
 	# Initialize Camera2D for trauma screen shake
 	camera = Camera2D.new()
@@ -224,7 +228,7 @@ func _process(delta: float) -> void:
 	if is_instance_valid(player):
 		_update_hud_hearts()
 		elims_label.text = "ELIMS  %02d" % rs.score
-		sector_label.text = "SECTOR  %d / %d" % [rs.current_room_index + 1, rs.TOTAL_ROOMS]
+		sector_label.text = "SEC %d  •  ROOM %d/%d" % [rs.current_sector, rs.current_room_index + 1, rs.TOTAL_ROOMS]
 
 	# Update Boss Bar if in Boss room
 	if boss_active and is_instance_valid(boss_ref):
@@ -232,6 +236,13 @@ func _process(delta: float) -> void:
 		boss_bar_fill.size.x = 340.0 * pct
 	elif boss_active and not is_instance_valid(boss_ref):
 		boss_bar_bg.visible = false
+
+	# Check Player Proximity to Unlocked Exit Doors
+	if doors_unlocked and not run_over and is_instance_valid(player) and current_room_data:
+		for door in current_room_data.exit_doors:
+			if player.position.distance_to(door.pos) < 55.0:
+				_enter_door(door)
+				break
 
 	# Redraw arena for animated obstacle lights and effects
 	queue_redraw()
@@ -302,6 +313,49 @@ func _draw() -> void:
 		var blink_r := int(ticks / 550.0) % 2 == 0
 		draw_circle(r.position + Vector2(6, 6), 2.0, Color("22c55e") if blink_g else Color("14532d"))
 		draw_circle(r.position + Vector2(13, 6), 2.0, Color("ef4444") if blink_r else Color("7f1d1d"))
+
+	# 4. Exit Doors & Holographic Route Signs
+	if current_room_data and not current_room_data.exit_doors.is_empty():
+		for door in current_room_data.exit_doors:
+			var d_pos: Vector2 = door.pos
+			var door_rect := Rect2(d_pos.x - 14.0, d_pos.y - 36.0, 28.0, 72.0)
+			var ttype: String = door.get("target_type", "COMBAT")
+
+			if not doors_unlocked:
+				# Locked laser barrier with diagonal hazard warning stripes
+				draw_rect(door_rect, Color(0.12, 0.04, 0.04, 0.85), true)
+				draw_rect(door_rect, Color("ef4444"), false, 2.0)
+				draw_line(door_rect.position, door_rect.end, Color(0.9, 0.2, 0.2, 0.6), 1.5)
+				draw_line(Vector2(door_rect.end.x, door_rect.position.y), Vector2(door_rect.position.x, door_rect.end.y), Color(0.9, 0.2, 0.2, 0.6), 1.5)
+				draw_circle(d_pos, 3.5, Color("ef4444"))
+			else:
+				# Unlocked pulsating cyber portal with route color cues
+				var pulse := 0.75 + 0.25 * sin(float(ticks) * 0.006)
+				var d_col := Color("38bdf8")
+				if ttype == "RECOVERY":
+					d_col = Color("22c55e")
+				elif ttype == "ELITE":
+					d_col = Color("f59e0b")
+				elif ttype == "BOSS" or ttype == "NEXT_SECTOR":
+					d_col = Color("ec4899")
+
+				draw_rect(door_rect, Color(d_col.r * 0.15, d_col.g * 0.15, d_col.b * 0.15, 0.9), true)
+				draw_rect(door_rect, Color(d_col.r, d_col.g, d_col.b, pulse), false, 2.5)
+				draw_circle(d_pos, 10.0 * pulse, Color(d_col.r, d_col.g, d_col.b, 0.4 * pulse))
+				draw_circle(d_pos, 4.0, Color("ffffff"))
+
+				# Forward directional chevron
+				draw_line(Vector2(d_pos.x - 6, d_pos.y - 10), Vector2(d_pos.x + 4, d_pos.y), Color(d_col.r, d_col.g, d_col.b, pulse), 2.0)
+				draw_line(Vector2(d_pos.x + 4, d_pos.y), Vector2(d_pos.x - 6, d_pos.y + 10), Color(d_col.r, d_col.g, d_col.b, pulse), 2.0)
+
+				# Holographic route badge on floor to left of door
+				var tag_rect := Rect2(d_pos.x - 170.0, d_pos.y - 12.0, 150.0, 24.0)
+				draw_rect(tag_rect, Color(0.02, 0.03, 0.06, 0.85), true)
+				draw_rect(tag_rect, Color(d_col.r, d_col.g, d_col.b, 0.7), false, 1.0)
+				var font := ThemeDB.fallback_font
+				if font:
+					var lbl_text: String = door.get("label", "FORWARD")
+					draw_string(font, tag_rect.position + Vector2(6, 16), lbl_text, HORIZONTAL_ALIGNMENT_LEFT, 140, 10, Color(d_col.r, d_col.g, d_col.b, 1.0))
 
 
 func _create_walls() -> void:
@@ -393,6 +447,9 @@ func _on_player_shot_hit(_enemy: Node2D) -> void:
 
 func _load_room(index: int) -> void:
 	room_cleared = false
+	doors_unlocked = false
+	if is_instance_valid(route_ui_container):
+		route_ui_container.visible = false
 	boss_active = false
 	boss_ref = null
 	boss_bar_bg.visible = false
@@ -411,13 +468,25 @@ func _load_room(index: int) -> void:
 	active_enemies.clear()
 
 	var rs_node = get_node_or_null("/root/RunState")
+	var sec_seed: int = rs_node.progression.get_current_sector_seed() if (rs_node and rs_node.progression) else (rs_node.current_seed if rs_node else 1337)
+	var room_count: int = rs_node.progression.rooms_per_sector if (rs_node and rs_node.progression) else 5
+
 	if not dungeon_layout or dungeon_layout.rooms.is_empty():
-		var run_seed: int = rs_node.current_seed if rs_node else 1337
-		dungeon_layout = dungeon_generator.generate_dungeon(run_seed, rs_node.TOTAL_ROOMS if rs_node else 6)
+		dungeon_layout = dungeon_generator.generate_dungeon(sec_seed, room_count)
+		if rs_node:
+			rs_node.dungeon_layout_summary.clear()
+			for r in dungeon_layout.rooms:
+				rs_node.record_room_summary(r.to_dict())
 
 	current_room_data = dungeon_layout.get_room(index)
 	if not current_room_data:
-		current_room_data = dungeon_generator._build_fallback_room(index, "BOSS" if (rs_node and index >= rs_node.TOTAL_ROOMS - 1) else "COMBAT")
+		var is_boss: bool = rs_node.progression.is_boss_chamber() if (rs_node and rs_node.progression) else false
+		current_room_data = dungeon_generator._build_fallback_room(index, "BOSS" if is_boss else "COMBAT")
+
+	if current_room_data.exit_doors.is_empty():
+		var door_pos := Vector2(ROOM_RECT.end.x - 60.0, ROOM_RECT.get_center().y)
+		current_room_data.exit_doors.append({ "pos": door_pos, "target_room": index + 1, "target_type": "COMBAT", "label": "FORWARD CORRIDOR" })
+		current_room_data.exit_door = door_pos
 
 	# Position player at designated reachable spawn
 	if is_instance_valid(player):
@@ -427,7 +496,20 @@ func _load_room(index: int) -> void:
 	for r in current_room_data.obstacles:
 		_add_obstacle(r.get_center(), r.size)
 
-	# Prepare encounter via EncounterDirector
+	# Calculate wave structure for this chamber
+	if rs_node and rs_node.progression:
+		rs_node.progression.calculate_waves_for_current_room(current_room_data.room_type)
+		rs_node.current_wave = rs_node.progression.current_wave
+		rs_node.waves_in_room = rs_node.progression.waves_in_room
+
+	damage_taken_this_sector = 0
+	_spawn_wave_enemies(1)
+	queue_redraw()
+	_update_debug_overlay()
+
+
+func _spawn_wave_enemies(wave_num: int) -> void:
+	var rs_node = get_node_or_null("/root/RunState")
 	var profile: Dictionary = tracker.get_profile() if tracker else {}
 	var p_hp: int = player.health if is_instance_valid(player) else 5
 	var p_max: int = player.max_health if is_instance_valid(player) else 5
@@ -440,17 +522,24 @@ func _load_room(index: int) -> void:
 	)
 
 	current_sector_tactic = encounter.tactic
-	_show_director_banner(encounter.banner_title, encounter.banner_sub)
+	if wave_num == 1:
+		_show_director_banner(encounter.banner_title, encounter.banner_sub)
+	else:
+		var total_w: int = rs_node.waves_in_room if rs_node else 3
+		_show_director_banner("WAVE %d / %d // REINFORCEMENTS" % [wave_num, total_w], "Hostile wave engaged.")
 
-	if rs_node:
+	if rs_node and wave_num == 1:
 		var active_muts: Array[String] = encounter_director.evolution_manager.get_active_mutations_summary()
 		var mut_desc := ", ".join(active_muts) if not active_muts.is_empty() else "Standard swarm baseline"
-		rs_node.record_tactic(index + 1, encounter.tactic, encounter.banner_sub, mut_desc)
+		rs_node.record_tactic(rs_node.current_room_index + 1, encounter.tactic, encounter.banner_sub, mut_desc)
 
-	damage_taken_this_sector = 0
+	# Spawn budgeted enemies for this wave
+	var spawn_budget: int = rs_node.progression.calculate_spawn_budget(wave_num) if (rs_node and rs_node.progression) else encounter.spawn_list.size()
+	var spawns_to_create: Array = encounter.spawn_list.slice(0, mini(spawn_budget, encounter.spawn_list.size()))
+	if spawns_to_create.is_empty() and not encounter.spawn_list.is_empty():
+		spawns_to_create = encounter.spawn_list
 
-	# Spawn enemies from procedural encounter spawn list
-	for espawn in encounter.spawn_list:
+	for espawn in spawns_to_create:
 		var stype: String = espawn.type
 		var pos: Vector2 = espawn.pos
 		var flank: float = espawn.flank_angle
@@ -477,9 +566,6 @@ func _load_room(index: int) -> void:
 			if genome and enemy:
 				genome.apply_to_enemy(enemy)
 				encounter_director.evolution_manager.register_spawned_combatant(genome)
-
-	queue_redraw()
-	_update_debug_overlay()
 
 
 func _spawn_boss(pos: Vector2) -> void:
@@ -563,8 +649,27 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 		rs.on_enemy_eliminated()
 
 	if active_enemies.is_empty() and not room_cleared:
-		room_cleared = true
-		_on_room_cleared()
+		var rs = get_node_or_null("/root/RunState")
+		if rs and rs.progression and rs.progression.advance_wave():
+			rs.current_wave = rs.progression.current_wave
+			_trigger_next_wave()
+		else:
+			room_cleared = true
+			_on_room_cleared()
+
+
+func _trigger_next_wave() -> void:
+	var rs = get_node_or_null("/root/RunState")
+	if not rs or not rs.progression:
+		return
+	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+		get_node("/root/AudioSynth").play("mutation_alert", 0.05, 0.0)
+	_show_director_banner("WAVE %d / %d // ENGAGING" % [rs.current_wave, rs.waves_in_room], "Hostile host detected on grid.")
+	# Brief inter-wave breathing window
+	await get_tree().create_timer(1.2).timeout
+	if run_over or not is_inside_tree():
+		return
+	_spawn_wave_enemies(rs.current_wave)
 
 
 func _on_room_cleared() -> void:
@@ -582,12 +687,9 @@ func _on_room_cleared() -> void:
 			tracker.get_profile(),
 			current_sector_tactic
 		)
-		rs.evolution_log = encounter_director.evolution_manager.evolution_history.duplicate(true)
+		rs.set_evolution_log(encounter_director.evolution_manager.evolution_history)
 
-	if rs.current_room_index >= rs.TOTAL_ROOMS - 1:
-		_show_end_screen(true)
-	else:
-		_show_upgrade_draft()
+	_show_upgrade_draft()
 
 
 func _show_upgrade_draft() -> void:
@@ -620,8 +722,86 @@ func _on_upgrade_selected(upgrade_id: String) -> void:
 		touch_controls.enabled = true
 	var rs = get_node("/root/RunState")
 	rs.apply_upgrade(upgrade_id)
-	rs.advance_room()
-	_load_room(rs.current_room_index)
+
+	# Unlock exit doors and display route choices for touch and walk navigation
+	_unlock_exit_doors()
+
+
+func _unlock_exit_doors() -> void:
+	doors_unlocked = true
+	queue_redraw()
+	_show_director_banner("CHAMBER SECURED // ROUTE DOORS UNLOCKED", "Proceed to forward gate to continue expedition.")
+	_update_route_ui()
+
+
+func _update_route_ui() -> void:
+	if not is_instance_valid(route_ui_container) or not is_instance_valid(route_buttons_box):
+		return
+	for child in route_buttons_box.get_children():
+		child.queue_free()
+
+	if not current_room_data or current_room_data.exit_doors.is_empty():
+		return
+
+	for door in current_room_data.exit_doors:
+		var btn := Button.new()
+		btn.custom_minimum_size = Vector2(210, 44)
+		var lbl_text: String = door.get("label", "FORWARD")
+		btn.text = "➔ %s" % lbl_text
+		var ttype: String = door.get("target_type", "COMBAT")
+		var btn_style := StyleBoxFlat.new()
+		btn_style.bg_color = Color(0.04, 0.08, 0.16, 0.92)
+		var border_col := Color("38bdf8")
+		if ttype == "RECOVERY":
+			border_col = Color("22c55e")
+		elif ttype == "ELITE":
+			border_col = Color("f59e0b")
+		elif ttype == "BOSS" or ttype == "NEXT_SECTOR":
+			border_col = Color("ec4899")
+		btn_style.border_color = border_col
+		btn_style.set_border_width_all(2)
+		btn_style.set_corner_radius_all(4)
+		btn.add_theme_stylebox_override("normal", btn_style)
+		btn.add_theme_stylebox_override("hover", btn_style)
+		btn.add_theme_stylebox_override("pressed", btn_style)
+		btn.add_theme_color_override("font_color", border_col)
+		btn.add_theme_font_size_override("font_size", 12)
+		btn.pressed.connect(_enter_door.bind(door))
+		route_buttons_box.add_child(btn)
+
+	route_ui_container.visible = true
+
+
+func _enter_door(door: Dictionary) -> void:
+	if not doors_unlocked or run_over:
+		return
+	doors_unlocked = false
+	if is_instance_valid(route_ui_container):
+		route_ui_container.visible = false
+
+	var rs = get_node_or_null("/root/RunState")
+	if not rs:
+		return
+
+	var ttype: String = door.get("target_type", "COMBAT")
+	if ttype == "RECOVERY":
+		rs.heal(2)
+		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+			get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
+		_show_director_banner("RECOVERY NODE REACHED // +2 HP RESTORED", "Nanite biocircuits patched.")
+	elif ttype == "ELITE":
+		trigger_glitch(0.8)
+		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+			get_node("/root/AudioSynth").play("boss_alarm", 0.0, 0.0)
+		_show_director_banner("WARNING: ELITE CHAMBER // ENGAGING HIGH THREAT", "Hostile signatures intensified.")
+
+	var target_room: int = door.get("target_room", rs.current_room_index + 1)
+	var nav: Dictionary = rs.advance_room(target_room)
+	if nav.get("is_new_sector", false):
+		dungeon_layout = null
+		_load_room(0)
+	else:
+		_load_room(rs.current_room_index)
 
 
 func _on_player_died() -> void:
@@ -639,7 +819,7 @@ func _on_player_died() -> void:
 			tracker.get_profile(),
 			current_sector_tactic
 		)
-		rs.evolution_log = encounter_director.evolution_manager.evolution_history.duplicate(true)
+		rs.set_evolution_log(encounter_director.evolution_manager.evolution_history)
 
 	_show_end_screen(false)
 
@@ -660,7 +840,7 @@ func _restart_run() -> void:
 	get_tree().paused = false
 	var rs = get_node_or_null("/root/RunState")
 	if rs:
-		rs.start_new_run()
+		rs.current_seed = 0
 	get_tree().reload_current_scene()
 
 
@@ -703,10 +883,10 @@ func _create_ui() -> void:
 	elims_label.add_theme_font_size_override("font_size", 16)
 	top_bar.add_child(elims_label)
 
-	# Sector Badge (Top Right)
+	# Sector & Room Badge (Top Right)
 	sector_label = Label.new()
-	sector_label.position = Vector2(740, 16)
-	sector_label.text = "SECTOR  1 / 6"
+	sector_label.position = Vector2(720, 16)
+	sector_label.text = "SEC 1  •  ROOM 1/6"
 	sector_label.add_theme_color_override("font_color", Color("38bdf8"))
 	sector_label.add_theme_font_size_override("font_size", 16)
 	ui_layer.add_child(sector_label)
@@ -878,7 +1058,7 @@ func _create_ui() -> void:
 	draft_center.add_child(draft_vbox)
 
 	var draft_header := Label.new()
-	draft_header.text = "SECTOR SECURED // SELECT RECONFIGURATION"
+	draft_header.text = "CHAMBER SECURED // SELECT RECONFIGURATION"
 	draft_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	draft_header.add_theme_color_override("font_color", Color("38bdf8"))
 	draft_header.add_theme_font_size_override("font_size", 22)
@@ -895,6 +1075,26 @@ func _create_ui() -> void:
 	upgrade_cards_box.add_theme_constant_override("separation", 24)
 	upgrade_cards_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	draft_vbox.add_child(upgrade_cards_box)
+
+	# Tactical Route Selection Container (Touch-Friendly)
+	route_ui_container = PanelContainer.new()
+	route_ui_container.position = Vector2(230, 474)
+	route_ui_container.custom_minimum_size = Vector2(500, 52)
+	var route_style := StyleBoxFlat.new()
+	route_style.bg_color = Color(0.02, 0.035, 0.07, 0.92)
+	route_style.border_color = Color("38bdf8")
+	route_style.set_border_width_all(1)
+	route_style.set_corner_radius_all(6)
+	route_style.content_margin_left = 12
+	route_style.content_margin_right = 12
+	route_ui_container.add_theme_stylebox_override("panel", route_style)
+	route_ui_container.visible = false
+	ui_layer.add_child(route_ui_container)
+
+	route_buttons_box = HBoxContainer.new()
+	route_buttons_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	route_buttons_box.add_theme_constant_override("separation", 16)
+	route_ui_container.add_child(route_buttons_box)
 
 	# In-Game Tactical Pause Menu
 	pause_menu = PAUSE_MENU_SCRIPT.new()
@@ -936,7 +1136,7 @@ func _restart_run_with_seed(seed_val: int) -> void:
 	get_tree().paused = false
 	var rs = get_node_or_null("/root/RunState")
 	if rs:
-		rs.start_new_run(seed_val)
+		rs.current_seed = seed_val
 	get_tree().reload_current_scene()
 
 
@@ -966,7 +1166,7 @@ PLAYER COMBAT PROFILE:
   • Movement Consistency: %.2f
 
 ACTIVE ENEMY GENOME MUTATIONS:
-    • %s""" % [
+	• %s""" % [
 		cur_seed,
 		sec_idx,
 		rs.TOTAL_ROOMS if rs else 6,

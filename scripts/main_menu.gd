@@ -11,7 +11,7 @@ var records_label: Label
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	if OS.is_debug_build():
+	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
 		DIRECTOR_TESTS_SCRIPT.run_all_tests()
 	_build_ui()
 

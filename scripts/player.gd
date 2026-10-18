@@ -172,12 +172,12 @@ func take_damage(amount: int) -> void:
 	if dead or damage_cooldown > 0.0 or dash_time > 0.0:
 		return
 	health = maxi(0, health - amount)
-	damage_cooldown = 0.75
-	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
-		get_node("/root/AudioSynth").play("player_hurt", 0.05, 0.0)
+	if is_inside_tree():
+		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+			get_node("/root/AudioSynth").play("player_hurt", 0.05, 0.0)
 	damaged.emit(amount)
 	health_changed.emit(health, max_health)
-	var rs = get_node_or_null("/root/RunState")
+	var rs = get_node_or_null("/root/RunState") if is_inside_tree() else null
 	if rs:
 		rs.current_health = health
 	queue_redraw()

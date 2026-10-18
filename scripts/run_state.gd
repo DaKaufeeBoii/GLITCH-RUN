@@ -6,14 +6,21 @@ signal room_advanced(new_room_index: int, total_rooms: int)
 signal upgrade_applied(upgrade_id: String)
 signal run_completed(won: bool)
 
-const TOTAL_ROOMS := 6
+const TOTAL_ROOMS := 5
+const RUN_PROGRESSION_SCRIPT := preload("res://scripts/run_progression.gd")
+
+var progression: RefCounted
 
 var current_health := 5
 var max_health := 5
+var current_sector := 1
 var current_room_index := 0
+var current_wave := 1
+var waves_in_room := 1
 var score := 0
 var run_active := false
 var run_won := false
+var is_finalized := false
 var run_time := 0.0
 
 # Active stat multipliers and perks
@@ -28,9 +35,13 @@ var active_upgrade_ids: Array[String] = []
 
 # Persistent Run Statistics & Director Debrief History
 const SAVE_FILE_PATH := "user://save_data.json"
+const MAX_DUNGEON_HISTORY: int = 15
+const MAX_LOG_HISTORY: int = 20
+var best_depth := 1
 var best_sector := 1
 var best_score := 0
 var best_time := 0.0
+var difficulty := "NORMAL"
 var tactics_log: Array[Dictionary] = []
 var evolution_log: Array[Dictionary] = []
 var dungeon_layout_summary: Array[Dictionary] = []
@@ -38,6 +49,7 @@ var current_seed := 1337
 
 
 func _ready() -> void:
+	progression = RUN_PROGRESSION_SCRIPT.new(current_seed, difficulty)
 	load_persistent_data()
 
 
@@ -56,9 +68,16 @@ func load_persistent_data() -> void:
 		return
 
 	var d: Dictionary = test_json.data
-	best_sector = clampi(int(d.get("best_sector", 1)), 1, TOTAL_ROOMS)
+	var ver: int = int(d.get("version", 1))
+	if ver == 1:
+		best_depth = maxi(1, int(d.get("best_sector", 1)))
+		best_sector = maxi(1, int(ceilf(float(best_depth) / 5.0)))
+	else:
+		best_depth = maxi(1, int(d.get("best_depth", 1)))
+		best_sector = maxi(1, int(d.get("best_sector", 1)))
 	best_score = maxi(0, int(d.get("best_score", 0)))
 	best_time = maxf(0.0, float(d.get("best_time", 0.0)))
+	difficulty = d.get("difficulty", "NORMAL")
 
 
 func save_persistent_data() -> void:
@@ -66,10 +85,12 @@ func save_persistent_data() -> void:
 	if not file:
 		return
 	var d := {
-		"version": 1,
+		"version": 2,
+		"best_depth": best_depth,
 		"best_sector": best_sector,
 		"best_score": best_score,
-		"best_time": best_time
+		"best_time": best_time,
+		"difficulty": difficulty
 	}
 	file.store_string(JSON.stringify(d, "\t"))
 	file.close()
@@ -123,11 +144,15 @@ const UPGRADE_CATALOG: Array[Dictionary] = [
 func start_new_run(p_seed: int = 0) -> void:
 	max_health = 5
 	current_health = max_health
+	current_sector = 1
 	current_room_index = 0
+	current_wave = 1
+	waves_in_room = 1
 	score = 0
 	run_time = 0.0
 	run_active = true
 	run_won = false
+	is_finalized = false
 
 	if p_seed != 0:
 		current_seed = p_seed
@@ -135,6 +160,16 @@ func start_new_run(p_seed: int = 0) -> void:
 		current_seed = int(Time.get_ticks_usec() ^ randi()) & 0x7FFFFFFF
 		if current_seed == 0:
 			current_seed = 1337
+
+	if not progression:
+		progression = RUN_PROGRESSION_SCRIPT.new(current_seed, difficulty)
+	progression.base_run_seed = current_seed
+	progression.difficulty = difficulty
+	progression.reset()
+	current_sector = progression.sector_index
+	current_room_index = progression.room_index
+	current_wave = progression.current_wave
+	waves_in_room = progression.waves_in_room
 
 	move_speed_mult = 1.0
 	fire_interval_mult = 1.0
@@ -157,12 +192,36 @@ func record_tactic(sector: int, tactic_name: String, trigger_reason: String, mut
 		"reason": trigger_reason,
 		"mutations": mutations_desc
 	})
+	if tactics_log.size() > MAX_LOG_HISTORY:
+		tactics_log = tactics_log.slice(tactics_log.size() - MAX_LOG_HISTORY)
+
+
+func set_evolution_log(history: Array) -> void:
+	if history.size() > MAX_LOG_HISTORY:
+		evolution_log.assign(history.slice(history.size() - MAX_LOG_HISTORY))
+	else:
+		evolution_log.assign(history.duplicate(true))
+
+
+func record_room_summary(room_dict: Dictionary) -> void:
+	dungeon_layout_summary.append(room_dict)
+	if dungeon_layout_summary.size() > MAX_DUNGEON_HISTORY:
+		dungeon_layout_summary = dungeon_layout_summary.slice(dungeon_layout_summary.size() - MAX_DUNGEON_HISTORY)
 
 
 func finalize_run_stats(won: bool) -> void:
-	var sector_reached := current_room_index + (1 if won else 0)
-	if sector_reached > best_sector:
-		best_sector = sector_reached
+	if is_finalized:
+		return
+	is_finalized = true
+	run_active = false
+	run_won = won
+
+	var cur_depth: int = progression.run_depth if progression else (current_room_index + 1)
+	if cur_depth > best_depth:
+		best_depth = cur_depth
+	var cur_sec: int = progression.sector_index if progression else 1
+	if cur_sec > best_sector:
+		best_sector = cur_sec
 	if score > best_score:
 		best_score = score
 	if won and (best_time == 0.0 or run_time < best_time):
@@ -231,12 +290,17 @@ func take_damage(amount: int) -> void:
 		run_completed.emit(false)
 
 
-func advance_room() -> bool:
-	current_room_index += 1
-	if current_room_index >= TOTAL_ROOMS:
-		run_active = false
-		run_won = true
-		run_completed.emit(true)
-		return false
-	room_advanced.emit(current_room_index, TOTAL_ROOMS)
-	return true
+func advance_room(target_room: int = -1) -> Dictionary:
+	var result: Dictionary = progression.advance_room(target_room) if progression else {
+		"is_new_sector": false,
+		"sector": 1,
+		"room": (target_room if target_room >= 0 else current_room_index + 1),
+		"depth": current_room_index + 1,
+		"sector_seed": current_seed
+	}
+	current_room_index = progression.room_index if progression else (target_room if target_room >= 0 else current_room_index + 1)
+	current_sector = progression.sector_index if progression else 1
+	current_wave = 1
+	waves_in_room = progression.waves_in_room if progression else 1
+	room_advanced.emit(current_room_index, progression.rooms_per_sector if progression else TOTAL_ROOMS)
+	return result

@@ -17,6 +17,7 @@ var current_phase := AttackPhase.IDLE
 var phase_timer := 2.0
 var orbital_angle := 0.0
 var dash_target_dir := Vector2.ZERO
+var dash_hit_player := false
 var damage_flash := 0.0
 
 
@@ -45,7 +46,8 @@ func _physics_process(delta: float) -> void:
 				velocity = to_target.normalized() * 55.0
 			else:
 				velocity = Vector2.ZERO
-			move_and_slide()
+			if is_inside_tree():
+				move_and_slide()
 
 			if phase_timer <= 0.0:
 				var pick := randi() % 2
@@ -56,6 +58,7 @@ func _physics_process(delta: float) -> void:
 					current_phase = AttackPhase.CHARGING_DASH
 					phase_timer = 0.75
 					dash_target_dir = to_target.normalized()
+					dash_hit_player = false
 
 		AttackPhase.CHARGING_BURST:
 			velocity = Vector2.ZERO
@@ -66,16 +69,21 @@ func _physics_process(delta: float) -> void:
 
 		AttackPhase.CHARGING_DASH:
 			velocity = Vector2.ZERO
-			dash_target_dir = to_target.normalized()
+			# Lock telegraph direction during the final 0.35s to guarantee readable dodge window
+			if phase_timer > 0.35:
+				dash_target_dir = to_target.normalized()
 			if phase_timer <= 0.0:
 				current_phase = AttackPhase.DASHING
 				phase_timer = 0.45
+				dash_hit_player = false
 
 		AttackPhase.DASHING:
 			velocity = dash_target_dir * 420.0
-			move_and_slide()
-			if to_target.length() < 46.0 and target.has_method("take_damage"):
+			if is_inside_tree():
+				move_and_slide()
+			if not dash_hit_player and to_target.length() < 46.0 and target.has_method("take_damage"):
 				target.take_damage(2)
+				dash_hit_player = true
 			if phase_timer <= 0.0:
 				current_phase = AttackPhase.RECOVER
 				phase_timer = 0.9

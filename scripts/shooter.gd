@@ -50,18 +50,18 @@ func _physics_process(delta: float) -> void:
 		var bullet_speed := 390.0
 		var time_to_hit := dist / bullet_speed
 		aim_pos += target.velocity * time_to_hit * lead_prediction
-	var predicted_dir := (aim_pos - global_position).normalized()
-	aimed_direction = predicted_dir
 	rotation = to_target.angle()
 
 	if telegraph_time > 0.0:
 		telegraph_time -= delta
 		velocity = Vector2.ZERO
-		aimed_direction = predicted_dir
+		# Aim is locked during telegraph so player has a readable dodge window
 		queue_redraw()
 		if telegraph_time <= 0.0:
 			_fire_shot()
 	else:
+		var predicted_dir := (aim_pos - global_position).normalized()
+		aimed_direction = predicted_dir
 		fire_timer -= delta
 		if fire_timer <= 0.0 and dist < 450.0:
 			var timing_mult: float = float(genome.attack_timing_mult) if (genome and "attack_timing_mult" in genome) else 1.0

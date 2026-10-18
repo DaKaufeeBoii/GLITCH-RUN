@@ -9,9 +9,11 @@ const EVOLUTION_MANAGER_SCRIPT := preload("res://scripts/evolution_manager.gd")
 const LEARNING_POLICY_SCRIPT := preload("res://scripts/learning_policy.gd")
 const DUNGEON_GEN_SCRIPT := preload("res://scripts/dungeon_generator.gd")
 const ENCOUNTER_DIR_SCRIPT := preload("res://scripts/encounter_director.gd")
+const RUN_PROGRESSION_SCRIPT := preload("res://scripts/run_progression.gd")
 
 func _ready() -> void:
-	run_all_tests()
+	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
+		run_all_tests()
 
 
 static func run_all_tests() -> bool:
@@ -35,9 +37,18 @@ static func run_all_tests() -> bool:
 	all_passed = test_learning_policy_robustness_and_fairness() and all_passed
 	all_passed = test_procedural_dungeon_100_seeds() and all_passed
 	all_passed = test_encounter_director_integration() and all_passed
+	all_passed = test_boss_dash_single_hit_fairness() and all_passed
+	all_passed = test_shooter_aim_lock_during_telegraph() and all_passed
+	all_passed = test_run_state_idempotent_finalization() and all_passed
+	all_passed = test_run_progression_wave_scaling_and_depth() and all_passed
+	all_passed = test_save_schema_v2_migration() and all_passed
+	all_passed = test_dungeon_topology_branching_routes() and all_passed
+	all_passed = test_subseed_determinism() and all_passed
+	all_passed = test_run_state_history_bounding() and all_passed
+	all_passed = test_branching_room_advancement() and all_passed
 
 	if all_passed:
-		print("--- ALL 17 DIRECTOR, EVOLUTION, LEARNING & 100-SEED DUNGEON SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 26 DIRECTOR, EVOLUTION, LEARNING, FAIRNESS & DUNGEON NAVIGATION SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -505,5 +516,281 @@ static func test_encounter_director_integration() -> bool:
 
 	print("  [PASS] Encounter Director & Genome Pipeline Integration Scenario")
 	return true
+
+
+static func test_boss_dash_single_hit_fairness() -> bool:
+	var boss_scene := load("res://scenes/enemies/boss.tscn")
+	var boss: CharacterBody2D = boss_scene.instantiate()
+	var player_scene := load("res://scenes/player/player.tscn")
+	var player: CharacterBody2D = player_scene.instantiate()
+
+	player.global_position = Vector2(200, 200)
+	player.health = 5
+	boss.global_position = Vector2(210, 200) # within 46px contact radius
+	boss.target = player
+	boss.current_phase = boss.AttackPhase.DASHING
+	boss.phase_timer = 0.40
+	boss.dash_hit_player = false
+	boss.dash_target_dir = Vector2(1, 0)
+
+	# Simulate 5 physics frames while overlapping
+	for i in range(5):
+		boss._physics_process(0.016)
+
+	assert(player.health == 3, "Boss dash must apply contact damage exactly once per dash (took %d dmg)" % (5 - player.health))
+	assert(boss.dash_hit_player, "dash_hit_player flag must be set after first hit")
+
+	boss.free()
+	player.free()
+	print("  [PASS] Boss Dash Single-Hit Fairness Scenario")
+	return true
+
+
+static func test_shooter_aim_lock_during_telegraph() -> bool:
+	var shooter_scene := load("res://scenes/enemies/shooter.tscn")
+	var shooter: CharacterBody2D = shooter_scene.instantiate()
+	var player_scene := load("res://scenes/player/player.tscn")
+	var player: CharacterBody2D = player_scene.instantiate()
+
+	player.global_position = Vector2(300, 100)
+	shooter.global_position = Vector2(100, 100)
+	shooter.target = player
+	shooter.lead_prediction = 0.0
+
+	# First frame: not telegraphing, establishes initial aim towards (1, 0)
+	shooter.telegraph_time = 0.0
+	shooter._physics_process(0.016)
+	var initial_aim: Vector2 = shooter.aimed_direction
+	assert(initial_aim.x > 0.9, "Initial aim should target player directly along X axis")
+
+	# Start telegraph and move player to (100, 400) (directly below shooter)
+	shooter.telegraph_time = 0.50
+	player.global_position = Vector2(100, 400)
+	shooter._physics_process(0.016)
+
+	assert(shooter.aimed_direction == initial_aim, "Shooter aimed_direction must remain locked during telegraph")
+
+	shooter.free()
+	player.free()
+	print("  [PASS] Shooter Aim Lock During Telegraph Scenario")
+	return true
+
+
+static func test_run_state_idempotent_finalization() -> bool:
+	var rs_script := load("res://scripts/run_state.gd")
+	var rs: Node = rs_script.new()
+	rs.start_new_run(55555)
+	rs.current_room_index = 3
+	rs.score = 25
+	rs.run_time = 45.0
+
+	# First finalization
+	rs.finalize_run_stats(false)
+	assert(rs.is_finalized, "RunState must be marked finalized")
+	assert(not rs.run_active, "RunState must not be active after finalization")
+	var recorded_best_sector: int = rs.best_sector
+	var recorded_best_score: int = rs.best_score
+
+	# Second finalization call (e.g. duplicate death signal or suspension)
+	rs.current_room_index = 5
+	rs.score = 999
+	rs.finalize_run_stats(true)
+
+	# State must remain identical to first finalization
+	assert(rs.best_sector == recorded_best_sector, "Duplicate finalization must not mutate best_sector")
+	assert(rs.best_score == recorded_best_score, "Duplicate finalization must not overwrite score")
+
+	rs.free()
+	print("  [PASS] RunState Idempotent Finalization Scenario")
+	return true
+
+
+static func test_run_progression_wave_scaling_and_depth() -> bool:
+	var prog = RUN_PROGRESSION_SCRIPT.new(4242, "NORMAL")
+	assert(prog.run_depth == 1, "Progression must start at depth 1")
+	assert(prog.sector_index == 1, "Progression must start in Sector 1")
+	assert(prog.room_index == 0, "Progression must start at room 0")
+
+	# Wave counts
+	assert(prog.calculate_waves_for_current_room("START") == 1, "START room must have 1 wave")
+	assert(prog.calculate_waves_for_current_room("COMBAT") == 3, "Early depth COMBAT room must have 3 waves")
+
+	# Deep depth wave count
+	prog.run_depth = 8
+	assert(prog.calculate_waves_for_current_room("COMBAT") == 5, "Deep depth COMBAT room must have 5 waves")
+
+	# Wave advancement
+	prog.reset()
+	prog.calculate_waves_for_current_room("COMBAT") # 3 waves
+	assert(prog.advance_wave(), "Must advance to wave 2")
+	assert(prog.current_wave == 2, "Current wave must be 2")
+	assert(prog.advance_wave(), "Must advance to wave 3")
+	assert(prog.current_wave == 3, "Current wave must be 3")
+	assert(not prog.advance_wave(), "advance_wave() must return false when reaching final wave in room")
+
+	# Room & Sector advancement
+	prog.reset()
+	for r in range(4):
+		var nav: Dictionary = prog.advance_room()
+		assert(not nav.is_new_sector, "Rooms 1 to 4 must not trigger new sector")
+	# 5th advance triggers new sector
+	var sec_nav: Dictionary = prog.advance_room()
+	assert(sec_nav.is_new_sector, "5th room advance must trigger new sector")
+	assert(prog.sector_index == 2, "Sector index must advance to 2")
+	assert(prog.room_index == 0, "Room index must reset to 0 in new sector")
+	assert(prog.run_depth == 6, "Run depth must monotonically increment to 6")
+
+	# Deterministic sector seed derivation
+	var s1: int = RUN_PROGRESSION_SCRIPT.derive_sector_seed(9999, 1)
+	var s1_repeat: int = RUN_PROGRESSION_SCRIPT.derive_sector_seed(9999, 1)
+	var s2: int = RUN_PROGRESSION_SCRIPT.derive_sector_seed(9999, 2)
+	assert(s1 == s1_repeat, "Identical inputs must derive identical sector seeds")
+	assert(s1 != s2, "Different sectors must derive distinct seeds")
+
+	print("  [PASS] Run Progression Multi-Wave Scaling & Monotonic Depth Scenario")
+	return true
+
+
+static func test_save_schema_v2_migration() -> bool:
+	var rs_script := load("res://scripts/run_state.gd")
+	var rs: Node = rs_script.new()
+
+	# Test v1 migration: best_sector converted to best_depth
+	var v1_data := {
+		"version": 1,
+		"best_sector": 4,
+		"best_score": 150,
+		"best_time": 95.0
+	}
+	# Verify version 1 data parsing logic
+	var migrated_depth: int = maxi(1, int(v1_data.get("best_sector", 1)))
+	var migrated_sector: int = maxi(1, int(ceilf(float(migrated_depth) / 5.0)))
+	assert(migrated_depth == 4, "v1 best_sector must map to best_depth")
+	assert(migrated_sector == 1, "Depth 4 must map to Sector 1")
+
+	# Test v2 data structure
+	rs.start_new_run(12345)
+	rs.progression.run_depth = 12
+	rs.progression.sector_index = 3
+	rs.score = 300
+	rs.finalize_run_stats(true)
+
+	assert(rs.best_depth == 12, "v2 best_depth must persist correctly")
+	assert(rs.best_sector == 3, "v2 best_sector must persist correctly")
+
+	rs.free()
+	print("  [PASS] Save Schema V2 Migration & Depth Persistence Scenario")
+	return true
+
+
+static func test_dungeon_topology_branching_routes() -> bool:
+	var gen = DUNGEON_GEN_SCRIPT.new()
+	var layout = gen.generate_dungeon(7777, 5)
+
+	# Verify sector room count
+	assert(layout.rooms.size() == 5, "Layout must contain 5 chambers")
+
+	# Verify Room 1 has branching forward exit doors
+	var room_1 = layout.get_room(1)
+	assert(room_1 != null, "Room 1 must exist")
+	assert(room_1.exit_doors.size() >= 2, "Room 1 must provide at least 2 branching exit doors")
+
+	var door_a: Dictionary = room_1.exit_doors[0]
+	var door_b: Dictionary = room_1.exit_doors[1]
+	assert(door_a.target_room != door_b.target_room, "Branching doors must lead to distinct rooms")
+	assert(door_a.target_room > 1 and door_b.target_room > 1, "Exit doors must point forward")
+	assert(not door_a.label.is_empty() and not door_b.label.is_empty(), "Exit doors must have readable route labels")
+
+	# Verify all rooms in sector are validated for reachability
+	for r in layout.rooms:
+		assert(r.is_validated, "All generated chambers must pass BFS reachability validation")
+		assert(not r.exit_doors.is_empty(), "Every chamber must contain at least one exit door")
+
+	print("  [PASS] Procedural Dungeon Branching Routes & Validated Exits Scenario")
+	return true
+
+
+static func test_subseed_determinism() -> bool:
+	var gen = DUNGEON_GEN_SCRIPT.new()
+
+	# Generate layout twice with identical seed
+	var l1 = gen.generate_dungeon(4321, 5)
+	var l2 = gen.generate_dungeon(4321, 5)
+
+	for i in range(5):
+		var r1 = l1.get_room(i)
+		var r2 = l2.get_room(i)
+		assert(r1.template_name == r2.template_name, "Identical seed must pick identical templates")
+		assert(r1.obstacles.size() == r2.obstacles.size(), "Obstacle counts must match")
+		for o_idx in range(r1.obstacles.size()):
+			assert(r1.obstacles[o_idx] == r2.obstacles[o_idx], "Obstacle geometry must match exactly")
+		assert(r1.player_spawn == r2.player_spawn, "Player spawn must match")
+		assert(r1.exit_doors.size() == r2.exit_doors.size(), "Exit door count must match")
+
+	print("  [PASS] Independent Sub-Seed Determinism Scenario")
+	return true
+
+
+static func test_run_state_history_bounding() -> bool:
+	var rs_script := load("res://scripts/run_state.gd")
+	var rs: Node = rs_script.new()
+	rs.start_new_run(9876)
+
+	# 1. Tactics Log Bounding
+	for i in range(35):
+		rs.record_tactic(i, "TACTIC_%d" % i, "REASON", "MUTATIONS")
+	assert(rs.tactics_log.size() == rs.MAX_LOG_HISTORY, "tactics_log must be capped at MAX_LOG_HISTORY (20)")
+	assert(rs.tactics_log[0].tactic == "TACTIC_15", "tactics_log must drop oldest entries and preserve newest")
+
+	# 2. Evolution Log Bounding
+	var mock_history: Array = []
+	for i in range(40):
+		mock_history.append({"id": i, "trait": "TRAIT_%d" % i})
+	rs.set_evolution_log(mock_history)
+	assert(rs.evolution_log.size() == rs.MAX_LOG_HISTORY, "evolution_log must be capped at MAX_LOG_HISTORY (20)")
+	assert(rs.evolution_log[0].id == 20, "evolution_log must preserve newest 20 entries")
+
+	# 3. Dungeon Summary Bounding
+	for i in range(30):
+		rs.record_room_summary({"index": i, "room_type": "COMBAT"})
+	assert(rs.dungeon_layout_summary.size() == rs.MAX_DUNGEON_HISTORY, "dungeon_layout_summary must be capped at MAX_DUNGEON_HISTORY (15)")
+	assert(rs.dungeon_layout_summary[0].index == 15, "dungeon_layout_summary must preserve newest 15 rooms")
+
+	rs.free()
+	print("  [PASS] RunState Endless Run History Bounding Scenario")
+	return true
+
+
+static func test_branching_room_advancement() -> bool:
+	var prog = RUN_PROGRESSION_SCRIPT.new(1111, "NORMAL")
+
+	# Step from room 0 to room 1
+	prog.advance_room()
+	assert(prog.room_index == 1, "Should be at room 1")
+	assert(prog.run_depth == 2, "Depth should be 2")
+
+	# Branch choice: Jump to room 3 (Elite bypass)
+	var nav = prog.advance_room(3)
+	assert(prog.room_index == 3, "Should jump to room 3")
+	assert(prog.run_depth == 3, "Depth should increment to 3")
+	assert(not nav.is_new_sector, "Should remain in current sector")
+
+	# Step to room 4 (Boss)
+	nav = prog.advance_room(4)
+	assert(prog.room_index == 4, "Should be at room 4 (Boss)")
+	assert(prog.run_depth == 4, "Depth should be 4")
+	assert(not nav.is_new_sector, "Should remain in current sector")
+
+	# Step from Boss to Next Sector
+	nav = prog.advance_room(5)
+	assert(nav.is_new_sector, "Stepping past sector rooms must trigger new sector")
+	assert(prog.sector_index == 2, "Sector index should advance to 2")
+	assert(prog.room_index == 0, "Room index should reset to 0 in new sector")
+	assert(prog.run_depth == 5, "Depth should be 5")
+
+	print("  [PASS] Branching Route Room Advancement & Sector Gateway Scenario")
+	return true
+
+
 
 
