@@ -30,6 +30,7 @@ var last_hazard_pos := Vector2.INF
 var genome: RefCounted = null
 var spatial_index: RefCounted = null
 var squad_coordinator: RefCounted = null
+var nav_grid: RefCounted = null
 var obstacle_rects: Array[Rect2] = []
 
 var damage_multipliers: Dictionary = {
@@ -96,9 +97,19 @@ func _physics_process(delta: float) -> void:
 	match state:
 		State.STALK:
 			rotation = to_target.angle()
-			var move_dir: Vector2 = to_target.normalized()
-			if not obstacle_rects.is_empty():
-				move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 40.0)
+			var move_dir := Vector2.ZERO
+			var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
+
+			if not los_blocked:
+				move_dir = to_target.normalized()
+				if not obstacle_rects.is_empty():
+					move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 40.0)
+			else:
+				if nav_grid != null:
+					move_dir = nav_grid.get_nav_direction(global_position, target.global_position)
+				else:
+					move_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 40.0)
+
 			var separation: Vector2 = Vector2.ZERO
 			if spatial_index:
 				separation = spatial_index.get_separation_for_agent(self, 30.0, 3)
@@ -106,7 +117,7 @@ func _physics_process(delta: float) -> void:
 			velocity = (move_dir + separation * 0.4).normalized() * eff_patrol
 
 			if state_timer <= 0.0 and to_target.length() < 300.0:
-				var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects)
+				los_blocked = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects)
 				var cur_time: float = Time.get_ticks_msec() / 1000.0
 				var token_granted: bool = (squad_coordinator == null or squad_coordinator.request_attack_token(self, cur_time))
 

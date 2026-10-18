@@ -23,6 +23,7 @@ const SPATIAL_INDEX_SCRIPT := preload("res://scripts/spatial_index.gd")
 const SQUAD_COORDINATOR_SCRIPT := preload("res://scripts/squad_coordinator.gd")
 const BOSS_DIRECTOR_SCRIPT := preload("res://scripts/boss_director.gd")
 const BOSS_DEFINITION_SCRIPT := preload("res://scripts/boss_definition.gd")
+const NAV_GRID_SCRIPT := preload("res://scripts/navigation_grid.gd")
 
 const ROOM_RECT := Rect2(42.0, 64.0, 1600.0, 900.0)
 
@@ -95,6 +96,7 @@ var dungeon_layout: RefCounted
 var encounter_director: RefCounted
 var spatial_index: RefCounted
 var squad_coordinator: RefCounted
+var nav_grid: RefCounted
 var current_room_data: RefCounted
 var current_sector_tactic := "DEFAULT"
 var damage_taken_this_sector := 0
@@ -130,6 +132,7 @@ func _ready() -> void:
 	spatial_index = SPATIAL_INDEX_SCRIPT.new()
 	squad_coordinator = SQUAD_COORDINATOR_SCRIPT.new()
 	boss_director = BOSS_DIRECTOR_SCRIPT.new()
+	nav_grid = NAV_GRID_SCRIPT.new()
 
 	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
 		DIRECTOR_TESTS_SCRIPT.run_all_tests()
@@ -582,6 +585,9 @@ func _load_room(index: int) -> void:
 	for r in current_room_data.obstacles:
 		_add_obstacle(r.get_center(), r.size)
 
+	if nav_grid:
+		nav_grid.build_grid(ROOM_RECT, obstacle_rects, 24.0)
+
 	# Services and caches are safe rooms, not combat encounters.
 	if current_room_data.room_type in ["START", "RECOVERY", "SHOP", "GIFT"]:
 		_handle_non_wave_room(current_room_data.room_type)
@@ -818,6 +824,10 @@ func _spawn_boss(pos: Vector2) -> void:
 	boss.target = player
 	if "squad_coordinator" in boss:
 		boss.squad_coordinator = squad_coordinator
+	if "nav_grid" in boss:
+		boss.nav_grid = nav_grid
+	if "obstacle_rects" in boss:
+		boss.obstacle_rects = obstacle_rects
 	if spatial_index:
 		spatial_index.register_agent(boss)
 
@@ -887,6 +897,8 @@ func _spawn_enemy(
 		enemy.squad_coordinator = squad_coordinator
 	if "obstacle_rects" in enemy:
 		enemy.obstacle_rects = obstacle_rects
+	if "nav_grid" in enemy:
+		enemy.nav_grid = nav_grid
 	if spatial_index:
 		spatial_index.register_agent(enemy)
 	if "move_speed" in enemy:
@@ -1148,6 +1160,10 @@ func _show_end_screen(won: bool) -> void:
 
 func _restart_run() -> void:
 	get_tree().paused = false
+	if encounter_director:
+		encounter_director.reset()
+	if tracker:
+		tracker.reset()
 	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		rs.current_seed = 0
@@ -1156,6 +1172,10 @@ func _restart_run() -> void:
 
 func _return_to_main_menu() -> void:
 	get_tree().paused = false
+	if encounter_director:
+		encounter_director.reset()
+	if tracker:
+		tracker.reset()
 	get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
 
 

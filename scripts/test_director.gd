@@ -21,6 +21,7 @@ const PAUSE_MENU_SCRIPT := preload("res://scripts/pause_menu.gd")
 const CRASH_LOGGER_SCRIPT := preload("res://scripts/crash_logger.gd")
 const DEBRIS_EMITTER_SCRIPT := preload("res://scripts/debris_emitter.gd")
 const MOBILE_CONTROLS_SCRIPT := preload("res://scripts/mobile_controls.gd")
+const NAV_GRID_SCRIPT := preload("res://scripts/navigation_grid.gd")
 const CHASER_SCENE := preload("res://scenes/enemies/chaser.tscn")
 const DASHER_SCENE := preload("res://scenes/enemies/dasher.tscn")
 const SHOOTER_SCENE := preload("res://scenes/enemies/shooter.tscn")
@@ -82,9 +83,11 @@ static func run_all_tests() -> bool:
 	all_passed = test_android_back_and_lifecycle_navigation() and all_passed
 	all_passed = test_debris_and_entity_bounding() and all_passed
 	all_passed = test_crash_logger_offline_diagnostics() and all_passed
+	all_passed = test_navigation_grid_topological_pathfinding() and all_passed
+	all_passed = test_behavior_driven_learning_and_evidence_switch() and all_passed
 
 	if all_passed:
-		print("--- ALL 45 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 47 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -1583,4 +1586,121 @@ static func test_dungeon_shops_gifts_and_sector_schedule() -> bool:
 	assert(gift_found, "Procedural generation must produce explorable GIFT cache rooms across seeds")
 
 	print("  [PASS] Explorable Sector Graphs, Shop Kiosks & Gift Caches Scenario")
+	return true
+
+
+static func test_navigation_grid_topological_pathfinding() -> bool:
+	var nav = NAV_GRID_SCRIPT.new(40.0)
+	var room_bounds := Rect2(0, 0, 800, 600)
+	# Center pillar obstacle: 160x160 from (320, 220) to (480, 380)
+	var obstacles: Array[Rect2] = [
+		Rect2(320, 220, 160, 160)
+	]
+	nav.build_grid(room_bounds, obstacles, 20.0)
+
+	# 1. Clear Line of Sight outside obstacle: must return direct normalized vector
+	var clear_dir: Vector2 = nav.get_nav_direction(Vector2(100, 100), Vector2(700, 100))
+	assert(clear_dir.is_equal_approx(Vector2.RIGHT), "Clear line of sight must produce direct heading")
+
+	# 2. Obstructed line of sight directly through the pillar:
+	# From left of pillar (200, 300) to right of pillar (600, 300)
+	var blocked_dir: Vector2 = nav.get_nav_direction(Vector2(200, 300), Vector2(600, 300))
+	# Direct heading would be Vector2.RIGHT (x=1, y=0).
+	# Topological A* must route north or south around the obstacle, producing a non-zero Y deflection!
+	assert(absf(blocked_dir.y) > 0.2, "Obstructed heading must route around obstacle with significant Y deflection")
+
+	# 3. Path waypoints must exist and not penetrate obstacle
+	var path_pts: PackedVector2Array = nav.get_path_points(Vector2(200, 300), Vector2(600, 300))
+	assert(path_pts.size() >= 3, "A* path around pillar must produce at least 3 waypoints")
+	for pt in path_pts:
+		assert(not obstacles[0].has_point(pt), "A* waypoints must never penetrate solid obstacle interior")
+
+	# 4. EnemySteering fallback integration
+	var enemy_steer_dir: Vector2 = ENEMY_STEERING_SCRIPT.get_nav_direction(
+		Vector2(200, 300),
+		Vector2(600, 300),
+		nav,
+		obstacles
+	)
+	assert(absf(enemy_steer_dir.y) > 0.2, "EnemySteering.get_nav_direction must utilize nav_grid when available")
+
+	print("  [PASS] Topological A* Navigation Grid & Obstacle Routing Scenario")
+	return true
+
+
+static func test_behavior_driven_learning_and_evidence_switch() -> bool:
+	var evo_mgr = EVOLUTION_MANAGER_SCRIPT.new()
+	assert(evo_mgr.get_species_tier("CHASER") == 0, "Chaser starts at Tier 0")
+	assert(evo_mgr.get_species_tier("DASHER") == 0, "Dasher starts at Tier 0")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 0, "Shooter starts at Tier 0")
+
+	# 1. Phenotype Snapshot Spawning & Attribution
+	var chaser_parent: RefCounted = evo_mgr.active_genomes["CHASER"][0]
+	var snapshot1: RefCounted = evo_mgr.get_genome_for_spawn("CHASER")
+	assert(snapshot1.variant_id != "", "Spawned snapshot must have a variant_id")
+	assert(snapshot1.variant_id != chaser_parent.variant_id, "Spawned snapshot must have unique variant_id distinct from parent")
+	snapshot1.aggression = 1.35
+	assert(chaser_parent.aggression != 1.35, "Modifying spawned snapshot must not leak into active population genome")
+	snapshot1.aggression = 1.0
+
+	# 2. Invariant: Absence of trigger evidence prevents evolution regardless of encounter count
+	# Player is stationary brawler (melee/close range, NO kiting: ranged=0.10, mobility=0.10)
+	var melee_profile := {
+		"ranged": 0.10,
+		"mobility": 0.10,
+		"turret": 0.15,
+		"aggression": 0.90
+	}
+	# Simulate 4 consecutive battles fighting Chasers with NO kiting
+	for _i in range(4):
+		evo_mgr.register_spawned_combatant(snapshot1)
+		var no_evolutions = evo_mgr.process_encounter_end(0, 1, 12.0, melee_profile, "DEFAULT")
+		assert(no_evolutions.is_empty(), "Chasers must NOT evolve when player does not exhibit kiting evidence")
+	assert(evo_mgr.get_species_tier("CHASER") == 0, "Chaser must remain Tier 0 after 4 non-kited battles")
+	assert(evo_mgr.get_species_health_multiplier("CHASER") == 1, "Chaser health must remain 1x (3 HP)")
+
+	# 3. Dynamic Mid-Run Strategy Shift: Player begins long-range kiting
+	var kiting_profile := {
+		"ranged": 0.85,
+		"mobility": 0.65,
+		"turret": 0.10,
+		"aggression": 0.10
+	}
+	# Encounter 5 (1st kited battle): Still Tier 0, accumulating evidence
+	evo_mgr.register_spawned_combatant(snapshot1)
+	var e5_evolutions = evo_mgr.process_encounter_end(0, 0, 14.0, kiting_profile, "DEFAULT")
+	assert(e5_evolutions.is_empty(), "Chaser remains Tier 0 during initial kited encounter")
+
+	# Encounter 6 (2nd kited battle): Learns RAPID_PURSUIT (Tier 1, doubles HP from 3 to 6)
+	evo_mgr.register_spawned_combatant(snapshot1)
+	var e6_evolutions = evo_mgr.process_encounter_end(0, 0, 14.0, kiting_profile, "DEFAULT")
+	assert(not e6_evolutions.is_empty(), "Chasers must adapt after sustained kiting")
+	assert(evo_mgr.get_species_tier("CHASER") == 1, "Chaser evolves to Tier 1")
+	assert(evo_mgr.get_species_health_multiplier("CHASER") == 2, "Chaser Tier 1 doubles health to 2x")
+	assert(e6_evolutions[0].mutation == "RAPID_PURSUIT", "Chaser must mutate RAPID_PURSUIT")
+
+	# Encounters 7 & 8: Continued kiting unlocks CRIMSON_BLASTER (Tier 2, doubles HP from 6 to 12)
+	evo_mgr.register_spawned_combatant(snapshot1)
+	evo_mgr.process_encounter_end(0, 0, 14.0, kiting_profile, "DEFAULT")
+	evo_mgr.register_spawned_combatant(snapshot1)
+	var e8_evolutions = evo_mgr.process_encounter_end(0, 0, 14.0, kiting_profile, "DEFAULT")
+	assert(evo_mgr.get_species_tier("CHASER") == 2, "Chaser evolves to Tier 2")
+	assert(evo_mgr.get_species_health_multiplier("CHASER") == 4, "Chaser Tier 2 quadruples health to 4x (12 HP)")
+	assert(e8_evolutions[0].mutation == "CRIMSON_BLASTER", "Chaser must mutate CRIMSON_BLASTER")
+
+	# 4. Strict Species Isolation: Dasher & Shooter did not fight, must remain at Tier 0
+	assert(evo_mgr.get_species_tier("DASHER") == 0, "Unparticipating Dasher must remain at Tier 0")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 0, "Unparticipating Shooter must remain at Tier 0")
+	assert(evo_mgr.get_species_health_multiplier("DASHER") == 1, "Dasher health must remain 1x")
+	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 1, "Shooter health must remain 1x")
+
+	# 5. Run-Scoped Reset: Death/Quit/Restart purges all learning
+	evo_mgr.reset_run_learning()
+	assert(evo_mgr.get_species_tier("CHASER") == 0, "Reset restores Chaser to Tier 0")
+	assert(evo_mgr.get_species_tier("DASHER") == 0, "Reset restores Dasher to Tier 0")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 0, "Reset restores Shooter to Tier 0")
+	assert(evo_mgr.get_species_health_multiplier("CHASER") == 1, "Reset restores health multiplier to 1x")
+	assert(evo_mgr.evolution_history.is_empty(), "Reset clears evolution history")
+
+	print("  [PASS] Behavior-Driven Enemy Learning, Strategy Switch & Isolation Scenario")
 	return true

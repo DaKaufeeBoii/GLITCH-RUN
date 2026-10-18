@@ -30,7 +30,13 @@ const MAX_COORDINATION := 1.0
 var family: String = "CHASER" # "CHASER", "SHOOTER", "DASHER", "BOSS"
 var generation: int = 1
 var variant_name: String = "Standard"
-var tier: int = 0 # 0 = Baseline (1x HP), 1 = Learned Tier 1 (2x HP), 2 = Learned Tier 2 (4x HP)
+var variant_id: String = ""
+var major_evolution_count: int = 0
+var tier: int = 0: # Kept synchronized with major_evolution_count
+	get:
+		return major_evolution_count
+	set(val):
+		major_evolution_count = val
 var base_max_health: int = 3
 
 # Evolvable Numerical Traits
@@ -137,7 +143,8 @@ func _apply_family_defaults() -> void:
 func duplicate_genome() -> RefCounted:
 	var copy = get_script().new(family, generation)
 	copy.variant_name = variant_name
-	copy.tier = tier
+	copy.variant_id = variant_id
+	copy.major_evolution_count = major_evolution_count
 	copy.base_max_health = base_max_health
 	copy.prediction_strength = prediction_strength
 	copy.flanking_tendency = flanking_tendency

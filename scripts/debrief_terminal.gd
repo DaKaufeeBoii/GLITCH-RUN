@@ -282,9 +282,17 @@ func setup_debrief(
 				ev_reason.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				ev_vbox.add_child(ev_reason)
 
+				if evo.has("tradeoff"):
+					var ev_tradeoff := Label.new()
+					ev_tradeoff.text = "Adaptation: %s" % evo.get("tradeoff", "")
+					ev_tradeoff.add_theme_font_size_override("font_size", 10)
+					ev_tradeoff.add_theme_color_override("font_color", Color("f472b6"))
+					ev_tradeoff.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+					ev_vbox.add_child(ev_tradeoff)
+
 				if evo.has("counter"):
 					var ev_counter := Label.new()
-					ev_counter.text = "Player Counter: %s" % evo.get("counter", "")
+					ev_counter.text = "Counterplay: %s" % evo.get("counter", "")
 					ev_counter.add_theme_font_size_override("font_size", 10)
 					ev_counter.add_theme_color_override("font_color", Color("38bdf8"))
 					ev_counter.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

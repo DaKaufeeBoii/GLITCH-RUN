@@ -43,6 +43,20 @@ var kills_by_player_tactic: Dictionary = {
 	"POINT_BLANK": 0
 }
 
+# Per-species exposure and behavioral interaction accumulators
+var family_combat_time: Dictionary = {
+	"CHASER": 0.0,
+	"SHOOTER": 0.0,
+	"DASHER": 0.0,
+	"BOSS": 0.0
+}
+var family_kited_time: Dictionary = {
+	"CHASER": 0.0,
+	"SHOOTER": 0.0,
+	"DASHER": 0.0,
+	"BOSS": 0.0
+}
+
 
 func reset() -> void:
 	total_combat_time = 0.0
@@ -62,6 +76,9 @@ func reset() -> void:
 		damage_by_enemy_family[k] = 0
 	for k in kills_by_player_tactic.keys():
 		kills_by_player_tactic[k] = 0
+	for f in family_combat_time.keys():
+		family_combat_time[f] = 0.0
+		family_kited_time[f] = 0.0
 
 
 func record_dash(current_run_time: float) -> void:
@@ -141,13 +158,38 @@ func update(
 			directional_samples_count += 1
 		last_movement_vector = current_heading
 
-	# Check closest enemy distance
+	# Check closest enemy distance & accumulate per-family metrics
 	var min_dist := 9999.0
+	var active_families_this_frame := {}
+
 	for enemy in enemies:
 		if is_instance_valid(enemy):
 			var d := player_pos.distance_to(enemy.global_position)
 			if d < min_dist:
 				min_dist = d
+
+			var fam: String = ""
+			if "family" in enemy:
+				fam = enemy.family
+			elif "genome" in enemy and enemy.genome and "family" in enemy.genome:
+				fam = enemy.genome.family
+			elif enemy.is_in_group("enemies"):
+				var sc_name: String = enemy.name.to_upper()
+				if "CHASER" in sc_name: fam = "CHASER"
+				elif "SHOOTER" in sc_name: fam = "SHOOTER"
+				elif "DASHER" in sc_name: fam = "DASHER"
+				elif "BOSS" in sc_name: fam = "BOSS"
+
+			if fam != "":
+				active_families_this_frame[fam] = true
+				if not family_combat_time.has(fam):
+					family_combat_time[fam] = 0.0
+					family_kited_time[fam] = 0.0
+				if d > 210.0:
+					family_kited_time[fam] += delta
+
+	for fam in active_families_this_frame:
+		family_combat_time[fam] += delta
 
 	if min_dist < 160.0:
 		close_range_time += delta
@@ -264,4 +306,39 @@ func get_combat_metrics() -> Dictionary:
 		"accuracy": prof.accuracy,
 		"movement_consistency": prof.movement_consistency,
 		"profile": prof
+	}
+
+
+func get_family_profile(family: String) -> Dictionary:
+	## Returns localized observation profile for a specific species.
+	## If species has not actively engaged in combat, returns has_data=false.
+	var f_time: float = float(family_combat_time.get(family, 0.0))
+	if f_time < 0.5:
+		return {
+			"has_data": false,
+			"family": family,
+			"combat_time": 0.0,
+			"mobility": 0.5,
+			"ranged": 0.5,
+			"aggression": 0.5,
+			"turret": 0.5,
+			"kited_ratio": 0.0,
+			"damage_dealt": 0
+		}
+
+	var base_prof := get_profile()
+	var k_time: float = float(family_kited_time.get(family, 0.0))
+	var k_ratio := clampf(k_time / maxf(0.1, f_time), 0.0, 1.0)
+	var dmg: int = int(damage_by_enemy_family.get(family, 0))
+
+	return {
+		"has_data": true,
+		"family": family,
+		"combat_time": f_time,
+		"mobility": base_prof.mobility,
+		"ranged": maxf(base_prof.ranged, k_ratio),
+		"aggression": base_prof.aggression,
+		"turret": base_prof.turret,
+		"kited_ratio": k_ratio,
+		"damage_dealt": dmg
 	}

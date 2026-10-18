@@ -32,6 +32,7 @@ var recovery_timer := 0.0
 
 var genome: RefCounted = null
 var spatial_index: RefCounted = null
+var nav_grid: RefCounted = null
 var obstacle_rects: Array[Rect2] = []
 var damage_multipliers: Dictionary = {
 	"plasma": 1.0,
@@ -130,14 +131,23 @@ func _physics_process(delta: float) -> void:
 			return
 
 	if dist > 36.0:
-		# Pincer flanking trajectory when at medium/long range
-		var approach_dir := to_target.normalized()
-		if (is_flanker or absf(flank_angle) > 0.01) and dist > 85.0:
-			approach_dir = to_target.rotated(flank_angle).normalized()
+		# Intelligent pathfinding around obstacles with topological A* fallback
+		var approach_dir := Vector2.ZERO
+		var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
 
-		# Obstacle avoidance: steer around pillars
-		if not obstacle_rects.is_empty():
-			approach_dir = EnemySteering.avoid_obstacles(global_position, approach_dir, obstacle_rects, 40.0)
+		if not los_blocked:
+			# Unobstructed line of sight: direct pursuit / flanking
+			approach_dir = to_target.normalized()
+			if (is_flanker or absf(flank_angle) > 0.01) and dist > 85.0:
+				approach_dir = to_target.rotated(flank_angle).normalized()
+			if not obstacle_rects.is_empty():
+				approach_dir = EnemySteering.avoid_obstacles(global_position, approach_dir, obstacle_rects, 40.0)
+		else:
+			# Line of sight blocked by obstacle: use topological navigation grid
+			if nav_grid != null:
+				approach_dir = nav_grid.get_nav_direction(global_position, target.global_position)
+			else:
+				approach_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 40.0)
 
 		# Swarm neighbor separation using shared SpatialIndex
 		var separation := Vector2.ZERO

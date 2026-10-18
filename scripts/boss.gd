@@ -23,6 +23,8 @@ var phase_two_triggered := false
 
 var squad_coordinator: RefCounted = null
 var active_mutations: Array[Dictionary] = []
+var nav_grid: RefCounted = null
+var obstacle_rects: Array[Rect2] = []
 var burst_projectile_count := 8
 var dash_speed := 420.0
 var post_burst_recovery := 1.0
@@ -100,7 +102,18 @@ func _physics_process(delta: float) -> void:
 	match current_phase:
 		AttackPhase.IDLE:
 			if dist > 140.0:
-				velocity = to_target.normalized() * 55.0
+				var approach_dir := Vector2.ZERO
+				var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
+				if not los_blocked:
+					approach_dir = to_target.normalized()
+					if not obstacle_rects.is_empty():
+						approach_dir = EnemySteering.avoid_obstacles(global_position, approach_dir, obstacle_rects, 50.0)
+				else:
+					if nav_grid != null:
+						approach_dir = nav_grid.get_nav_direction(global_position, target.global_position)
+					else:
+						approach_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 50.0)
+				velocity = approach_dir * 55.0
 			else:
 				velocity = Vector2.ZERO
 			if is_inside_tree():

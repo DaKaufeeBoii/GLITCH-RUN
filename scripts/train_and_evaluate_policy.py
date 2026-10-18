@@ -250,6 +250,23 @@ def run_benchmarks(episodes_per_archetype=100):
             if r_bandit["tactical_match"]: results["LinUCB Contextual Bandit"]["matches"] += 1
             if r_bandit["overkill_violation"]: results["LinUCB Contextual Bandit"]["violations"] += 1
 
+    # Dynamic mid-run strategy shift evaluation (50 encounters mobility -> 50 encounters perimeter camping)
+    print("\n--- Simulating Mid-Run Tactical Pivot (Mobility -> Camping) ---")
+    dynamic_bandit = LinUCBBandit()
+    shift_mobility_acts = 0
+    shift_ranged_acts = 0
+    for ep in range(100):
+        prof = PLAYER_ARCHETYPES["HIGH_MOBILITY"] if ep < 50 else PLAYER_ARCHETYPES["PERIMETER_CAMPER"]
+        act = dynamic_bandit.select_action(prof)
+        r = CombatSimulator.simulate_encounter(prof, act)
+        dynamic_bandit.update(act, prof, r["damage_taken"], r["duration"])
+        if ep >= 50 and act == "COUNTER_RANGED":
+            shift_ranged_acts += 1
+        elif ep < 50 and act == "COUNTER_MOBILITY":
+            shift_mobility_acts += 1
+    print(f"  Phase 1 (Mobility): LinUCB selected COUNTER_MOBILITY {shift_mobility_acts}/50 times")
+    print(f"  Phase 2 (Camping):  LinUCB pivoted to COUNTER_RANGED {shift_ranged_acts}/50 times")
+
     print("\nBenchmark Evaluation Results:")
     print("-" * 75)
     print(f"{'Policy Architecture':<28} | {'Adapt Accuracy':<15} | {'Fairness Violations':<20} | {'Tactical Entropy'}")
@@ -270,14 +287,23 @@ def run_benchmarks(episodes_per_archetype=100):
         }
     print("-" * 75)
 
-    # Export trained weights
+    # Export trained weights (Version 2 with Sherman-Morrison inv_cov & b_vec)
     os.makedirs("assets/data", exist_ok=True)
     export_dict = {
-        "version": 1,
+        "version": 2,
+        "family_id": "DIRECTOR",
         "feature_dim": bandit.dim,
         "action_count": len(ACTION_NAMES),
+        "action_names": ACTION_NAMES,
         "theta": [
             bandit.theta.get(a, [0.0] * bandit.dim) for a in ACTION_NAMES
+        ],
+        "inv_cov": [
+            bandit.A_inv[a] if a in bandit.A_inv else [[1.0 if i == j else 0.0 for j in range(bandit.dim)] for i in range(bandit.dim)]
+            for a in ACTION_NAMES
+        ],
+        "b_vec": [
+            bandit.b.get(a, [0.0] * bandit.dim) for a in ACTION_NAMES
         ],
         "cov_diag": [
             [bandit.A_inv[a][i][i] for i in range(bandit.dim)] if a in bandit.A_inv else [0.5] * bandit.dim

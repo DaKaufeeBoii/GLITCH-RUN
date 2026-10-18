@@ -25,9 +25,14 @@ func _init() -> void:
 
 
 func reset() -> void:
+	reset_run_learning()
+
+
+func reset_run_learning() -> void:
 	adaptive_director.reset()
 	learning_policy.reset()
-	evolution_manager.reset()
+	learning_policy.load_from_json_file()
+	evolution_manager.reset_run_learning()
 
 
 func prepare_encounter(

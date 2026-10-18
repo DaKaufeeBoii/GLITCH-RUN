@@ -36,6 +36,7 @@ var debuff_shock_timer := 0.0
 var genome: RefCounted = null
 var spatial_index: RefCounted = null
 var squad_coordinator: RefCounted = null
+var nav_grid: RefCounted = null
 var obstacle_rects: Array[Rect2] = []
 
 var damage_multipliers: Dictionary = {
@@ -146,14 +147,24 @@ func _physics_process(delta: float) -> void:
 				fire_timer = 0.4
 
 		# Kiting movement: maintain ideal distance & avoid obstacles
-		var kite_vel: Vector2 = EnemySteering.calculate_range_velocity(global_position, target.global_position, ideal_distance, move_speed)
-		var separation: Vector2 = Vector2.ZERO
-		if spatial_index:
-			separation = spatial_index.get_separation_for_agent(self, 35.0, 3)
+		var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
+		var move_dir := Vector2.ZERO
 
-		var move_dir: Vector2 = (kite_vel.normalized() + separation * 0.4).normalized()
-		if not obstacle_rects.is_empty():
-			move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 35.0)
+		if not los_blocked:
+			var kite_vel: Vector2 = EnemySteering.calculate_range_velocity(global_position, target.global_position, ideal_distance, move_speed)
+			var separation: Vector2 = Vector2.ZERO
+			if spatial_index:
+				separation = spatial_index.get_separation_for_agent(self, 35.0, 3)
+
+			move_dir = (kite_vel.normalized() + separation * 0.4).normalized()
+			if not obstacle_rects.is_empty():
+				move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 35.0)
+		else:
+			# If obstructed by obstacles, maneuver around obstacle to regain firing line
+			if nav_grid != null:
+				move_dir = nav_grid.get_nav_direction(global_position, target.global_position)
+			else:
+				move_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 35.0)
 
 		var eff_speed: float = move_speed * (0.50 if debuff_slow_timer > 0.0 else 1.0)
 		velocity = move_dir * eff_speed

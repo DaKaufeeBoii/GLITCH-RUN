@@ -62,6 +62,25 @@ static func predict_target_position(
 	return raw_predicted
 
 
+static func get_nav_direction(
+	agent_pos: Vector2,
+	target_pos: Vector2,
+	nav_grid: RefCounted,
+	obstacles: Array[Rect2]
+) -> Vector2:
+	## Computes intelligent movement direction using topological A* grid if available,
+	## falling back to ray deflection if nav_grid is null.
+	if nav_grid != null and nav_grid.has_method("get_nav_direction"):
+		return nav_grid.get_nav_direction(agent_pos, target_pos)
+	elif not is_line_blocked(agent_pos, target_pos, obstacles):
+		var to_t := target_pos - agent_pos
+		return to_t.normalized() if not to_t.is_zero_approx() else Vector2.ZERO
+	else:
+		var to_t := target_pos - agent_pos
+		var dir := to_t.normalized() if not to_t.is_zero_approx() else Vector2.ZERO
+		return avoid_obstacles(agent_pos, dir, obstacles, 45.0)
+
+
 static func avoid_obstacles(
 	agent_pos: Vector2,
 	desired_dir: Vector2,
