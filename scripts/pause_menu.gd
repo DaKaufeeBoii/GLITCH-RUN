@@ -61,12 +61,18 @@ func _build_ui() -> void:
 	var center := CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
+	var content_scroll := ScrollContainer.new()
+	content_scroll.custom_minimum_size = Vector2(520, 500)
+	content_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	center.add_child(content_scroll)
 
 	var main_vbox := VBoxContainer.new()
 	main_vbox.custom_minimum_size = Vector2(480, 0)
+	main_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	main_vbox.add_theme_constant_override("separation", 12)
 	main_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	center.add_child(main_vbox)
+	content_scroll.add_child(main_vbox)
 
 	title_label = Label.new()
 	title_label.text = "TACTICAL OVERVIEW // PAUSED"

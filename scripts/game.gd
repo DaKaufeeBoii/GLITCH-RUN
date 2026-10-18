@@ -1,5 +1,5 @@
 extends Node2D
-## Owns the roguelite game loop: hand-authored rooms, tech dungeon tile rendering,
+## Owns the roguelite game loop: procedural rooms, tech dungeon tile rendering,
 ## enemy waves, upgrade drafting, and run completion.
 
 const PLAYER_SCENE := preload("res://scenes/player/player.tscn")
@@ -24,7 +24,7 @@ const SQUAD_COORDINATOR_SCRIPT := preload("res://scripts/squad_coordinator.gd")
 const BOSS_DIRECTOR_SCRIPT := preload("res://scripts/boss_director.gd")
 const BOSS_DEFINITION_SCRIPT := preload("res://scripts/boss_definition.gd")
 
-const ROOM_RECT := Rect2(42.0, 64.0, 876.0, 424.0)
+const ROOM_RECT := Rect2(42.0, 64.0, 1600.0, 900.0)
 
 # Custom tileset coordinates (32x32 tiles in assets/environment/tileset.png)
 const FLOOR_TILE_BASE := Rect2(0, 0, 32, 32)
@@ -141,7 +141,7 @@ func _ready() -> void:
 	room_cleared = false
 
 	# Generate deterministic procedural dungeon layout from run seed
-	dungeon_layout = dungeon_generator.generate_dungeon(rs.current_seed, rs.TOTAL_ROOMS)
+	dungeon_layout = dungeon_generator.generate_dungeon(rs.current_seed, rs.TOTAL_ROOMS, rs.progression.sector_total_waves)
 	rs.dungeon_layout_summary.clear()
 	for r in dungeon_layout.rooms:
 		rs.record_room_summary(r.to_dict())
@@ -150,6 +150,7 @@ func _ready() -> void:
 	camera = Camera2D.new()
 	camera.position = Vector2(480, 270)
 	add_child(camera)
+	camera.make_current()
 
 	# Initialize Glitch Post-Processing Layer
 	_init_glitch_layer()
@@ -231,6 +232,8 @@ func _process(delta: float) -> void:
 		return
 
 	rs.run_time += delta
+	if not get_tree().paused and not active_enemies.is_empty():
+		sector_combat_time += delta
 
 	# Screen Trauma Shake Update
 	if trauma > 0.0 and is_instance_valid(camera):
@@ -257,6 +260,8 @@ func _process(delta: float) -> void:
 	# Track player combat behavior for adaptive director
 	if not get_tree().paused and is_instance_valid(player) and tracker:
 		tracker.update(delta, player.global_position, player.velocity, active_enemies, player.is_firing, rs.run_time)
+	if is_instance_valid(camera) and is_instance_valid(player):
+		camera.position = player.position
 
 	# Update spatial index and squad coordinator
 	if spatial_index:
@@ -273,7 +278,8 @@ func _process(delta: float) -> void:
 		var sec_w: int = rs.progression.sector_waves_completed if (rs and rs.progression) else 0
 		var sec_tw: int = rs.progression.sector_total_waves if (rs and rs.progression) else 3
 		var total_r: int = rs.progression.rooms_per_sector if (rs and rs.progression) else rs.TOTAL_ROOMS
-		sector_label.text = "SEC %d  •  RM %d/%d  •  WAVE %d/%d" % [rs.current_sector, rs.current_room_index + 1, total_r, sec_w, sec_tw]
+		var active_wave: int = mini(sec_w + 1, sec_tw)
+		sector_label.text = "SEC %d  •  RM %d/%d  •  WAVE %d/%d" % [rs.current_sector, rs.current_room_index + 1, total_r, active_wave, sec_tw]
 
 	# Update Boss Bar if in Boss room
 	if boss_active and is_instance_valid(boss_ref):
@@ -324,9 +330,9 @@ func _draw() -> void:
 	draw_rect(ROOM_RECT, Color("080c16"), true)
 	var grid_color := Color(0.12, 0.18, 0.28, 0.45) * tint
 	grid_color.a = 0.35
-	for x in range(int(ROOM_RECT.position.x), int(ROOM_RECT.end.x), 32):
+	for x in range(int(ROOM_RECT.position.x), int(ROOM_RECT.end.x), 64):
 		draw_line(Vector2(x, ROOM_RECT.position.y), Vector2(x, ROOM_RECT.end.y), grid_color, 1.0)
-	for y in range(int(ROOM_RECT.position.y), int(ROOM_RECT.end.y), 32):
+	for y in range(int(ROOM_RECT.position.y), int(ROOM_RECT.end.y), 64):
 		draw_line(Vector2(ROOM_RECT.position.x, y), Vector2(ROOM_RECT.end.x, y), grid_color, 1.0)
 
 	# 2. Outer arena perimeter & neon hazard rails
@@ -518,10 +524,11 @@ func _load_room(index: int) -> void:
 
 	var rs_node = get_node_or_null("/root/RunState")
 	var sec_seed: int = rs_node.progression.get_current_sector_seed() if (rs_node and rs_node.progression) else (rs_node.current_seed if rs_node else 1337)
-	var room_count: int = rs_node.progression.rooms_per_sector if (rs_node and rs_node.progression) else 5
+	var room_count: int = rs_node.progression.rooms_per_sector if (rs_node and rs_node.progression) else 12
 
 	if not dungeon_layout or dungeon_layout.rooms.is_empty():
-		dungeon_layout = dungeon_generator.generate_dungeon(sec_seed, room_count)
+		var wave_count: int = rs_node.progression.sector_total_waves if (rs_node and rs_node.progression) else 3
+		dungeon_layout = dungeon_generator.generate_dungeon(sec_seed, room_count, wave_count)
 		if rs_node:
 			rs_node.dungeon_layout_summary.clear()
 			for r in dungeon_layout.rooms:
@@ -540,12 +547,22 @@ func _load_room(index: int) -> void:
 	# Position player at designated reachable spawn
 	if is_instance_valid(player):
 		player.position = current_room_data.player_spawn
+		if is_instance_valid(camera):
+			camera.position = player.position
+			camera.reset_smoothing()
 
 	# Place procedural obstacle geometry
 	for r in current_room_data.obstacles:
 		_add_obstacle(r.get_center(), r.size)
 
-	# Calculate wave structure for this chamber from sector schedule
+	# Services and caches are safe rooms, not combat encounters.
+	if current_room_data.room_type in ["START", "RECOVERY", "SHOP", "GIFT"]:
+		_handle_non_wave_room(current_room_data.room_type)
+		queue_redraw()
+		_update_debug_overlay()
+		return
+
+	# One combat encounter is one wave; required wave rooms are selected per sector.
 	if rs_node and rs_node.progression:
 		rs_node.progression.calculate_waves_for_current_room(current_room_data.room_type)
 		rs_node.current_wave = rs_node.progression.current_wave
@@ -681,6 +698,9 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 	var profile: Dictionary = tracker.get_profile() if tracker else {}
 	var p_hp: int = player.health if is_instance_valid(player) else 5
 	var p_max: int = player.max_health if is_instance_valid(player) else 5
+	var spawn_budget: int = rs_node.progression.calculate_spawn_budget(wave_num) if (rs_node and rs_node.progression) else current_room_data.enemy_spawns.size()
+	var sector_seed: int = rs_node.progression.get_current_sector_seed() if (rs_node and rs_node.progression) else 1337
+	current_room_data.enemy_spawns = dungeon_generator.generate_wave_spawns(current_room_data, sector_seed, wave_num, spawn_budget)
 
 	var encounter: Dictionary = encounter_director.prepare_encounter(
 		current_room_data,
@@ -702,7 +722,6 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 		rs_node.record_tactic(rs_node.current_room_index + 1, encounter.tactic, encounter.banner_sub, mut_desc)
 
 	# Spawn budgeted enemies for this wave
-	var spawn_budget: int = rs_node.progression.calculate_spawn_budget(wave_num) if (rs_node and rs_node.progression) else encounter.spawn_list.size()
 	var spawns_to_create: Array = encounter.spawn_list.slice(0, mini(spawn_budget, encounter.spawn_list.size()))
 	if spawns_to_create.is_empty() and not encounter.spawn_list.is_empty():
 		spawns_to_create = encounter.spawn_list
@@ -717,7 +736,7 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 		if not contains_boss:
 			spawns_to_create.push_front({
 				"type": "BOSS",
-				"pos": Vector2(680, 276),
+				"pos": Vector2(current_room_data.bounds.position.x + current_room_data.bounds.size.x * 0.70, current_room_data.bounds.get_center().y),
 				"flank_angle": 0.0,
 				"genome": null
 			})
@@ -744,7 +763,7 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 				encounter.enemy_telegraph_mult,
 				flank,
 				encounter.shooter_lead,
-				encounter.hazard_trail
+				false # Dasher trails are granted by the learned species genome only.
 			)
 			if genome and enemy:
 				genome.apply_to_enemy(enemy)
@@ -898,7 +917,7 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 		else:
 			room_cleared = true
 			if rs and rs.progression:
-				rs.progression.complete_current_wave()
+				rs.progression.complete_current_wave(current_room_data.is_sector_wave)
 			_on_room_cleared()
 
 
@@ -926,7 +945,7 @@ func _on_room_cleared() -> void:
 	var new_adaptations: Array[Dictionary] = []
 	if encounter_director and tracker and rs:
 		new_adaptations = encounter_director.record_encounter_result(
-			rs.current_room_index,
+			maxi(0, rs.progression.sector_index - 1) if rs.progression else maxi(0, rs.current_sector - 1),
 			damage_taken_this_sector,
 			sector_combat_time,
 			tracker.get_profile(),
@@ -1105,7 +1124,7 @@ func _on_player_died() -> void:
 	var rs = get_node_or_null("/root/RunState")
 	if encounter_director and tracker and rs:
 		encounter_director.record_encounter_result(
-			rs.current_room_index,
+			maxi(0, rs.progression.sector_index - 1) if rs.progression else maxi(0, rs.current_sector - 1),
 			damage_taken_this_sector,
 			sector_combat_time,
 			tracker.get_profile(),
@@ -1462,7 +1481,7 @@ ACTIVE ENEMY GENOME MUTATIONS:
 	• %s""" % [
 		cur_seed,
 		sec_idx,
-		rs.TOTAL_ROOMS if rs else 6,
+		rs.TOTAL_ROOMS if rs else 12,
 		encounter_director.evolution_manager.generation if encounter_director else 1,
 		t_name,
 		r_type,

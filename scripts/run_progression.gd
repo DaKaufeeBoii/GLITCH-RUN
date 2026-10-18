@@ -83,10 +83,10 @@ func is_sector_regular_waves_complete() -> bool:
 	return sector_waves_completed >= sector_total_waves
 
 
-func calculate_waves_for_current_room(room_type: String) -> int:
+func calculate_waves_for_current_room(_room_type: String = "") -> int:
 	## Calculates combat wave count for each chamber.
 	## Every chamber guarantees enemy combat engagements (never 0 waves).
-	match room_type:
+	match _room_type:
 		"START":
 			waves_in_room = 1
 		"BOSS":
@@ -123,9 +123,9 @@ func calculate_spawn_budget(wave: int) -> int:
 	return total_budget
 
 
-func complete_current_wave() -> void:
-	## Call when a combat wave in a combat/elite room is cleared
-	if current_wave > 0 and sector_waves_completed < sector_total_waves:
+func complete_current_wave(is_scheduled_wave: bool = true) -> void:
+	## Optional combat rooms do not advance the sector's mandatory wave schedule.
+	if is_scheduled_wave and current_wave > 0 and sector_waves_completed < sector_total_waves:
 		sector_waves_completed += 1
 		if sector_waves_completed >= sector_total_waves:
 			sector_waves_cleared.emit()

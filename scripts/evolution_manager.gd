@@ -11,6 +11,8 @@ const ENEMY_GENOME_SCRIPT := preload("res://scripts/enemy_genome.gd")
 
 const POOL_SIZE_PER_FAMILY := 3
 const MUTATION_PERTURBATION := 0.08 # Max 8% trait adjustment per generational mutation
+const BATTLES_FOR_FIRST_EVOLUTION := 1
+const BATTLES_FOR_SECOND_EVOLUTION := 2
 
 var generation := 1
 var active_genomes: Dictionary = {
@@ -37,6 +39,7 @@ func reset() -> void:
 			"encounters_fought": 0,
 			"combat_time": 0.0,
 			"player_kited_count": 0,
+			"last_bred_encounter": 0,
 			"damage_dealt": 0,
 			"tier": 0,
 			"history": []
@@ -45,6 +48,8 @@ func reset() -> void:
 			"encounters_fought": 0,
 			"combat_time": 0.0,
 			"damage_dealt": 0,
+			"player_dash_count": 0,
+			"last_bred_encounter": 0,
 			"tier": 0,
 			"history": []
 		},
@@ -52,6 +57,7 @@ func reset() -> void:
 			"encounters_fought": 0,
 			"combat_time": 0.0,
 			"damage_dealt": 0,
+			"last_bred_encounter": 0,
 			"tier": 0,
 			"history": []
 		}
@@ -129,9 +135,10 @@ func process_encounter_end(
 		if "family" in g:
 			active_families[g.family] = true
 
-	# Fallback if active_combatants was not registered (e.g. direct test calls)
+	# Callers may supply an explicit family list, but an empty encounter must never
+	# be treated as evidence that every species fought.
 	if active_families.is_empty():
-		for f in player_profile.get("active_families", ["CHASER", "SHOOTER", "DASHER"]):
+		for f in player_profile.get("active_families", []):
 			active_families[f] = true
 
 	# 3. Process Species Evidence & Distinct Evolution Paths
@@ -145,11 +152,11 @@ func process_encounter_end(
 		# Did player kite or maintain distance?
 		var ranged_ratio: float = float(player_profile.get("ranged", 0.5))
 		var mobility_ratio: float = float(player_profile.get("mobility", 0.5))
-		if ranged_ratio > 0.40 or mobility_ratio > 0.45 or combat_duration >= 4.0:
+		if ranged_ratio >= 0.60 and mobility_ratio >= 0.50:
 			ev.player_kited_count += 1
 
 		# Tier 0 -> Tier 1: Enhanced Pursuit Speed (+35%) & 2x Health
-		if ev.tier == 0 and ev.encounters_fought >= 1:
+		if ev.tier == 0 and ev.encounters_fought >= BATTLES_FOR_FIRST_EVOLUTION:
 			ev.tier = 1
 			for g in active_genomes["CHASER"]:
 				g.tier = 1
@@ -161,7 +168,7 @@ func process_encounter_end(
 				"mutation": "RAPID_PURSUIT",
 				"health_mult": "2x (6 HP)",
 				"tradeoff": "Pursuit speed +35% (124.2 px/s), max armor doubled to 6 HP",
-				"reason": "Player kiting observed in %d battle(s) (range ratio %.2f). Evolved rapid pursuit thrusters." % [ev.encounters_fought, ranged_ratio],
+				"reason": "After %d Chaser battles, long-range movement and repeated dodging met the adaptation threshold (range ratio %.2f)." % [ev.encounters_fought, ranged_ratio],
 				"counter": "Cut back across pursuit trajectory; use arena obstacles to break line of chase."
 			}
 			evolution_history.append(record)
@@ -169,7 +176,7 @@ func process_encounter_end(
 			ev.history.append(record)
 
 		# Tier 1 -> Tier 2: Crimson Laser Blaster (+committed aim) & 4x Health
-		elif ev.tier == 1 and ev.encounters_fought >= 2:
+		elif ev.tier == 1 and ev.encounters_fought >= BATTLES_FOR_SECOND_EVOLUTION:
 			ev.tier = 2
 			for g in active_genomes["CHASER"]:
 				g.tier = 2
@@ -195,7 +202,7 @@ func process_encounter_end(
 		ev.combat_time += combat_duration
 
 		# Tier 0 -> Tier 1: Ion Hazard Trail & 2x Health
-		if ev.tier == 0 and ev.encounters_fought >= 1:
+		if ev.tier == 0 and ev.encounters_fought >= BATTLES_FOR_FIRST_EVOLUTION:
 			ev.tier = 1
 			for g in active_genomes["DASHER"]:
 				g.tier = 1
@@ -207,7 +214,7 @@ func process_encounter_end(
 				"mutation": "ION_HAZARD_TRAIL",
 				"health_mult": "2x (4 HP)",
 				"tradeoff": "Leaves ionized electric hazard spheres along dash path, max armor doubled to 4 HP",
-				"reason": "Dashers engaged player across %d encounter(s). Evolved trailing area denial hazards." % ev.encounters_fought,
+				"reason": "After %d Dasher battles with repeated player dash responses, the species adapted its attack path." % ev.encounters_fought,
 				"counter": "Avoid walking directly in Dasher wake; lure Dashers into open perimeter corridors."
 			}
 			evolution_history.append(record)
@@ -215,7 +222,7 @@ func process_encounter_end(
 			ev.history.append(record)
 
 		# Tier 1 -> Tier 2: Overclocked Velocity (+25% stalk & lunge) & 4x Health
-		elif ev.tier == 1 and ev.encounters_fought >= 2:
+		elif ev.tier == 1 and ev.encounters_fought >= BATTLES_FOR_SECOND_EVOLUTION:
 			ev.tier = 2
 			for g in active_genomes["DASHER"]:
 				g.tier = 2
@@ -241,7 +248,7 @@ func process_encounter_end(
 		ev.combat_time += combat_duration
 
 		# Tier 0 -> Tier 1: Predictive Lead Aiming Optics & 2x Health
-		if ev.tier == 0 and ev.encounters_fought >= 1:
+		if ev.tier == 0 and ev.encounters_fought >= BATTLES_FOR_FIRST_EVOLUTION:
 			ev.tier = 1
 			for g in active_genomes["SHOOTER"]:
 				g.tier = 1
@@ -261,7 +268,7 @@ func process_encounter_end(
 			ev.history.append(record)
 
 		# Tier 1 -> Tier 2: 2-Round Burst Volley & 4x Health
-		elif ev.tier == 1 and ev.encounters_fought >= 2:
+		elif ev.tier == 1 and ev.encounters_fought >= BATTLES_FOR_SECOND_EVOLUTION:
 			ev.tier = 2
 			for g in active_genomes["SHOOTER"]:
 				g.tier = 2

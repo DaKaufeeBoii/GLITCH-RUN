@@ -9,7 +9,7 @@ class_name DungeonGenerator
 ##   5. Spawn Clearances & Tactical Context Interface
 ##   6. Deterministic Seed Reproduction
 
-const ROOM_RECT := Rect2(42.0, 64.0, 876.0, 424.0)
+const ROOM_RECT := Rect2(42.0, 64.0, 1600.0, 900.0)
 const GRID_CELL_SIZE := 32.0
 const MIN_PLAYER_ENEMY_DIST := 195.0
 const MAX_VALIDATION_RETRIES := 10
@@ -34,6 +34,7 @@ class RoomData extends RefCounted:
 		"hazard_density": 0.0
 	}
 	var is_validated: bool = false
+	var is_sector_wave: bool = false
 
 	func to_dict() -> Dictionary:
 		var obs_list: Array[Dictionary] = []
@@ -50,7 +51,7 @@ class RoomData extends RefCounted:
 
 class DungeonLayout extends RefCounted:
 	var seed_value: int = 0
-	var total_rooms: int = 6
+	var total_rooms: int = 12
 	var rooms: Array[RoomData] = []
 	var adjacency: Dictionary = {} # int -> Array[int]
 
@@ -59,8 +60,10 @@ class DungeonLayout extends RefCounted:
 			return rooms[idx]
 		return null
 
+var last_wave_compositions: Dictionary = {}
 
-func generate_dungeon(seed_val: int, room_count: int = 6) -> DungeonLayout:
+
+func generate_dungeon(seed_val: int, room_count: int = 12, regular_wave_count: int = 5) -> DungeonLayout:
 	## Generates a completely validated, connected procedural dungeon layout from a seed.
 	var layout := DungeonLayout.new()
 	layout.seed_value = seed_val
@@ -92,21 +95,21 @@ func generate_dungeon(seed_val: int, room_count: int = 6) -> DungeonLayout:
 			room_types.append("BOSS")
 		elif i == 1:
 			room_types.append("COMBAT")
-		elif i == 2:
-			# Branch node: Shop or Recovery
-			room_types.append("SHOP" if graph_rng.randf() < 0.60 else "RECOVERY")
-		elif i == 3:
-			# Branch node: Gift or Combat
-			room_types.append("GIFT" if graph_rng.randf() < 0.55 else "COMBAT")
-		elif i == 4:
-			# Late node: Elite or Combat
-			room_types.append("ELITE" if graph_rng.randf() < 0.50 else "COMBAT")
+		elif i == 2 or i == 6:
+			room_types.append("SHOP")
+		elif i == 4 or i == 8:
+			room_types.append("GIFT")
+		elif i == 10:
+			room_types.append("ELITE" if graph_rng.randf() < 0.50 else "RECOVERY")
+		elif i % 2 == 1 and i <= regular_wave_count * 2 - 1:
+			room_types.append("ELITE" if i >= 5 and graph_rng.randf() < 0.25 else "COMBAT")
 		else:
-			room_types.append("COMBAT")
+			room_types.append("RECOVERY")
 
 	# 3. Generate and Validate each Room in the Graph
 	for i in range(room_count):
 		var room := _generate_valid_room(i, room_types[i], layout, room_types, geom_rng, spawn_rng)
+		room.is_sector_wave = i % 2 == 1 and i <= regular_wave_count * 2 - 1
 		room.connections.assign(layout.adjacency.get(i, []))
 		layout.rooms.append(room)
 
@@ -122,32 +125,14 @@ func _build_topology_graph(layout: DungeonLayout, count: int, _rng: RandomNumber
 		layout.adjacency[i].append(i + 1)
 		layout.adjacency[i + 1].append(i)
 
-	# Interconnected branch shortcuts and loops
-	if count >= 6:
-		# Room 0 connects forward to Room 1 (Combat) and Room 2 (Shop/Recovery)
-		if not 2 in layout.adjacency[0]:
-			layout.adjacency[0].append(2)
-			layout.adjacency[2].append(0)
-
-		# Room 1 connects forward to Room 3 (Gift/Combat)
-		if not 3 in layout.adjacency[1]:
-			layout.adjacency[1].append(3)
-			layout.adjacency[3].append(1)
-
-		# Room 2 connects forward to Room 4 (Elite/Combat)
-		if not 4 in layout.adjacency[2]:
-			layout.adjacency[2].append(4)
-			layout.adjacency[4].append(2)
-
-		# Room 3 connects forward to Room 5 (Boss)
-		if not (count - 1) in layout.adjacency[3]:
-			layout.adjacency[3].append(count - 1)
-			layout.adjacency[count - 1].append(3)
-
-	elif count >= 5:
-		if not 3 in layout.adjacency[1]:
-			layout.adjacency[1].append(3)
-			layout.adjacency[3].append(1)
+	# Optional even-numbered rooms branch off the mandatory combat spine. Seeded
+	# skip edges never bypass a scheduled wave room, and the first route choice is
+	# guaranteed so every sector has at least one meaningful decision.
+	for index in range(1, count - 2, 2):
+		var target := index + 2
+		if (index == 1 or _rng.randf() < 0.70) and not target in layout.adjacency[index]:
+			layout.adjacency[index].append(target)
+			layout.adjacency[target].append(index)
 
 
 func _generate_valid_room(
@@ -224,21 +209,17 @@ func _get_provisional_room_type(room_idx: int, total_rooms: int, room_types: Arr
 	if room_idx >= total_rooms - 1:
 		return "BOSS"
 	match room_idx:
-		1:
-			return "COMBAT"
-		2:
+		2, 6:
 			return "SHOP"
-		3:
+		4, 8:
 			return "GIFT"
-		4:
-			return "ELITE"
+		10:
+			return "RECOVERY"
 		_:
 			return "COMBAT"
 
 
 func _get_door_label(target_idx: int, room_type: String) -> String:
-	if target_idx >= 5:
-		return "SECTOR GATE // NEXUS CORE"
 	match room_type:
 		"START":
 			return "CALIBRATION DOCK"
@@ -366,14 +347,25 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.flanking_lanes = 2
 
 		"BOSS_NEXUS":
-			var b_size := Vector2(36.0, 36.0)
-			room.obstacles.append(Rect2(Vector2(180.0 - 18.0, 150.0 - 18.0), b_size))
-			room.obstacles.append(Rect2(Vector2(780.0 - 18.0, 150.0 - 18.0), b_size))
-			room.obstacles.append(Rect2(Vector2(180.0 - 18.0, 400.0 - 18.0), b_size))
-			room.obstacles.append(Rect2(Vector2(780.0 - 18.0, 400.0 - 18.0), b_size))
+			var b_size := Vector2(64.0, 64.0)
+			var x_offset := room.bounds.size.x * 0.28
+			var y_offset := room.bounds.size.y * 0.25
+			room.obstacles.append(Rect2(center + Vector2(-x_offset, -y_offset) - b_size * 0.5, b_size))
+			room.obstacles.append(Rect2(center + Vector2(x_offset, -y_offset) - b_size * 0.5, b_size))
+			room.obstacles.append(Rect2(center + Vector2(-x_offset, y_offset) - b_size * 0.5, b_size))
+			room.obstacles.append(Rect2(center + Vector2(x_offset, y_offset) - b_size * 0.5, b_size))
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.15
 			room.tactical_context.flanking_lanes = 4
+
+	# The enlarged rooms need their cover and lanes spread out too. Scale around
+	# the room center so templates remain legible at the scrolling camera scale.
+	if template_name != "BOSS_NEXUS":
+		for obstacle_index in range(room.obstacles.size()):
+			var obstacle: Rect2 = room.obstacles[obstacle_index]
+			var scaled_size := obstacle.size * 1.65
+			var scaled_center := center + (obstacle.get_center() - center) * 1.65
+			room.obstacles[obstacle_index] = Rect2(scaled_center - scaled_size * 0.5, scaled_size)
 
 
 func _generate_shop_stock(rng: RandomNumberGenerator) -> Array[Dictionary]:
@@ -417,7 +409,7 @@ func _generate_enemy_spawns(room: RoomData, index: int, room_type: String, rng: 
 		return
 
 	if room_type == "BOSS":
-		room.enemy_spawns.append({ "type": "BOSS", "pos": Vector2(680, 276), "flank_angle": 0.0 })
+		room.enemy_spawns.append({ "type": "BOSS", "pos": Vector2(room.bounds.position.x + room.bounds.size.x * 0.70, room.bounds.get_center().y), "flank_angle": 0.0 })
 		return
 
 	# Progressive enemy composition for combat arenas & standby spawns
@@ -442,6 +434,86 @@ func _generate_enemy_spawns(room: RoomData, index: int, room_type: String, rng: 
 			"pos": pos,
 			"flank_angle": flank if etype == "CHASER" else 0.0
 		})
+
+
+func generate_wave_spawns(room: RoomData, sector_seed: int, wave_number: int, spawn_budget: int) -> Array[Dictionary]:
+	## Builds a deterministic, room-specific roster for each wave. It varies enemy
+	## roles, count, and spawn positions instead of replaying room.enemy_spawns.
+	if room.room_type in ["START", "RECOVERY", "SHOP", "GIFT", "BOSS"]:
+		return room.enemy_spawns.duplicate(true)
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int((sector_seed ^ (room.index * 73856093) ^ (wave_number * 19349663)) & 0x7FFFFFFF)
+	var available := ["CHASER"]
+	if room.index >= 1:
+		available.append("SHOOTER")
+	if room.index >= 2:
+		available.append("DASHER")
+	var recipes := [
+		["CHASER", "CHASER", "CHASER", "CHASER"],
+		["SHOOTER", "CHASER", "SHOOTER", "CHASER"],
+		["DASHER", "CHASER", "DASHER", "CHASER"],
+		["SHOOTER", "DASHER", "CHASER", "SHOOTER"],
+		["DASHER", "DASHER", "SHOOTER", "CHASER"],
+		["CHASER", "SHOOTER", "DASHER", "DASHER"]
+	]
+	var max_count := mini(8, maxi(3, 3 + int(room.index * 0.45)))
+	var count_offset := posmod(wave_number - 1, 3) - 1
+	var count := clampi(mini(spawn_budget, max_count) + count_offset, 2, mini(spawn_budget, max_count))
+	var key := str(sector_seed)
+	var recipe_index := int(rng.randi() % recipes.size())
+	var roster: Array[String] = []
+	var signature := ""
+	for attempt in range(recipes.size()):
+		roster.clear()
+		var recipe: Array = recipes[recipe_index]
+		for slot in range(count):
+			var wanted: String = recipe[(slot + wave_number - 1) % recipe.size()]
+			if not available.has(wanted):
+				wanted = available[(slot + attempt) % available.size()]
+			roster.append(wanted)
+		signature = ",".join(roster)
+		if signature != str(last_wave_compositions.get(key, "")):
+			break
+		recipe_index = (recipe_index + 1) % recipes.size()
+	last_wave_compositions[key] = signature
+	if last_wave_compositions.size() > 3:
+		last_wave_compositions.erase(last_wave_compositions.keys()[0])
+
+	var positions: Array[Vector2] = []
+	var tries := 0
+	while positions.size() < count and tries < count * 30:
+		tries += 1
+		var pos := Vector2(
+			rng.randf_range(room.bounds.position.x + 110.0, room.bounds.end.x - 110.0),
+			rng.randf_range(room.bounds.position.y + 90.0, room.bounds.end.y - 90.0)
+		)
+		if pos.distance_to(room.player_spawn) < MIN_PLAYER_ENEMY_DIST:
+			continue
+		var blocked := false
+		for obstacle in room.obstacles:
+			if obstacle.grow(28.0).has_point(pos):
+				blocked = true
+				break
+		if blocked:
+			continue
+		var spaced := true
+		for other in positions:
+			if pos.distance_squared_to(other) < 80.0 * 80.0:
+				spaced = false
+				break
+		if spaced:
+			positions.append(pos)
+	
+	var result: Array[Dictionary] = []
+	for index in range(mini(roster.size(), positions.size())):
+		var family: String = roster[index]
+		result.append({
+			"type": family,
+			"pos": positions[index],
+			"flank_angle": (0.55 if index % 2 == 0 else -0.55) if family == "CHASER" else 0.0
+		})
+	return result
 
 
 func _validate_room_reachability(room: RoomData) -> bool:
@@ -550,7 +622,7 @@ func _build_fallback_room(index: int, room_type: String) -> RoomData:
 	room.obstacles.append(Rect2(center.x + 120.0, center.y - 20.0, 40.0, 40.0))
 
 	if room_type == "BOSS":
-		room.enemy_spawns.append({ "type": "BOSS", "pos": Vector2(680, 276), "flank_angle": 0.0 })
+		room.enemy_spawns.append({ "type": "BOSS", "pos": Vector2(room.bounds.position.x + room.bounds.size.x * 0.70, room.bounds.get_center().y), "flank_angle": 0.0 })
 	else:
 		room.enemy_spawns.append({ "type": "CHASER", "pos": Vector2(620, 200), "flank_angle": 0.55 })
 		room.enemy_spawns.append({ "type": "CHASER", "pos": Vector2(740, 276), "flank_angle": 0.0 })
