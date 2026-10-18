@@ -8,6 +8,7 @@ const POOL_SIZE := 10
 
 var sounds: Dictionary = {}
 var player_pool: Array[AudioStreamPlayer] = []
+var music_player: AudioStreamPlayer
 var pool_index := 0
 
 
@@ -18,9 +19,15 @@ func _ready() -> void:
 
 
 func _init_player_pool() -> void:
+	# Dedicated music player on Music bus
+	music_player = AudioStreamPlayer.new()
+	music_player.bus = "Music"
+	add_child(music_player)
+
+	# SFX player pool on SFX bus
 	for i in range(POOL_SIZE):
 		var p := AudioStreamPlayer.new()
-		p.bus = "Master"
+		p.bus = "SFX"
 		add_child(p)
 		player_pool.append(p)
 
@@ -41,11 +48,36 @@ func play(sound_id: String, pitch_range: float = 0.0, volume_offset_db: float = 
 	p.play()
 
 
-func _create_stream(samples: PackedFloat32Array) -> AudioStreamWAV:
+func play_music(music_id: String = "theme_loop") -> void:
+	if not is_instance_valid(music_player):
+		return
+	if music_player.playing and music_player.stream == sounds.get(music_id):
+		return
+	if sounds.has(music_id):
+		music_player.stream = sounds[music_id]
+		music_player.volume_db = -4.0
+		music_player.play()
+
+
+func stop_music() -> void:
+	if is_instance_valid(music_player):
+		music_player.stop()
+
+
+func pause_music(paused: bool) -> void:
+	if is_instance_valid(music_player):
+		music_player.stream_paused = paused
+
+
+func _create_stream(samples: PackedFloat32Array, is_loop: bool = false) -> AudioStreamWAV:
 	var wav := AudioStreamWAV.new()
 	wav.format = AudioStreamWAV.FORMAT_16_BITS
 	wav.mix_rate = SAMPLE_RATE
 	wav.stereo = false
+	if is_loop:
+		wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		wav.loop_begin = 0
+		wav.loop_end = samples.size()
 
 	var byte_count := samples.size() * 2
 	var byte_data := PackedByteArray()
@@ -79,6 +111,7 @@ func _synthesize_all_sounds() -> void:
 	sounds["mutation_alert"] = _synth_mutation_alert()
 	sounds["ui_hover"] = _synth_ui_hover()
 	sounds["ui_click"] = _synth_ui_click()
+	sounds["theme_loop"] = _synth_synthwave_theme()
 
 
 func _synth_blaster() -> AudioStreamWAV:
@@ -291,3 +324,62 @@ func _synth_ui_click() -> AudioStreamWAV:
 		samples[i] = sq * env * 0.38
 
 	return _create_stream(samples)
+
+
+func _synth_synthwave_theme() -> AudioStreamWAV:
+	# 8-beat 110 BPM cyber synthwave theme loop (~4.36s)
+	var bpm := 110.0
+	var beat_duration := 60.0 / bpm
+	var total_duration := beat_duration * 8.0
+	var num_samples := int(SAMPLE_RATE * total_duration)
+	var samples := PackedFloat32Array()
+	samples.resize(num_samples)
+
+	# Frequencies: D2 (73.4), F2 (87.3), G2 (98.0), A2 (110.0), Bb2 (116.5), C3 (130.8)
+	var bass_notes := [73.4, 73.4, 73.4, 73.4, 116.5, 116.5, 130.8, 130.8]
+	# Arp pattern across 32 sixteenth notes:
+	var arp_freqs := [
+		293.7, 349.2, 440.0, 587.3, 523.3, 440.0, 349.2, 392.0,
+		293.7, 349.2, 440.0, 587.3, 698.5, 587.3, 523.3, 440.0,
+		233.1, 293.7, 349.2, 466.2, 587.3, 466.2, 349.2, 293.7,
+		261.6, 329.6, 392.0, 523.3, 659.3, 523.3, 392.0, 329.6
+	]
+
+	var bass_phase := 0.0
+	var arp_phase := 0.0
+	var sixteenth_dur := beat_duration * 0.25
+
+	for i in range(num_samples):
+		var t := float(i) / float(SAMPLE_RATE)
+		var beat_idx := int(t / beat_duration) % 8
+		var sixteenth_idx := int(t / sixteenth_dur) % 32
+		var t_in_sixteenth := fmod(t, sixteenth_dur)
+		var t_in_beat := fmod(t, beat_duration)
+
+		# 1. 16th-note driving bass
+		var b_freq: float = bass_notes[beat_idx]
+		bass_phase += b_freq * (1.0 / SAMPLE_RATE)
+		# Sawtooth wave softened with sine
+		var saw := (fposmod(bass_phase, 1.0) * 2.0 - 1.0) * 0.6 + sin(bass_phase * TAU) * 0.4
+		var bass_env := exp(-t_in_sixteenth * 12.0)
+		var bass_sample := saw * bass_env * 0.32
+
+		# 2. Arpeggio lead
+		var a_freq: float = arp_freqs[sixteenth_idx]
+		arp_phase += a_freq * (1.0 / SAMPLE_RATE)
+		var arp_wave := sin(arp_phase * TAU) * 0.8 + sin(arp_phase * 2.0 * TAU) * 0.2
+		var arp_env := exp(-t_in_sixteenth * 8.0)
+		var arp_sample := arp_wave * arp_env * 0.18
+
+		# 3. Soft cyber kick on each quarter-note beat
+		var kick_sample := 0.0
+		if t_in_beat < 0.12:
+			var k_env := 1.0 - (t_in_beat / 0.12)
+			var k_freq := lerpf(120.0, 45.0, t_in_beat / 0.12)
+			kick_sample = sin(t_in_beat * k_freq * TAU) * k_env * 0.25
+
+		var mixed := bass_sample + arp_sample + kick_sample
+		samples[i] = clampf(mixed, -1.0, 1.0)
+
+	return _create_stream(samples, true)
+

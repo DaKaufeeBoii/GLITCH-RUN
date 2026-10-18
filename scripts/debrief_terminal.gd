@@ -5,6 +5,7 @@ extends Control
 
 signal restart_requested
 signal menu_requested
+signal replay_seed_requested(seed_val: int)
 
 var radar_node: Control
 var archetype_label: Label
@@ -139,13 +140,19 @@ func _build_ui() -> void:
 
 	var menu_btn := Button.new()
 	menu_btn.text = "MAIN MENU"
-	menu_btn.custom_minimum_size = Vector2(160, 42)
+	menu_btn.custom_minimum_size = Vector2(150, 48)
 	menu_btn.pressed.connect(_on_menu_pressed)
 	footer_hbox.add_child(menu_btn)
 
+	var replay_btn := Button.new()
+	replay_btn.text = "REPLAY SEED"
+	replay_btn.custom_minimum_size = Vector2(160, 48)
+	replay_btn.pressed.connect(_on_replay_seed_pressed)
+	footer_hbox.add_child(replay_btn)
+
 	var restart_btn := Button.new()
 	restart_btn.text = "NEW SIMULATION"
-	restart_btn.custom_minimum_size = Vector2(180, 42)
+	restart_btn.custom_minimum_size = Vector2(180, 48)
 	restart_btn.pressed.connect(_on_restart_pressed)
 	footer_hbox.add_child(restart_btn)
 
@@ -420,6 +427,15 @@ func _on_restart_pressed() -> void:
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("ui_click", 0.0, 0.0)
 	restart_requested.emit()
+
+
+func _on_replay_seed_pressed() -> void:
+	visible = false
+	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+		get_node("/root/AudioSynth").play("ui_click", 0.0, 0.0)
+	var rs = get_node_or_null("/root/RunState")
+	var s: int = rs.current_seed if rs else 1337
+	replay_seed_requested.emit(s)
 
 
 func _on_menu_pressed() -> void:

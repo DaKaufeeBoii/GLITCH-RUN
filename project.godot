@@ -17,6 +17,7 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [autoload]
 
+Settings="*res://scripts/settings_manager.gd"
 RunState="*res://scripts/run_state.gd"
 AudioSynth="*res://scripts/audio_synth.gd"
 

@@ -15,6 +15,9 @@ const SPATIAL_INDEX_SCRIPT := preload("res://scripts/spatial_index.gd")
 const SQUAD_COORDINATOR_SCRIPT := preload("res://scripts/squad_coordinator.gd")
 const BOSS_DIRECTOR_SCRIPT := preload("res://scripts/boss_director.gd")
 const BOSS_DEFINITION_SCRIPT := preload("res://scripts/boss_definition.gd")
+const SETTINGS_MANAGER_SCRIPT := preload("res://scripts/settings_manager.gd")
+const MAIN_MENU_SCRIPT := preload("res://scripts/main_menu.gd")
+const PAUSE_MENU_SCRIPT := preload("res://scripts/pause_menu.gd")
 
 func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
@@ -60,9 +63,11 @@ static func run_all_tests() -> bool:
 	all_passed = test_boss_director_rotation_and_schedule() and all_passed
 	all_passed = test_returning_boss_mutation_tradeoffs() and all_passed
 	all_passed = test_boss_history_run_persistence() and all_passed
+	all_passed = test_settings_persistence_and_audio_buses() and all_passed
+	all_passed = test_menu_and_pause_modal_flows() and all_passed
 
 	if all_passed:
-		print("--- ALL 35 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER & FAIRNESS SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 37 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS & UI SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -1073,4 +1078,88 @@ static func test_boss_history_run_persistence() -> bool:
 	rs.free()
 	print("  [PASS] Boss History Run Persistence & Bounding Scenario")
 	return true
+
+
+static func test_settings_persistence_and_audio_buses() -> bool:
+	var sm = SETTINGS_MANAGER_SCRIPT.new()
+	sm._setup_audio_buses()
+
+	# Audio buses exist
+	assert(AudioServer.get_bus_index("Master") != -1, "Master bus must exist")
+	assert(AudioServer.get_bus_index("Music") != -1, "Music bus must exist")
+	assert(AudioServer.get_bus_index("SFX") != -1, "SFX bus must exist")
+
+	# Defaults
+	assert(sm.master_volume >= 0.0 and sm.master_volume <= 1.0, "Master volume must be normalized")
+	assert(sm.music_volume >= 0.0 and sm.music_volume <= 1.0, "Music volume must be normalized")
+	assert(sm.sfx_volume >= 0.0 and sm.sfx_volume <= 1.0, "SFX volume must be normalized")
+
+	# Mutation and persistence
+	sm.master_volume = 0.65
+	sm.music_volume = 0.45
+	sm.sfx_volume = 0.85
+	sm.screen_shake_enabled = false
+	sm.haptics_enabled = false
+	sm.save_settings()
+
+	var sm_reload = SETTINGS_MANAGER_SCRIPT.new()
+	sm_reload.load_settings()
+	assert(is_equal_approx(sm_reload.master_volume, 0.65), "Master volume must reload correctly")
+	assert(is_equal_approx(sm_reload.music_volume, 0.45), "Music volume must reload correctly")
+	assert(is_equal_approx(sm_reload.sfx_volume, 0.85), "SFX volume must reload correctly")
+	assert(not sm_reload.screen_shake_enabled, "Screen shake setting must reload correctly")
+	assert(not sm_reload.haptics_enabled, "Haptics setting must reload correctly")
+
+	# Restore defaults
+	sm.master_volume = 1.0
+	sm.music_volume = 0.75
+	sm.sfx_volume = 0.9
+	sm.screen_shake_enabled = true
+	sm.haptics_enabled = true
+	sm.save_settings()
+
+	sm.free()
+	sm_reload.free()
+
+	print("  [PASS] Settings Persistence & Multi-Bus Audio Configuration Scenario")
+	return true
+
+
+static func test_menu_and_pause_modal_flows() -> bool:
+	# 1. Main Menu
+	var menu = MAIN_MENU_SCRIPT.new()
+	menu._build_ui()
+
+	# Check difficulty cycling
+	assert(menu.DIFFICULTIES.size() == 3, "Must support 3 difficulty tiers")
+	var orig_diff_idx: int = int(menu.difficulty_index)
+	menu._on_difficulty_pressed()
+	assert(menu.difficulty_index == (orig_diff_idx + 1) % 3, "Difficulty button must cycle tiers")
+
+	# Check modals exist and toggle
+	assert(is_instance_valid(menu.how_to_play_panel), "How to play panel must exist on title menu")
+	assert(is_instance_valid(menu.settings_panel), "Settings panel must exist on title menu")
+	assert(is_instance_valid(menu.archive_panel), "Archive panel must exist on title menu")
+
+	# 2. Pause Menu
+	var pause = PAUSE_MENU_SCRIPT.new()
+	pause._build_ui()
+
+	assert(is_instance_valid(pause.confirm_panel), "Confirmation panel must exist on pause menu")
+	assert(is_instance_valid(pause.settings_panel), "Settings panel must exist on pause menu")
+	assert(is_instance_valid(pause.how_to_play_panel), "How to play panel must exist on pause menu")
+
+	# Confirmation flow
+	var restart_confirmed := [false]
+	pause._show_confirmation("ABANDON RUN", "Test Msg", func(): restart_confirmed[0] = true)
+	assert(pause.confirm_panel.visible, "Confirmation modal must become visible on action request")
+	pause.confirm_callback.call()
+	assert(restart_confirmed[0], "Confirming modal must invoke targeted action callback")
+
+	menu.free()
+	pause.free()
+
+	print("  [PASS] Touch Navigation, Modals & Confirmation Flows Scenario")
+	return true
+
 

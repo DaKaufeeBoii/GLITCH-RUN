@@ -112,16 +112,16 @@
 
 **Goal:** Complete the player-facing flows expected of an Android game.
 
-- [ ] Redesign the title menu hierarchy for touch: Play/Continue if applicable, difficulty, Settings, How to Play, Records, and Quit. Keep the title/art readable across common landscape aspect ratios and avoid tiny text/buttons.
-- [ ] Add a settings screen with persisted master/music/SFX volume, haptics toggle if supported, screen shake toggle/intensity, and control sensitivity/layout options only where those options are implemented. Apply saved settings on startup.
-- [ ] Configure separate Godot audio buses for music and SFX. Add a looping theme track appropriate to the project (original/appropriately licensed asset or a generated musical loop), with seamless/reasonable transitions between menu and gameplay. Respect Android audio focus/backgrounding and volume sliders.
-- [ ] Keep synthesized SFX, but avoid doing expensive synthesis or reinitializing all streams on every scene change. Verify pooling under boss/projectile-heavy combat.
-- [ ] Add a How to Play/control overlay with movement, aim/fire, dash, warnings, upgrades, waves, bosses, and pause instructions. Make it available from menu and pause.
-- [ ] Expand pause menu with Settings, How to Play, Restart, Return to Title, and Resume. Return/Restart should use confirmation when the player would lose an active run; pause state and audio must be restored on cancel.
-- [ ] Add a clear Quit/Exit button in the title menu for Android and desktop. Handle Android back button consistently: dismiss modal -> pause/resume -> return/menu as appropriate; avoid closing unexpectedly in active gameplay without an explicit path.
-- [ ] Pause safely on app focus loss/backgrounding and resume only after explicit player action. Verify `SceneTree.paused`, always-process UI, audio buses, timers, touch-control state, and upgrade screens work together.
-- [ ] Improve run-end screens with clear cause/result, reached depth, bosses defeated, upgrades, time, seed, and actions for Retry, Title, and optionally Copy/Replay Seed.
-- [ ] Apply minimum 48dp-equivalent touch target sizing as appropriate to Godot viewport scaling, safe margins, readable contrast, and avoid relying on hover states.
+- [x] Redesign the title menu hierarchy for touch: Play/Continue if applicable, difficulty, Settings, How to Play, Records, and Quit. Keep the title/art readable across common landscape aspect ratios and avoid tiny text/buttons.
+- [x] Add a settings screen with persisted master/music/SFX volume, haptics toggle if supported, screen shake toggle/intensity, and control sensitivity/layout options only where those options are implemented. Apply saved settings on startup.
+- [x] Configure separate Godot audio buses for music and SFX. Add a looping theme track appropriate to the project (original/appropriately licensed asset or a generated musical loop), with seamless/reasonable transitions between menu and gameplay. Respect Android audio focus/backgrounding and volume sliders.
+- [x] Keep synthesized SFX, but avoid doing expensive synthesis or reinitializing all streams on every scene change. Verify pooling under boss/projectile-heavy combat.
+- [x] Add a How to Play/control overlay with movement, aim/fire, dash, warnings, upgrades, waves, bosses, and pause instructions. Make it available from menu and pause.
+- [x] Expand pause menu with Settings, How to Play, Restart, Return to Title, and Resume. Return/Restart should use confirmation when the player would lose an active run; pause state and audio must be restored on cancel.
+- [x] Add a clear Quit/Exit button in the title menu for Android and desktop. Handle Android back button consistently: dismiss modal -> pause/resume -> return/menu as appropriate; avoid closing unexpectedly in active gameplay without an explicit path.
+- [x] Pause safely on app focus loss/backgrounding and resume only after explicit player action. Verify `SceneTree.paused`, always-process UI, audio buses, timers, touch-control state, and upgrade screens work together.
+- [x] Improve run-end screens with clear cause/result, reached depth, bosses defeated, upgrades, time, seed, and actions for Retry, Title, and optionally Copy/Replay Seed.
+- [x] Apply minimum 48dp-equivalent touch target sizing as appropriate to Godot viewport scaling, safe margins, readable contrast, and avoid relying on hover states.
 
 **Acceptance:** A new player can launch, understand controls, adjust sound, pause/resume, confirm abandoning a run, return to title, and exit. Settings survive restart and work on an Android device.
 

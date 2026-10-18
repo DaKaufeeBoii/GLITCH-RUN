@@ -154,11 +154,21 @@ func _ready() -> void:
 	# Initialize Glitch Post-Processing Layer
 	_init_glitch_layer()
 
+	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+		get_node("/root/AudioSynth").play_music("theme_loop")
+
 	_create_ui()
 	_create_walls()
 	_create_player()
 	_load_room(rs.current_room_index)
 	queue_redraw()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_APPLICATION_PAUSED:
+		if not run_over and is_instance_valid(pause_menu) and not pause_menu.visible:
+			if is_instance_valid(upgrade_container) and not upgrade_container.visible:
+				pause_menu.open_pause()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -176,7 +186,12 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func add_trauma(amount: float) -> void:
-	trauma = clampf(trauma + amount, 0.0, 1.0)
+	var sm = get_node_or_null("/root/Settings")
+	if sm and not sm.screen_shake_enabled:
+		trauma = 0.0
+		return
+	var intensity: float = sm.screen_shake_intensity if sm else 1.0
+	trauma = clampf(trauma + amount * intensity, 0.0, 1.0)
 
 
 func trigger_glitch(intensity: float = 0.75) -> void:
@@ -1190,6 +1205,7 @@ func _create_ui() -> void:
 	debrief_terminal = DEBRIEF_TERMINAL_SCRIPT.new()
 	debrief_terminal.visible = false
 	debrief_terminal.restart_requested.connect(_restart_run)
+	debrief_terminal.replay_seed_requested.connect(_restart_run_with_seed)
 	debrief_terminal.menu_requested.connect(_return_to_main_menu)
 	ui_layer.add_child(debrief_terminal)
 	debrief_terminal.visible = false
