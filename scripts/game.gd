@@ -491,7 +491,13 @@ func _check_floor_interactions(_delta: float) -> void:
 				nav_grid.build_grid(inside_room.bounds, obstacle_rects, 24.0)
 			var rs = get_node_or_null("/root/RunState")
 			if rs and rs.progression:
-				rs.progression.calculate_waves_for_current_room(inside_room.room_type)
+				var prof: Dictionary = tracker.get_profile() if tracker else {}
+				var p_rating: float = RunProgression.compute_performance_rating(
+					player.health if is_instance_valid(player) else 5,
+					player.max_health if is_instance_valid(player) else 5,
+					prof
+				)
+				rs.progression.calculate_waves_for_current_room(inside_room.room_type, false, p_rating)
 				rs.current_wave = rs.progression.current_wave
 				rs.waves_in_room = rs.progression.waves_in_room
 			damage_taken_this_sector = 0
@@ -1602,7 +1608,8 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 	var profile: Dictionary = tracker.get_profile() if tracker else {}
 	var p_hp: int = player.health if is_instance_valid(player) else 5
 	var p_max: int = player.max_health if is_instance_valid(player) else 5
-	var spawn_budget: int = rs_node.progression.calculate_spawn_budget(wave_num) if (rs_node and rs_node.progression) else current_room_data.enemy_spawns.size()
+	var p_rating: float = RunProgression.compute_performance_rating(p_hp, p_max, profile) if (rs_node and rs_node.progression) else 1.0
+	var spawn_budget: int = rs_node.progression.calculate_spawn_budget(wave_num, p_rating) if (rs_node and rs_node.progression) else current_room_data.enemy_spawns.size()
 	if current_room_data.room_type in ["COMBAT", "ELITE"]:
 		spawn_budget = maxi(3, spawn_budget)
 	if current_room_data.room_type == "ELITE":
@@ -1616,6 +1623,9 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 		p_hp,
 		p_max
 	)
+	var diff_mults: Dictionary = rs_node.progression.get_difficulty_multipliers(p_rating) if (rs_node and rs_node.progression) else {"speed_mult": 1.0, "telegraph_mult": 1.0}
+	var diff_speed: float = diff_mults.get("speed_mult", 1.0)
+	var diff_tele: float = diff_mults.get("telegraph_mult", 1.0)
 
 	current_sector_tactic = encounter.tactic
 	if wave_num == 1:
@@ -1634,8 +1644,6 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 	if spawns_to_create.is_empty() and not encounter.spawn_list.is_empty():
 		spawns_to_create = encounter.spawn_list
 	if spawns_to_create.is_empty() and current_room_data.room_type in ["COMBAT", "ELITE"]:
-		# Do not silently skip a normal-room encounter if a future roster or AI
-		# filter rejects every generated entry. Keep the room in a playable state.
 		push_warning("Encounter roster was empty in sector %d room %d; using emergency chasers." % [
 			rs_node.progression.sector_index if (rs_node and rs_node.progression) else 1,
 			current_room_data.index
@@ -1647,8 +1655,7 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 			emergency_pos.y = clampf(emergency_pos.y, current_room_data.bounds.position.y + 100.0, current_room_data.bounds.end.y - 100.0)
 			var eg = encounter_director.evolution_manager.get_genome_for_spawn("CHASER") if (encounter_director and encounter_director.evolution_manager) else null
 			spawns_to_create.append({"type": "CHASER", "pos": emergency_pos, "flank_angle": 0.0, "genome": eg})
-	# Boss rooms must never silently become ordinary empty/regular encounters if
-	# encounter composition or budget filtering changes later.
+
 	if current_room_data.room_type == "BOSS":
 		var contains_boss := false
 		for spawn in spawns_to_create:
@@ -1664,8 +1671,8 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 		boss_vanguard_active = true
 		boss_active = false
 
+		var cur_sector: int = rs_node.progression.sector_index if (rs_node and rs_node.progression) else 1
 		if boss_director and rs_node:
-			var cur_sector: int = rs_node.progression.sector_index if rs_node.progression else 1
 			var cur_seed: int = rs_node.current_seed if rs_node else 1337
 			var last_id: String = boss_director.last_scheduled_boss_id if boss_director else ""
 			current_boss_def = boss_director.select_boss_for_sector(cur_sector, cur_seed, last_id)
@@ -1682,12 +1689,27 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 
 		_show_director_banner("ALERT // %s PERIMETER" % b_name, "Core shielded. Eliminate vanguard escort hostiles to unseal the Overlord!")
 
-		# Spawn 3 vanguard escort combatants with evolved genomes
-		var vanguard_specs := [
-			{"scene": CHASER_SCENE, "type": "CHASER", "offset": Vector2(-120.0, -90.0), "flank": 0.50},
-			{"scene": SHOOTER_SCENE, "type": "SHOOTER", "offset": Vector2(60.0, 0.0), "flank": 0.0},
-			{"scene": DASHER_SCENE, "type": "DASHER", "offset": Vector2(-120.0, 90.0), "flank": 0.0}
-		]
+		# Spawn vanguard escort combatants scaled by sector difficulty
+		var vanguard_specs: Array[Dictionary] = []
+		if cur_sector == 1:
+			# Sector 1 (First Boss): Accessible 1-hostile vanguard escort
+			vanguard_specs = [
+				{"scene": CHASER_SCENE, "type": "CHASER", "offset": Vector2(-120.0, 0.0), "flank": 0.0}
+			]
+		elif cur_sector == 2:
+			# Sector 2 (Mid-Boss): 2 vanguard hostiles
+			vanguard_specs = [
+				{"scene": CHASER_SCENE, "type": "CHASER", "offset": Vector2(-120.0, -80.0), "flank": 0.35},
+				{"scene": SHOOTER_SCENE, "type": "SHOOTER", "offset": Vector2(60.0, 0.0), "flank": 0.0}
+			]
+		else:
+			# Sector 3+ (Final Biome Boss): Full 3 vanguard escort hostiles
+			vanguard_specs = [
+				{"scene": CHASER_SCENE, "type": "CHASER", "offset": Vector2(-120.0, -90.0), "flank": 0.50},
+				{"scene": SHOOTER_SCENE, "type": "SHOOTER", "offset": Vector2(60.0, 0.0), "flank": 0.0},
+				{"scene": DASHER_SCENE, "type": "DASHER", "offset": Vector2(-120.0, 90.0), "flank": 0.0}
+			]
+
 		for v in vanguard_specs:
 			var v_pos: Vector2 = boss_spawn_pos + v.offset
 			v_pos.x = clampf(v_pos.x, current_room_data.bounds.position.x + 80.0, current_room_data.bounds.end.x - 80.0)
@@ -1695,8 +1717,8 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 			var v_scene: PackedScene = v.scene
 			var v_type: String = v.type
 			var v_flank: float = v.flank
-			var spd_m: float = encounter.enemy_speed_mult * 1.05
-			var tel_m: float = encounter.enemy_telegraph_mult
+			var spd_m: float = encounter.enemy_speed_mult * diff_speed * 1.05
+			var tel_m: float = encounter.enemy_telegraph_mult * diff_tele
 			var lead_v = encounter.shooter_lead
 			_schedule_spawn_telegraph(
 				v_pos,
@@ -1739,8 +1761,8 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 				scene = DASHER_SCENE
 				col = Color("eab308")
 
-			var spd_m: float = encounter.enemy_speed_mult
-			var tel_m: float = encounter.enemy_telegraph_mult
+			var spd_m: float = encounter.enemy_speed_mult * diff_speed
+			var tel_m: float = encounter.enemy_telegraph_mult * diff_tele
 			var lead_v = encounter.shooter_lead
 			_schedule_spawn_telegraph(
 				pos,
@@ -1789,6 +1811,33 @@ func _spawn_boss(pos: Vector2) -> void:
 	var is_mid: bool = rs_node.progression.is_mid_boss_encounter() if (rs_node and rs_node.progression) else false
 	if "is_mid_boss" in boss:
 		boss.is_mid_boss = is_mid
+
+	# Boss difficulty scaling: First boss is notably easier, progressively harder as depth and sectors advance
+	var hp_scale := 1.0
+	if cur_sector == 1:
+		hp_scale = 0.55 # Sector 1 (First boss): accessible 55% health (~19-20 HP)
+	elif cur_sector == 2:
+		hp_scale = 0.80 # Sector 2 (Mid-boss): ~28 HP
+	else:
+		hp_scale = 1.0 + float(cur_sector - 3) * 0.15
+
+	if tracker and rs_node and rs_node.progression:
+		var p_prof: Dictionary = tracker.get_profile()
+		var p_rating: float = RunProgression.compute_performance_rating(
+			player.health if is_instance_valid(player) else 5,
+			player.max_health if is_instance_valid(player) else 5,
+			p_prof
+		)
+		if p_rating < 0.85:
+			hp_scale *= 0.85
+		elif p_rating > 1.30:
+			hp_scale *= 1.10
+
+	var scaled_hp: int = maxi(15, int(roundf(float(boss.max_health) * hp_scale)))
+	boss.max_health = scaled_hp
+	boss.health = scaled_hp
+	if "dash_speed" in boss and cur_sector == 1:
+		boss.dash_speed *= 0.85 # Forgiving dash speed on first boss
 
 	# Assign returning mutations with trade-offs
 	current_boss_mutations = boss_director.get_mutations_for_encounter(current_boss_def.boss_id) if (boss_director and current_boss_def) else []
@@ -1861,10 +1910,13 @@ func _on_boss_phase_two_entered(boss: Node2D) -> void:
 func _spawn_phase_two_reinforcements(boss_pos: Vector2) -> void:
 	if not is_instance_valid(player) or run_over:
 		return
+	var rs_node = get_node_or_null("/root/RunState")
+	var cur_sector: int = rs_node.progression.sector_index if (rs_node and rs_node.progression) else 1
+	var minion_count := 1 if cur_sector == 1 else 2
 	var minion_types: Array[PackedScene] = [CHASER_SCENE, SHOOTER_SCENE]
 	var minion_fams: Array[String] = ["CHASER", "SHOOTER"]
 	var offsets: Array[Vector2] = [Vector2(-130.0, -80.0), Vector2(-130.0, 80.0)]
-	for i in range(2):
+	for i in range(minion_count):
 		var m_pos: Vector2 = boss_pos + offsets[i]
 		if current_room_data:
 			m_pos.x = clampf(m_pos.x, current_room_data.bounds.position.x + 80.0, current_room_data.bounds.end.x - 80.0)

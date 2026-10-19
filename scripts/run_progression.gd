@@ -124,10 +124,43 @@ func is_sector_regular_waves_complete() -> bool:
 	return sector_waves_completed >= sector_total_waves
 
 
-func calculate_waves_for_current_room(_room_type: String = "", one_encounter_per_room: bool = false) -> int:
+static func compute_performance_rating(current_hp: int, max_hp: int, profile: Dictionary) -> float:
+	## Evaluates player gameplay competence & stress based on health, damage rate, and accuracy.
+	## Returns a normalized rating: < 0.85 = struggling (grant mercy), 1.0 = balanced, > 1.25 = dominating.
+	var hp_ratio: float = float(current_hp) / float(maxi(1, max_hp))
+	var accuracy: float = float(profile.get("accuracy", 0.5))
+	var dpm: float = float(profile.get("damage_per_min", 0.0))
+
+	var rating := 1.0
+
+	# Health factor
+	if hp_ratio >= 0.80:
+		rating += (hp_ratio - 0.70) * 0.4
+	elif hp_ratio <= 0.40:
+		rating -= (0.50 - hp_ratio) * 0.8
+
+	# Damage rate factor (high damage taken lowers rating significantly)
+	if dpm > 5.0:
+		rating -= 0.35
+	elif dpm > 3.0:
+		rating -= 0.20
+	elif dpm == 0.0 and profile.get("has_data", false):
+		rating += 0.15
+
+	# Accuracy factor
+	if profile.get("has_data", false):
+		if accuracy > 0.65:
+			rating += 0.15
+		elif accuracy < 0.30:
+			rating -= 0.15
+
+	return clampf(rating, 0.4, 1.8)
+
+
+func calculate_waves_for_current_room(_room_type: String = "", one_encounter_per_room: bool = false, performance_factor: float = 1.0) -> int:
 	## Calculates combat wave count for each chamber.
-	## Every chamber guarantees enemy combat engagements (never 0 waves).
-	## Combat & Elite rooms always have 3–5 waves procedurally (never 1 wave).
+	## Floor 1 (run_depth <= 3): begins easy with mostly 1 or 2 waves.
+	## Floor 2+ (run_depth >= 4): scales progressively (3 to 5 waves).
 	if one_encounter_per_room:
 		waves_in_room = 1
 	else:
@@ -138,22 +171,37 @@ func calculate_waves_for_current_room(_room_type: String = "", one_encounter_per
 				var r_rng := RandomNumberGenerator.new()
 				r_rng.seed = (get_current_sector_seed() + run_depth * 41) & 0x7FFFFFFF
 				if difficulty == "EASY":
-					waves_in_room = r_rng.randi_range(2, 3)
+					if run_depth <= 3:
+						waves_in_room = 2
+					else:
+						waves_in_room = r_rng.randi_range(2, 3)
 				elif difficulty in ["HARD", "HYPERGRID"]:
 					waves_in_room = r_rng.randi_range(4, 5)
-				else:
-					# Procedurally vary in range 3 to 5 (never fixed to 5, never collapsed to 1)
-					waves_in_room = r_rng.randi_range(3, 5)
+				else: # NORMAL (Starts gentle on Floor 1, ramps up slowly)
+					if run_depth <= 3:
+						# Beginning of game: 2 waves for accessible introductory pacing
+						waves_in_room = 2
+					elif run_depth <= 6:
+						waves_in_room = 3
+					elif run_depth <= 11:
+						waves_in_room = r_rng.randi_range(3, 4)
+					else:
+						waves_in_room = r_rng.randi_range(3, 5)
+
+					# Dynamic difficulty adjustment:
+					# If player is struggling, keep waves gentle
+					if performance_factor < 0.8 and waves_in_room > 2 and run_depth <= 8:
+						waves_in_room = maxi(2, waves_in_room - 1)
 
 	current_wave = 1
 	return waves_in_room
 
 
-func calculate_spawn_budget(wave: int) -> int:
-	## Swarm spawn budget scaling with difficulty:
-	## Challenging by default, with higher difficulty tiers escalating hostile numbers.
-	var base_count := 5
-	var min_budget := 4
+func calculate_spawn_budget(wave: int, performance_factor: float = 1.0) -> int:
+	## Swarm spawn budget scaling with difficulty & player performance:
+	## Starts gentle (3 enemies on Floor 1), scaling up slowly with depth.
+	var base_count := 4
+	var min_budget := 3
 	var max_budget := 12
 	match difficulty:
 		"EASY":
@@ -161,21 +209,41 @@ func calculate_spawn_budget(wave: int) -> int:
 			min_budget = 3
 			max_budget = 7
 		"HARD":
-			base_count = 7
-			min_budget = 6
+			base_count = 6
+			min_budget = 5
 			max_budget = 14
 		"HYPERGRID":
-			base_count = 9
-			min_budget = 8
+			base_count = 8
+			min_budget = 7
 			max_budget = 16
-		_: # NORMAL (Challenging default)
-			base_count = 5
-			min_budget = 4
-			max_budget = 12
+		_: # NORMAL (Starts gentle on Floor 1, ramps up slowly)
+			if sector_index == 1 or run_depth <= 3:
+				base_count = 3
+				min_budget = 3
+				max_budget = 5
+			elif sector_index == 2:
+				base_count = 4
+				min_budget = 3
+				max_budget = 8
+			else:
+				base_count = 5
+				min_budget = 4
+				max_budget = 12
 
-	var depth_bonus := clampi(int(float(run_depth) / 2.5), 0, 4)
-	var wave_bonus := clampi(wave - 1, 0, 3)
-	var total_budget: int = clampi(base_count + depth_bonus + wave_bonus, min_budget, max_budget)
+	# Gradual depth bonus: +1 enemy per ~3.5 rooms
+	var depth_bonus := clampi(int(float(run_depth) / 3.5), 0, 4)
+	var wave_bonus := clampi(wave - 1, 0, 2)
+
+	# Dynamic difficulty adjustment:
+	# Struggling player -> -1 hostile
+	# Dominating player -> +1 hostile
+	var perf_adjust := 0
+	if performance_factor < 0.85:
+		perf_adjust = -1
+	elif performance_factor > 1.25:
+		perf_adjust = 1
+
+	var total_budget: int = clampi(base_count + depth_bonus + wave_bonus + perf_adjust, min_budget, max_budget)
 	return total_budget
 
 
@@ -232,21 +300,31 @@ func advance_room(target_room: int = -1) -> Dictionary:
 	}
 
 
-func get_difficulty_multipliers() -> Dictionary:
+func get_difficulty_multipliers(performance_factor: float = 1.0) -> Dictionary:
 	var speed_mult := 1.0
 	var telegraph_mult := 1.0
 	var depth_factor := minf(0.20, float(run_depth - 1) * 0.015)
 	speed_mult += depth_factor
 	telegraph_mult = maxf(0.75, 1.0 - depth_factor * 0.8)
 
-	if difficulty == "EASY":
+	if difficulty == "EASY" or sector_index == 1:
 		speed_mult *= 0.90
 		telegraph_mult *= 1.15
 	elif difficulty == "HARD" or difficulty == "HYPERGRID":
 		speed_mult *= 1.10
 		telegraph_mult *= 0.90
 
+	# Dynamic difficulty scaling based on player gameplay
+	if performance_factor < 0.85:
+		# Player struggling: grant mercy
+		speed_mult *= 0.88
+		telegraph_mult *= 1.25
+	elif performance_factor > 1.25:
+		# Player dominating: slight speed and reaction challenge
+		speed_mult *= 1.05
+		telegraph_mult *= 0.92
+
 	return {
-		"speed_mult": clampf(speed_mult, 0.80, 1.25),
-		"telegraph_mult": clampf(telegraph_mult, 0.70, 1.30)
+		"speed_mult": clampf(speed_mult, 0.75, 1.30),
+		"telegraph_mult": clampf(telegraph_mult, 0.65, 1.45)
 	}
