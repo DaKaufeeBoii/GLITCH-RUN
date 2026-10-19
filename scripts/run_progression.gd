@@ -9,14 +9,18 @@ signal wave_changed(current_wave: int, total_waves: int)
 signal room_changed(room_index: int, total_rooms: int, sector: int, depth: int)
 signal sector_changed(new_sector: int, sector_seed: int)
 signal sector_waves_cleared()
+signal biome_changed(new_biome: int, biome_name: String)
 
 const DEFAULT_ROOMS_PER_SECTOR := 5
 const MIN_SECTOR_WAVES := 3
 const MAX_SECTOR_WAVES := 5
 const MAX_WAVES_PER_ROOM := 5
 const MAX_OPTIONAL_ROOMS_PER_SECTOR := 3
+const SECTORS_PER_BIOME := 3
+const BIOME_DATA_SCRIPT := preload("res://scripts/biome_data.gd")
 
 var run_depth: int = 1 # Monotonically increasing room steps taken across entire run
+var current_biome: int = 1
 var sector_index: int = 1
 var room_index: int = 0 # 0 to rooms_per_sector - 1
 var rooms_per_sector: int = DEFAULT_ROOMS_PER_SECTOR
@@ -43,6 +47,7 @@ func _init(p_run_seed: int = 1337, p_difficulty: String = "NORMAL") -> void:
 
 func reset() -> void:
 	run_depth = 1
+	current_biome = 1
 	sector_index = 1
 	room_index = 0
 	rooms_per_sector = DEFAULT_ROOMS_PER_SECTOR
@@ -93,6 +98,26 @@ func get_current_sector_seed() -> int:
 
 func is_boss_chamber() -> bool:
 	return room_index >= rooms_per_sector - 1
+
+
+func is_middle_sector() -> bool:
+	return sector_index == 2
+
+
+func is_final_sector() -> bool:
+	return sector_index >= SECTORS_PER_BIOME
+
+
+func is_mid_boss_encounter() -> bool:
+	return is_middle_sector() and is_boss_chamber()
+
+
+func is_final_boss_encounter() -> bool:
+	return is_final_sector() and is_boss_chamber()
+
+
+func get_current_biome_data() -> Dictionary:
+	return BIOME_DATA_SCRIPT.get_biome(current_biome)
 
 
 func is_sector_regular_waves_complete() -> bool:
@@ -179,16 +204,25 @@ func advance_room(target_room: int = -1) -> Dictionary:
 	current_wave = 1
 
 	var is_new_sector := false
+	var is_new_biome := false
 	if room_index >= rooms_per_sector:
 		sector_index += 1
 		room_index = 0
 		is_new_sector = true
+		if sector_index > SECTORS_PER_BIOME:
+			current_biome += 1
+			sector_index = 1
+			is_new_biome = true
+			var b_data := get_current_biome_data()
+			biome_changed.emit(current_biome, b_data.get("name", "NEON PROTOCOL"))
 		_init_sector_wave_schedule()
 		sector_changed.emit(sector_index, get_current_sector_seed())
 
 	room_changed.emit(room_index, rooms_per_sector, sector_index, run_depth)
 	return {
 		"is_new_sector": is_new_sector,
+		"is_new_biome": is_new_biome,
+		"biome": current_biome,
 		"sector": sector_index,
 		"room": room_index,
 		"depth": run_depth,

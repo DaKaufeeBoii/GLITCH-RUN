@@ -22,6 +22,7 @@ var dash_hit_player := false
 var damage_flash := 0.0
 var phase_two_triggered := false
 var is_phase_two := false
+var is_mid_boss := false
 
 var squad_coordinator: RefCounted = null
 var active_mutations: Array[Dictionary] = []
@@ -225,7 +226,7 @@ func take_damage(amount: int, _source: String = "plasma") -> void:
 	damage_flash = 0.12
 
 	if health == 0:
-		if not is_phase_two:
+		if not is_phase_two and not is_mid_boss:
 			enter_phase_two()
 			return
 		else:

@@ -116,7 +116,7 @@ func _build_ui() -> void:
 
 	minimap_nodes_hbox = Control.new()
 	minimap_nodes_hbox.set_script(SECTOR_MAP_SCRIPT)
-	minimap_nodes_hbox.custom_minimum_size = Vector2(480, 140)
+	minimap_nodes_hbox.custom_minimum_size = Vector2(480, 180)
 	map_vbox.add_child(minimap_nodes_hbox)
 
 	minimap_branch_label = Label.new()

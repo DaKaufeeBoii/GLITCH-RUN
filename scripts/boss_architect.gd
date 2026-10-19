@@ -21,6 +21,7 @@ var target_warp_pos := Vector2.ZERO
 var damage_flash := 0.0
 var phase_two_triggered := false
 var is_phase_two := false
+var is_mid_boss := false
 
 # Grid partition line parameters
 var grid_h_y: float = -1.0 # Horizontal partition line Y coordinate
@@ -214,7 +215,7 @@ func take_damage(amount: int, _source: String = "plasma") -> void:
 	damage_flash = 0.12
 
 	if health == 0:
-		if not is_phase_two:
+		if not is_phase_two and not is_mid_boss:
 			enter_phase_two()
 			return
 		else:

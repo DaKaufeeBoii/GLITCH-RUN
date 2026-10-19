@@ -7,7 +7,7 @@ class_name SectorMap
 var room_summaries: Array[Dictionary] = []
 var active_room_index: int = 0
 
-const MAP_HEIGHT := 140.0
+const MAP_HEIGHT := 180.0
 const CHAMBER_SIZE := Vector2(36.0, 32.0)
 const BOSS_CHAMBER_SIZE := Vector2(46.0, 42.0)
 
@@ -27,6 +27,32 @@ func configure_map(summaries: Array, current_index: int, total_rooms: int) -> vo
 
 
 func _room_position(index: int, room_type: String, spacing: float, start_x: float) -> Vector2:
+	if index < room_summaries.size():
+		var summary: Dictionary = room_summaries[index]
+		if summary.has("grid_x") and summary.has("grid_y"):
+			var min_x := 9999
+			var max_x := -9999
+			var min_y := 9999
+			var max_y := -9999
+			for s in room_summaries:
+				var gx: int = s.get("grid_x", 0)
+				var gy: int = s.get("grid_y", 0)
+				min_x = mini(min_x, gx)
+				max_x = maxi(max_x, gx)
+				min_y = mini(min_y, gy)
+				max_y = maxi(max_y, gy)
+			var span_x: float = maxf(1.0, float(max_x - min_x))
+			var span_y: float = maxf(1.0, float(max_y - min_y))
+			var cur_gx: float = float(summary.get("grid_x", 0) - min_x)
+			var cur_gy: float = float(summary.get("grid_y", 0) - min_y)
+			var pad_x := 38.0
+			var pad_y := 26.0
+			var w := size.x if size.x > 100.0 else 480.0
+			var h := size.y if size.y > 60.0 else MAP_HEIGHT
+			var px := pad_x + (cur_gx / span_x) * (w - pad_x * 2.0)
+			var py := pad_y + (cur_gy / span_y) * (h - pad_y * 2.0)
+			return Vector2(px, py)
+
 	var lane_y := MAP_HEIGHT * 0.50
 	if room_type in ["RECOVERY"]:
 		lane_y = MAP_HEIGHT * 0.20

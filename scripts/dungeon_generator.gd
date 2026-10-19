@@ -13,6 +13,9 @@ const ROOM_RECT := Rect2(42.0, 64.0, 1600.0, 900.0)
 const GRID_CELL_SIZE := 32.0
 const MIN_PLAYER_ENEMY_DIST := 195.0
 const MAX_VALIDATION_RETRIES := 10
+const FLOOR_CELL_SPACING_X := 1200.0
+const FLOOR_CELL_SPACING_Y := 1000.0
+const FLOOR_START_OFFSET := Vector2(3000.0, 3000.0)
 
 class RoomData extends RefCounted:
 	var index: int = 0
@@ -35,6 +38,10 @@ class RoomData extends RefCounted:
 	}
 	var is_validated: bool = false
 	var is_sector_wave: bool = false
+	var is_cleared: bool = false
+	var is_active: bool = false
+	var doorway_rects: Array[Rect2] = []
+	var grid_pos: Vector2i = Vector2i.ZERO
 
 	func to_dict() -> Dictionary:
 		var obs_list: Array[Dictionary] = []
@@ -48,7 +55,9 @@ class RoomData extends RefCounted:
 			"template_name": template_name,
 			"obstacles_count": obstacles.size(),
 			"enemy_count": enemy_spawns.size(),
-			"tactical_context": tactical_context.duplicate()
+			"tactical_context": tactical_context.duplicate(),
+			"grid_x": grid_pos.x,
+			"grid_y": grid_pos.y
 		}
 
 class DungeonLayout extends RefCounted:
@@ -56,6 +65,14 @@ class DungeonLayout extends RefCounted:
 	var total_rooms: int = 12
 	var rooms: Array[RoomData] = []
 	var adjacency: Dictionary = {} # int -> Array[int]
+	var floor_grid_positions: Dictionary = {} # int -> Vector2i
+	var corridors: Array[Rect2] = []
+	var doorways: Array[Dictionary] = []
+	var floor_bounds: Rect2 = Rect2()
+	var exit_portal_pos: Vector2 = Vector2.ZERO
+	var is_boss_floor: bool = false
+	var boss_type: String = ""
+	var biome_index: int = 1
 
 	func get_room(idx: int) -> RoomData:
 		if idx >= 0 and idx < rooms.size():
@@ -175,6 +192,9 @@ func generate_dungeon(
 		room.connections.assign(layout.adjacency.get(i, []))
 		layout.rooms.append(room)
 
+	if procedural_floor:
+		_build_floor_corridors_and_thresholds(layout, room_types)
+
 	return layout
 
 
@@ -237,35 +257,238 @@ func _compose_procedural_floor(
 func _build_topology_graph(
 	layout: DungeonLayout,
 	count: int,
-	_rng: RandomNumberGenerator,
+	rng: RandomNumberGenerator,
 	room_types: Array[String],
 	procedural_floor: bool
 ) -> void:
 	for i in range(count):
 		layout.adjacency[i] = []
 
-	# Main forward progression spine
-	for i in range(count - 1):
-		layout.adjacency[i].append(i + 1)
-		layout.adjacency[i + 1].append(i)
-
-	# Optional service rooms have an always-available bypass that rejoins at the
-	# next required encounter. Required combat rooms are never skipped.
-	if procedural_floor:
-		for index in range(count - 2):
-			var target := index + 2
-			var middle_is_service := room_types[index + 1] in ["SHOP", "GIFT", "RECOVERY"]
-			var rejoins_at_encounter := room_types[target] in ["COMBAT", "ELITE", "BOSS"]
-			if middle_is_service and rejoins_at_encounter and not target in layout.adjacency[index]:
-				layout.adjacency[index].append(target)
-				layout.adjacency[target].append(index)
-	else:
+	if not procedural_floor:
 		# Preserve the legacy graph behavior for existing generator callers.
+		for i in range(count - 1):
+			layout.adjacency[i].append(i + 1)
+			layout.adjacency[i + 1].append(i)
 		for index in range(1, count - 2, 2):
 			var target := index + 2
-			if (index == 1 or _rng.randf() < 0.70) and not target in layout.adjacency[index]:
+			if (index == 1 or rng.randf() < 0.70) and not target in layout.adjacency[index]:
 				layout.adjacency[index].append(target)
 				layout.adjacency[target].append(index)
+		return
+
+	# True 2D Procedural Cardinal Dungeon Network for Multi-Room Floors
+	var directions: Array[Vector2i] = [
+		Vector2i(1, 0),  # East
+		Vector2i(0, 1),  # South
+		Vector2i(0, -1), # North
+		Vector2i(-1, 0)  # West
+	]
+
+	var grid_positions: Dictionary = {}
+	var occupied: Dictionary = {}
+
+	grid_positions[0] = Vector2i(0, 0)
+	occupied[Vector2i(0, 0)] = 0
+
+	var spine_indices: Array[int] = [0]
+	var service_indices: Array[int] = []
+	for i in range(1, count):
+		var r_type := room_types[i] if i < room_types.size() else "COMBAT"
+		if r_type in ["SHOP", "GIFT", "RECOVERY"]:
+			service_indices.append(i)
+		else:
+			spine_indices.append(i)
+
+	# 1. Place the main progression spine (Start -> Combat 1 -> Combat 2 ... -> Boss)
+	for idx in range(1, spine_indices.size()):
+		var room_idx: int = spine_indices[idx]
+		var placed := false
+
+		# Search backwards from recent spine rooms to find a branch/progression point
+		for search_back in range(idx - 1, -1, -1):
+			var prev_idx: int = spine_indices[search_back]
+			var prev_pos: Vector2i = grid_positions[prev_idx]
+
+			var dirs: Array = directions.duplicate()
+			for di in range(dirs.size() - 1, 0, -1):
+				var swap_j := rng.randi_range(0, di)
+				var tmp: Vector2i = dirs[di]
+				dirs[di] = dirs[swap_j]
+				dirs[swap_j] = tmp
+
+			for d in dirs:
+				var cand: Vector2i = prev_pos + d
+				if not occupied.has(cand):
+					occupied[cand] = room_idx
+					grid_positions[room_idx] = cand
+					layout.adjacency[prev_idx].append(room_idx)
+					layout.adjacency[room_idx].append(prev_idx)
+					placed = true
+					break
+			if placed:
+				break
+
+		# Safety fallback if completely surrounded: extend along +X
+		if not placed:
+			var max_x := 0
+			for pos in grid_positions.values():
+				max_x = maxi(max_x, pos.x)
+			var fallback_pos := Vector2i(max_x + 1, 0)
+			occupied[fallback_pos] = room_idx
+			grid_positions[room_idx] = fallback_pos
+			var prev_idx: int = spine_indices[idx - 1]
+			layout.adjacency[prev_idx].append(room_idx)
+			layout.adjacency[room_idx].append(prev_idx)
+
+	# 2. Place service rooms (Shop, Recovery, Gift) as side wings branching from combat rooms
+	for s_idx in service_indices:
+		var placed := false
+		var candidates: Array[int] = []
+		for p in spine_indices:
+			if p > 0 and p != spine_indices.back():
+				candidates.append(p)
+		if candidates.is_empty():
+			candidates.append(0)
+
+		# Shuffle candidates with Fisher-Yates
+		for ci in range(candidates.size() - 1, 0, -1):
+			var swap_c := rng.randi_range(0, ci)
+			var tmp: int = candidates[ci]
+			candidates[ci] = candidates[swap_c]
+			candidates[swap_c] = tmp
+
+		for parent_idx in candidates:
+			var parent_pos: Vector2i = grid_positions[parent_idx]
+			var dirs: Array = directions.duplicate()
+			for di in range(dirs.size() - 1, 0, -1):
+				var swap_j := rng.randi_range(0, di)
+				var tmp: Vector2i = dirs[di]
+				dirs[di] = dirs[swap_j]
+				dirs[swap_j] = tmp
+
+			for d in dirs:
+				var cand: Vector2i = parent_pos + d
+				if not occupied.has(cand):
+					occupied[cand] = s_idx
+					grid_positions[s_idx] = cand
+					layout.adjacency[parent_idx].append(s_idx)
+					layout.adjacency[s_idx].append(parent_idx)
+					placed = true
+					break
+			if placed:
+				break
+
+		if not placed:
+			var max_x := 0
+			for pos in grid_positions.values():
+				max_x = maxi(max_x, pos.x)
+			var fallback_pos := Vector2i(max_x + 1, 1)
+			occupied[fallback_pos] = s_idx
+			grid_positions[s_idx] = fallback_pos
+			var parent_idx: int = spine_indices[maxi(0, spine_indices.size() - 2)]
+			layout.adjacency[parent_idx].append(s_idx)
+			layout.adjacency[s_idx].append(parent_idx)
+
+	layout.floor_grid_positions = grid_positions
+
+
+func _get_floor_grid_position(index: int, _room_types: Array[String] = []) -> Vector2i:
+	return Vector2i(index, 0)
+
+
+func _build_floor_corridors_and_thresholds(layout: DungeonLayout, _room_types: Array[String]) -> void:
+	layout.corridors.clear()
+	layout.doorways.clear()
+	var processed_pairs: Dictionary = {}
+
+	for u in range(layout.rooms.size()):
+		var room_u := layout.rooms[u]
+		for v in layout.adjacency.get(u, []):
+			if v <= u or v >= layout.rooms.size():
+				continue
+			var pair_key := "%d_%d" % [u, v]
+			if processed_pairs.has(pair_key):
+				continue
+			processed_pairs[pair_key] = true
+			var room_v := layout.rooms[v]
+
+			var gu: Vector2i = room_u.grid_pos
+			var gv: Vector2i = room_v.grid_pos
+
+			# Case 1: Same row, horizontal neighbors
+			if gu.y == gv.y and absi(gu.x - gv.x) == 1:
+				var left_r: RoomData = room_u if gu.x < gv.x else room_v
+				var right_r: RoomData = room_v if gu.x < gv.x else room_u
+				var cx := left_r.bounds.end.x
+				var cw := right_r.bounds.position.x - cx
+				var cy := (left_r.bounds.get_center().y + right_r.bounds.get_center().y) * 0.5 - 65.0
+				var ch := 130.0
+				var corr := Rect2(cx, cy, cw, ch)
+				layout.corridors.append(corr)
+
+				var d_left := Rect2(cx - 14.0, cy, 28.0, ch)
+				var d_right := Rect2(cx + cw - 14.0, cy, 28.0, ch)
+				layout.doorways.append({ "rect": d_left, "room_idx": left_r.index, "normal": Vector2.RIGHT, "is_locked": false })
+				layout.doorways.append({ "rect": d_right, "room_idx": right_r.index, "normal": Vector2.LEFT, "is_locked": false })
+				left_r.doorway_rects.append(d_left)
+				right_r.doorway_rects.append(d_right)
+
+			# Case 2: Same column, vertical neighbors
+			elif gu.x == gv.x and absi(gu.y - gv.y) == 1:
+				var top_r: RoomData = room_u if gu.y < gv.y else room_v
+				var bot_r: RoomData = room_v if gu.y < gv.y else room_u
+				var cy := top_r.bounds.end.y
+				var ch := bot_r.bounds.position.y - cy
+				var cx := (top_r.bounds.get_center().x + bot_r.bounds.get_center().x) * 0.5 - 65.0
+				var cw := 130.0
+				var corr := Rect2(cx, cy, cw, ch)
+				layout.corridors.append(corr)
+
+				var d_top := Rect2(cx, cy - 14.0, cw, 28.0)
+				var d_bot := Rect2(cx, cy + ch - 14.0, cw, 28.0)
+				layout.doorways.append({ "rect": d_top, "room_idx": top_r.index, "normal": Vector2.DOWN, "is_locked": false })
+				layout.doorways.append({ "rect": d_bot, "room_idx": bot_r.index, "normal": Vector2.UP, "is_locked": false })
+				top_r.doorway_rects.append(d_top)
+				bot_r.doorway_rects.append(d_bot)
+
+			# Case 3: Diagonal / L-shaped bypass connection (e.g. from service room back to main spine)
+			else:
+				var min_x_r: RoomData = room_u if gu.x < gv.x else room_v
+				var max_x_r: RoomData = room_v if gu.x < gv.x else room_u
+				var h_cx := min_x_r.bounds.end.x
+				var h_cw := max_x_r.bounds.get_center().x - h_cx + 65.0
+				var h_cy := min_x_r.bounds.get_center().y - 65.0
+				var h_corr := Rect2(h_cx, h_cy, h_cw, 130.0)
+				layout.corridors.append(h_corr)
+
+				var v_top_y := minf(min_x_r.bounds.get_center().y, max_x_r.bounds.position.y)
+				var v_bot_y := maxf(min_x_r.bounds.get_center().y, max_x_r.bounds.position.y)
+				var v_corr := Rect2(max_x_r.bounds.get_center().x - 65.0, v_top_y, 130.0, maxf(130.0, v_bot_y - v_top_y + 10.0))
+				layout.corridors.append(v_corr)
+
+				var d_start := Rect2(h_cx - 14.0, h_cy, 28.0, 130.0)
+				var d_end := Rect2(max_x_r.bounds.get_center().x - 65.0, max_x_r.bounds.position.y - 14.0, 130.0, 28.0)
+				layout.doorways.append({ "rect": d_start, "room_idx": min_x_r.index, "normal": Vector2.RIGHT, "is_locked": false })
+				layout.doorways.append({ "rect": d_end, "room_idx": max_x_r.index, "normal": Vector2.UP, "is_locked": false })
+				min_x_r.doorway_rects.append(d_start)
+				max_x_r.doorway_rects.append(d_end)
+
+	var f_min := Vector2(99999.0, 99999.0)
+	var f_max := Vector2(-99999.0, -99999.0)
+	for r in layout.rooms:
+		f_min.x = minf(f_min.x, r.bounds.position.x)
+		f_min.y = minf(f_min.y, r.bounds.position.y)
+		f_max.x = maxf(f_max.x, r.bounds.end.x)
+		f_max.y = maxf(f_max.y, r.bounds.end.y)
+	for c in layout.corridors:
+		f_min.x = minf(f_min.x, c.position.x)
+		f_min.y = minf(f_min.y, c.position.y)
+		f_max.x = maxf(f_max.x, c.end.x)
+		f_max.y = maxf(f_max.y, c.end.y)
+
+	layout.floor_bounds = Rect2(f_min - Vector2(100.0, 100.0), (f_max - f_min) + Vector2(200.0, 200.0))
+	if not layout.rooms.is_empty():
+		layout.exit_portal_pos = layout.rooms.back().bounds.get_center()
 
 
 func _generate_valid_room(
@@ -281,14 +504,41 @@ func _generate_valid_room(
 		var room := RoomData.new()
 		room.index = index
 		room.room_type = room_type
-		if index == 0:
-			# Room 0 (START): Compact Staging & Calibration Dock
-			# Much tighter room bounds so the player doesn't have to sprint across a huge empty void.
-			room.bounds = Rect2(380.0, 180.0, 840.0, 480.0)
-			room.player_spawn = Vector2(room.bounds.position.x + 90.0, room.bounds.get_center().y)
+		if procedural_floor:
+			var grid_pos: Vector2i = layout.floor_grid_positions.get(index, _get_floor_grid_position(index, room_types))
+			room.grid_pos = grid_pos
+			var cell_center := FLOOR_START_OFFSET + Vector2(float(grid_pos.x) * FLOOR_CELL_SPACING_X, float(grid_pos.y) * FLOOR_CELL_SPACING_Y)
+			var r_size := Vector2(760.0, 560.0)
+			if room_type == "START":
+				r_size = Vector2(640.0, 480.0)
+			elif room_type in ["SHOP", "RECOVERY", "GIFT"]:
+				r_size = Vector2(620.0, 460.0)
+			elif room_type == "BOSS":
+				r_size = Vector2(1100.0, 800.0)
+			else:
+				var shape_roll := (geom_rng.randi() + index) % 4
+				match shape_roll:
+					0:
+						r_size = Vector2(880.0, 540.0) # Wide Grand Hall
+					1:
+						r_size = Vector2(640.0, 740.0) # Tall Vertical Arena
+					2:
+						r_size = Vector2(800.0, 680.0) # Square Tactical Chamber
+					3:
+						r_size = Vector2(720.0, 520.0) # Compact Combat Cell
+			room.bounds = Rect2(cell_center - r_size * 0.5, r_size)
+			room.player_spawn = cell_center - Vector2(100.0, 0.0)
+			if room_type == "START":
+				room.is_cleared = true
 		else:
-			room.bounds = ROOM_RECT
-			room.player_spawn = Vector2(ROOM_RECT.position.x + 120.0, ROOM_RECT.get_center().y)
+			if index == 0:
+				# Room 0 (START): Compact Staging & Calibration Dock
+				# Much tighter room bounds so the player doesn't have to sprint across a huge empty void.
+				room.bounds = Rect2(380.0, 180.0, 840.0, 480.0)
+				room.player_spawn = Vector2(room.bounds.position.x + 90.0, room.bounds.get_center().y)
+			else:
+				room.bounds = ROOM_RECT
+				room.player_spawn = Vector2(ROOM_RECT.position.x + 120.0, ROOM_RECT.get_center().y)
 
 		# Build forward exit doors: One door = One upgrade! Range of 1–3 doors randomly selected
 		room.exit_doors.clear()
@@ -421,12 +671,13 @@ func _generate_valid_room(
 			room.enemy_spawns.clear()
 
 		# Validate Reachability & Clearances via BFS Grid Flood-Fill
-		if _validate_room_reachability(room):
+		if _validate_room_reachability(room, procedural_floor):
 			room.is_validated = true
 			return room
 
 	# Fallback to guaranteed valid calibration room if retries exhausted
-	return _build_fallback_room(index, room_type)
+	var fallback_grid_pos: Vector2i = layout.floor_grid_positions.get(index, _get_floor_grid_position(index, room_types))
+	return _build_fallback_room(index, room_type, procedural_floor, room_types, fallback_grid_pos)
 
 
 func _get_provisional_room_type(room_idx: int, total_rooms: int, room_types: Array[String] = []) -> String:
@@ -588,9 +839,9 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.chokepoint_ratio = 0.15
 			room.tactical_context.flanking_lanes = 4
 
-	# The enlarged rooms need their cover and lanes spread out too. Scale around
+	# The enlarged legacy rooms need their cover and lanes spread out too. Scale around
 	# the room center so templates remain legible at the scrolling camera scale.
-	if template_name != "BOSS_NEXUS":
+	if template_name != "BOSS_NEXUS" and room.bounds.size.x >= 1200.0:
 		for obstacle_index in range(room.obstacles.size()):
 			var obstacle: Rect2 = room.obstacles[obstacle_index]
 			var scaled_size := obstacle.size * 1.65
@@ -798,15 +1049,16 @@ func generate_wave_spawns(room: RoomData, sector_seed: int, wave_number: int, sp
 	return result
 
 
-func _validate_room_reachability(room: RoomData) -> bool:
+func _validate_room_reachability(room: RoomData, procedural_floor: bool = false) -> bool:
 	if not room.bounds.has_point(room.player_spawn):
 		return false
 	for obs in room.obstacles:
 		if obs.grow(20.0).has_point(room.player_spawn):
 			return false
-		for door in room.exit_doors:
-			if obs.grow(20.0).has_point(door.pos):
-				return false
+		if not procedural_floor:
+			for door in room.exit_doors:
+				if obs.grow(20.0).has_point(door.pos):
+					return false
 
 	for espawn in room.enemy_spawns:
 		var epos: Vector2 = espawn.pos
@@ -872,11 +1124,12 @@ func _validate_room_reachability(room: RoomData) -> bool:
 					visited[nx][ny] = true
 					queue.append(Vector2i(nx, ny))
 
-	for door in room.exit_doors:
-		var dgx := clampi(int((door.pos.x - origin_x) / GRID_CELL_SIZE), 0, grid_w - 1)
-		var dgy := clampi(int((door.pos.y - origin_y) / GRID_CELL_SIZE), 0, grid_h - 1)
-		if not visited[dgx][dgy]:
-			return false
+	if not procedural_floor:
+		for door in room.exit_doors:
+			var dgx := clampi(int((door.pos.x - origin_x) / GRID_CELL_SIZE), 0, grid_w - 1)
+			var dgy := clampi(int((door.pos.y - origin_y) / GRID_CELL_SIZE), 0, grid_h - 1)
+			if not visited[dgx][dgy]:
+				return false
 
 	for espawn in room.enemy_spawns:
 		var egx := clampi(int((espawn.pos.x - origin_x) / GRID_CELL_SIZE), 0, grid_w - 1)
@@ -887,11 +1140,41 @@ func _validate_room_reachability(room: RoomData) -> bool:
 	return true
 
 
-func _build_fallback_room(index: int, room_type: String) -> RoomData:
+func _build_fallback_room(
+	index: int,
+	room_type: String,
+	procedural_floor: bool = false,
+	room_types: Array[String] = [],
+	custom_grid_pos: Vector2i = Vector2i(-9999, -9999)
+) -> RoomData:
 	var room := RoomData.new()
 	room.index = index
 	room.room_type = room_type
 	room.template_name = "SAFE_FALLBACK"
+
+	if procedural_floor:
+		var grid_pos: Vector2i = custom_grid_pos if custom_grid_pos != Vector2i(-9999, -9999) else _get_floor_grid_position(index, room_types)
+		room.grid_pos = grid_pos
+		var cell_center := FLOOR_START_OFFSET + Vector2(float(grid_pos.x) * FLOOR_CELL_SPACING_X, float(grid_pos.y) * FLOOR_CELL_SPACING_Y)
+		var r_size := Vector2(760.0, 560.0)
+		if room_type == "START":
+			r_size = Vector2(640.0, 480.0)
+		elif room_type in ["SHOP", "RECOVERY", "GIFT"]:
+			r_size = Vector2(620.0, 460.0)
+		elif room_type == "BOSS":
+			r_size = Vector2(1100.0, 800.0)
+		room.bounds = Rect2(cell_center - r_size * 0.5, r_size)
+		room.player_spawn = cell_center - Vector2(100.0, 0.0)
+		room.obstacles.clear()
+		room.enemy_spawns.clear()
+		if room_type in ["COMBAT", "ELITE"]:
+			room.enemy_spawns.append({ "type": "CHASER", "pos": cell_center + Vector2(120.0, -80.0), "flank_angle": 0.55 })
+			room.enemy_spawns.append({ "type": "CHASER", "pos": cell_center + Vector2(160.0, 0.0), "flank_angle": 0.0 })
+			room.enemy_spawns.append({ "type": "SHOOTER", "pos": cell_center + Vector2(120.0, 80.0), "flank_angle": 0.0 })
+		elif room_type == "BOSS":
+			room.enemy_spawns.append({ "type": "BOSS", "pos": cell_center + Vector2(180.0, 0.0), "flank_angle": 0.0 })
+		room.is_validated = true
+		return room
 
 	if index == 0:
 		room.bounds = Rect2(380.0, 180.0, 840.0, 480.0)

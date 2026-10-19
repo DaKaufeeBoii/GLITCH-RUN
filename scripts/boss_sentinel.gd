@@ -22,6 +22,7 @@ var sweep_duration := 2.2
 var damage_flash := 0.0
 var phase_two_triggered := false
 var is_phase_two := false
+var is_mid_boss := false
 var laser_hit_player := false
 var laser_hit_cooldown := 0.0
 
@@ -200,7 +201,7 @@ func take_damage(amount: int, _source: String = "plasma") -> void:
 	damage_flash = 0.12
 
 	if health == 0:
-		if not is_phase_two:
+		if not is_mid_boss and not is_phase_two:
 			enter_phase_two()
 			return
 		else:

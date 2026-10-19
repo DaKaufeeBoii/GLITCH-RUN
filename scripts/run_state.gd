@@ -14,6 +14,7 @@ var progression: RefCounted
 
 var current_health := 5
 var max_health := 5
+var current_biome := 1
 var current_sector := 1
 var current_room_index := 0
 var current_wave := 1
