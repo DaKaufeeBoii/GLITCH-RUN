@@ -18,6 +18,7 @@ const ENEMY_GENOME_SCRIPT := preload("res://scripts/enemy_genome.gd")
 const DIRECTOR_TESTS_SCRIPT := preload("res://scripts/test_director.gd")
 const DEBRIS_EMITTER_SCRIPT := preload("res://scripts/debris_emitter.gd")
 const PAUSE_MENU_SCRIPT := preload("res://scripts/pause_menu.gd")
+const MINIMAP_HUD_SCRIPT := preload("res://scripts/minimap_hud.gd")
 const DEBRIEF_TERMINAL_SCRIPT := preload("res://scripts/debrief_terminal.gd")
 const SPATIAL_INDEX_SCRIPT := preload("res://scripts/spatial_index.gd")
 const SQUAD_COORDINATOR_SCRIPT := preload("res://scripts/squad_coordinator.gd")
@@ -53,8 +54,13 @@ var boss_director: RefCounted = null
 var current_boss_def: RefCounted = null
 var current_boss_mutations: Array[Dictionary] = []
 var boss_vanguard_active := false
+var boss_spawn_initiated := false
 var boss_spawn_pos := Vector2.ZERO
 var active_walls: Array[StaticBody2D] = []
+var active_secret_walls: Array[StaticBody2D] = []
+const SECRET_WALL_SCRIPT := preload("res://scripts/secret_wall.gd")
+var active_acid_puddles: Array[Dictionary] = []
+const DESTRUCTIBLE_PROP_SCRIPT := preload("res://scripts/destructible_prop.gd")
 var fountain_rect := Rect2()
 var fountain_center := Vector2.ZERO
 var fountain_radius := 44.0
@@ -82,6 +88,7 @@ var heartbeat_timer := 0.0
 # UI Elements
 var ui_layer: CanvasLayer
 var hearts_box: HBoxContainer
+var health_label: Label
 var full_heart_tex: AtlasTexture
 var empty_heart_tex: AtlasTexture
 var elims_label: Label
@@ -107,7 +114,12 @@ var pending_spawn_telegraphs: Array[Dictionary] = []
 var doors_unlocked := false
 
 var pause_menu: Control
+var minimap_hud: Control
 var debrief_terminal: Control
+var shop_cooldown: float = 0.0
+var shop_zone_armed: bool = true
+var medbay_full_hp_cooldown: float = 0.0
+var acid_burn_timer: float = 0.0
 
 # Priority 1 & 2: Procedural Generator, Evolved AI & Encounter Director
 var tracker: RefCounted
@@ -131,6 +143,12 @@ var director_banner: PanelContainer
 var banner_title: Label
 var banner_sub: Label
 var banner_timer := 0.0
+var banner_tween: Tween
+var camera_pulse_tween: Tween
+var transition_layer: CanvasLayer
+var transition_cover: ColorRect
+var room_transition_active := false
+var has_loaded_room := false
 
 var sector_tints: Array[Color] = [
 	Color(0.88, 0.95, 1.0), # Sector 1: Cyan Calibration
@@ -169,13 +187,15 @@ func _ready() -> void:
 	# Generate deterministic procedural dungeon layout from run seed
 	var first_floor_rooms: int = rs.progression.rooms_per_sector if rs.progression else rs.TOTAL_ROOMS
 	var first_floor_waves: int = rs.progression.sector_total_waves if rs.progression else 3
+	var is_boss_fl: bool = rs.progression.is_boss_floor() if rs.progression else true
 	dungeon_layout = dungeon_generator.generate_dungeon(
 		rs.current_seed,
 		first_floor_rooms,
 		first_floor_waves,
 		true,
 		rs.progression.difficulty if rs.progression else rs.difficulty,
-		rs.progression.sector_index if rs.progression else rs.current_sector
+		rs.progression.sector_index if rs.progression else rs.current_sector,
+		is_boss_fl
 	)
 	rs.dungeon_layout_summary.clear()
 	for r in dungeon_layout.rooms:
@@ -195,6 +215,7 @@ func _ready() -> void:
 		get_node("/root/AudioSynth").play_music("theme_loop")
 
 	_create_ui()
+	_init_transition_layer()
 	_create_walls()
 	_create_player()
 	_load_room(rs.current_room_index)
@@ -228,8 +249,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				else:
 					pause_menu.open_pause()
 
-	# Direct touch or click selection on unlocked doors
-	if doors_unlocked and not run_over and current_room_data and is_instance_valid(player):
+	# Direct touch or click selection on unlocked doors (single-room arena fallback only, when room is cleared)
+	var is_multi_room: bool = dungeon_layout != null and not dungeon_layout.corridors.is_empty()
+	if not is_multi_room and doors_unlocked and room_cleared and active_enemies.is_empty() and pending_spawn_telegraphs.is_empty() and not run_over and current_room_data and is_instance_valid(player):
 		var click_pos := Vector2.ZERO
 		var is_click := false
 		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -378,7 +400,8 @@ func _process(delta: float) -> void:
 	if banner_timer > 0.0:
 		banner_timer -= delta
 		if banner_timer <= 0.0:
-			director_banner.visible = false
+			banner_timer = -1.0
+			_hide_director_banner()
 
 	# Track player combat behavior for adaptive director
 	if not get_tree().paused and is_instance_valid(player) and tracker:
@@ -394,18 +417,105 @@ func _process(delta: float) -> void:
 		var cur_hp: int = player.health if is_instance_valid(player) else 5
 		squad_coordinator.configure_for_depth(cur_depth, cur_hp)
 
-	# Update Top HUD Hearts & Badges
+	# Update active toxic acid puddles
+	if not active_acid_puddles.is_empty():
+		for p_idx in range(active_acid_puddles.size() - 1, -1, -1):
+			var puddle: Dictionary = active_acid_puddles[p_idx]
+			puddle["timer"] = puddle.get("timer", 1.0) - delta
+			var p_pos: Vector2 = puddle.get("pos", Vector2.ZERO)
+			var p_rad: float = puddle.get("radius", 60.0)
+			for enemy in active_enemies:
+				if is_instance_valid(enemy) and p_pos.distance_to(enemy.global_position) <= p_rad:
+					if enemy.has_method("take_damage") and randf() < delta * 1.5:
+						enemy.take_damage(1)
+					if enemy.has_method("apply_debuff"):
+						enemy.apply_debuff("ACID", 1.0)
+			if puddle.get("timer", 0.0) <= 0.0:
+				active_acid_puddles.remove_at(p_idx)
+		queue_redraw()
+
+	if shop_cooldown > 0.0:
+		shop_cooldown -= delta
+
+	# Environmental slide on Ice, damage in Toxic Acid pools, and heat in Magma vents
+	if is_instance_valid(player) and current_room_data and rs and rs.progression:
+		var p_pos := player.global_position
+		var cur_b_id: int = rs.progression.current_biome
+		var b_conf: Dictionary = BIOME_DATA_SCRIPT.get_biome(cur_b_id)
+		if b_conf.get("hazard_type", "") == "ICE":
+			if player.velocity.length() > 20.0:
+				player.position += player.velocity.normalized() * 32.0 * delta
+		elif b_conf.get("hazard_type", "") == "LAVA":
+			var vent_c: Vector2 = current_room_data.bounds.get_center()
+			if p_pos.distance_to(vent_c) <= 45.0:
+				var l_pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.007)
+				if l_pulse > 0.88 and randf() < delta * 1.2:
+					player.take_damage(1)
+					add_trauma(0.35)
+
+		# Explicit chamber floor hazards (Blue Ice Slicks, Green Acid Vats, Magma Vents)
+		if "hazards" in current_room_data and current_room_data.hazards is Array:
+			var on_acid := false
+			for h in current_room_data.hazards:
+				var h_rect: Rect2 = h.get("rect", Rect2())
+				var h_type: String = h.get("type", "ACID")
+				if h_rect.has_point(p_pos):
+					match h_type:
+						"ICE":
+							# Blue box: Low-friction cryogenic slick gives speed boost & smooth slide
+							if player.velocity.length() > 15.0:
+								player.position += player.velocity.normalized() * 48.0 * delta
+							if randf() < delta * 3.0:
+								DEBRIS_EMITTER_SCRIPT.spawn_shards(self, p_pos, Color("7dd3fc"), "diamond", 2)
+						"ACID", "TOXIC":
+							# Green box: Toxic caustic waste pool damages player if lingering
+							on_acid = true
+							acid_burn_timer += delta
+							if acid_burn_timer >= 1.0:
+								acid_burn_timer = 0.0
+								player.take_damage(1)
+								add_trauma(0.25)
+								trigger_glitch(0.35)
+								if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+									get_node("/root/AudioSynth").play("hit_impact", 0.03, -2.5)
+						"LAVA":
+							var l_pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.007)
+							if l_pulse > 0.85 and randf() < delta * 1.5:
+								player.take_damage(1)
+								add_trauma(0.35)
+
+				# Enemies caught inside hazard patches
+				for enemy in active_enemies:
+					if is_instance_valid(enemy) and h_rect.has_point(enemy.global_position):
+						if h_type in ["ACID", "TOXIC"]:
+							if enemy.has_method("take_damage") and randf() < delta * 2.0:
+								enemy.take_damage(1)
+							if enemy.has_method("apply_debuff"):
+								enemy.apply_debuff("ACID", 1.0)
+						elif h_type == "ICE":
+							if "velocity" in enemy and enemy.velocity.length() > 10.0:
+								enemy.position += enemy.velocity.normalized() * 24.0 * delta
+			if not on_acid:
+				acid_burn_timer = maxf(0.0, acid_burn_timer - delta * 2.0)
+
+	# Update Top HUD Hearts & Badges with Biome, Sector, Floor (FL X/Y), and Room
 	if is_instance_valid(player):
 		_update_hud_hearts()
 		elims_label.text = "ELIMS %02d  •  BITS %02d" % [rs.score, rs.bits]
-		var sec_w: int = rs.progression.sector_waves_completed if (rs and rs.progression) else 0
-		var sec_tw: int = rs.progression.sector_total_waves if (rs and rs.progression) else 3
 		var total_r: int = rs.progression.rooms_per_sector if (rs and rs.progression) else rs.TOTAL_ROOMS
-		var active_wave: int = mini(sec_w + 1, sec_tw)
-		if rs and rs.waves_in_room > 1:
-			sector_label.text = "SEC %d  •  RM %d/%d  •  WAVE %d/%d (SUB %d/%d)" % [rs.current_sector, rs.current_room_index + 1, total_r, active_wave, sec_tw, rs.current_wave, rs.waves_in_room]
-		else:
-			sector_label.text = "SEC %d  •  RM %d/%d  •  WAVE %d/%d" % [rs.current_sector, rs.current_room_index + 1, total_r, active_wave, sec_tw]
+		var cur_b: int = rs.progression.current_biome if (rs and rs.progression) else 1
+		var cur_f: int = rs.progression.current_floor if (rs and rs.progression) else 1
+		var tot_f: int = rs.progression.total_floors_in_sector if (rs and rs.progression) else 3
+		var boss_tag := ""
+		if rs and rs.progression and rs.progression.is_boss_floor():
+			boss_tag = " [MID-BOSS]" if rs.progression.is_mid_boss_encounter() else " [OVERLORD]"
+		var wave_text := " • W%d/%d" % [rs.current_wave, rs.waves_in_room] if rs and rs.waves_in_room > 1 else ""
+		var boss_text := " • BOSS" if boss_tag != "" else ""
+		sector_label.text = "B%d / S%d  •  F%d/%d  •  R%d/%d%s%s" % [cur_b, rs.current_sector, cur_f, tot_f, rs.current_room_index + 1, total_r, wave_text, boss_text]
+
+	# Update Minimap HUD
+	if is_instance_valid(minimap_hud) and rs:
+		minimap_hud.update_map(rs.dungeon_layout_summary, rs.current_room_index, player)
 
 	# Update Boss Bar if in Boss room
 	if boss_active and is_instance_valid(boss_ref):
@@ -442,7 +552,7 @@ func _process(delta: float) -> void:
 	# Check Player Proximity to Unlocked Exit Doors / Floor Interactions
 	if dungeon_layout and not dungeon_layout.corridors.is_empty():
 		_check_floor_interactions(delta)
-	elif doors_unlocked and not run_over and is_instance_valid(player) and current_room_data:
+	elif doors_unlocked and room_cleared and active_enemies.is_empty() and pending_spawn_telegraphs.is_empty() and not run_over and is_instance_valid(player) and current_room_data:
 		for door in current_room_data.exit_doors:
 			if player.position.distance_to(door.pos) < 55.0:
 				_enter_door(door)
@@ -462,7 +572,7 @@ func _check_floor_interactions(_delta: float) -> void:
 	if dungeon_layout.exit_portal_pos != Vector2.ZERO:
 		if p_pos.distance_to(dungeon_layout.exit_portal_pos) < 55.0:
 			var last_r: RefCounted = dungeon_layout.rooms.back()
-			if last_r and (last_r.is_cleared or last_r.room_type != "BOSS"):
+			if last_r and (last_r.is_cleared or last_r.room_type in ["EXTRACT", "START"] or (last_r.room_type == "BOSS" and room_cleared)):
 				_use_floor_exit_portal()
 				return
 
@@ -482,10 +592,30 @@ func _check_floor_interactions(_delta: float) -> void:
 		var rs = get_node_or_null("/root/RunState")
 		if rs:
 			rs.current_room_index = inside_room.index
+		if inside_room.room_type in ["START", "SHOP", "RECOVERY", "GIFT", "CACHE", "SHRINE", "TRANSIT", "EXTRACT", "SECRET"]:
+			doors_unlocked = true
+			if inside_room.room_type in ["START", "EXTRACT"]:
+				inside_room.is_cleared = true
+		else:
+			doors_unlocked = false
+
+	medbay_full_hp_cooldown = maxf(0.0, medbay_full_hp_cooldown - _delta)
+
+	# Shop Kiosk interaction (re-enterable while inside the SHOP chamber)
+	if inside_room.room_type == "SHOP":
+		var s_center: Vector2 = inside_room.bounds.get_center()
+		var dist: float = p_pos.distance_to(s_center)
+		if dist > 115.0:
+			shop_zone_armed = true
+		if dist < 85.0 and shop_zone_armed and shop_cooldown <= 0.0 and not upgrade_container.visible:
+			inside_room.is_cleared = true
+			shop_zone_armed = false
+			_show_shop_interface()
 
 	if not inside_room.is_cleared:
 		if inside_room.room_type in ["COMBAT", "ELITE"] and active_enemies.is_empty() and active_door_barriers.is_empty():
 			# Engage room combat lockdown
+			doors_unlocked = false
 			_lock_room_doorways(inside_room)
 			if nav_grid:
 				nav_grid.build_grid(inside_room.bounds, obstacle_rects, 24.0)
@@ -503,31 +633,109 @@ func _check_floor_interactions(_delta: float) -> void:
 			damage_taken_this_sector = 0
 			room_cleared = false
 			_spawn_wave_enemies(1)
-		elif inside_room.room_type == "BOSS" and not boss_active and not boss_vanguard_active and active_enemies.is_empty():
+		elif inside_room.room_type == "BOSS" and not boss_active and not boss_vanguard_active and active_enemies.is_empty() and not boss_spawn_initiated:
+			boss_spawn_initiated = true
+			doors_unlocked = false
 			_lock_room_doorways(inside_room)
 			if nav_grid:
 				nav_grid.build_grid(inside_room.bounds, obstacle_rects, 24.0)
 			room_cleared = false
 			_spawn_wave_enemies(1)
-		elif inside_room.room_type == "RECOVERY":
-			var f_center: Vector2 = inside_room.bounds.get_center()
-			if p_pos.distance_to(f_center) < 70.0:
+		elif inside_room.room_type in ["EXTRACT"]:
+			inside_room.is_cleared = true
+		elif inside_room.room_type == "TRANSIT":
+			var t_center: Vector2 = inside_room.bounds.get_center()
+			if p_pos.distance_to(t_center) < 85.0:
 				inside_room.is_cleared = true
 				var rs = get_node_or_null("/root/RunState")
 				if rs:
-					rs.heal(2)
+					rs.move_speed_mult = minf(rs.move_speed_mult * 1.35, 2.5)
+					rs.add_bits(15)
+				if is_instance_valid(player):
+					player.current_ammo = player.get_max_ammo()
+					player.has_speed_overdrive = true
+					player.queue_redraw()
+				spawn_damage_number(player.global_position, "OVERDRIVE // +35% SPEED & +15 BITS", Color("00f0ff"))
+				if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+					get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 1.0)
+				_show_director_banner("HYPER-CONDUIT CHARGED // OVERDRIVE ENGAGED", "+35% Thruster Acceleration & Full Ammo Recharged. +15 Bits.")
+				queue_redraw()
+		elif inside_room.room_type == "SECRET":
+			var sec_center: Vector2 = inside_room.bounds.get_center()
+			if p_pos.distance_to(sec_center) < 85.0:
+				inside_room.is_cleared = true
+				var rs = get_node_or_null("/root/RunState")
+				if rs:
+					rs.max_health += 1
+					rs.heal(3)
+					rs.add_bits(75)
+				if is_instance_valid(player):
+					player.max_health = rs.max_health if rs else player.max_health + 1
+					player.health = player.max_health
+					player.current_ammo = player.get_max_ammo()
+					player.queue_redraw()
+				spawn_damage_number(player.global_position, "+1 MAX HP & +75 BITS // FULL REPAIR", Color("c084fc"))
+				if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+					get_node("/root/AudioSynth").play("powerup_pickup", 0.05, 2.5)
+				_show_director_banner("QUANTUM DATA VAULT SALVAGED // +75 BITS & +1 MAX HP", "Classified military nanites infused. Vitals and ammunition fully replenished.")
+				queue_redraw()
+		elif inside_room.room_type == "CACHE":
+			var c_center: Vector2 = inside_room.bounds.get_center()
+			if p_pos.distance_to(c_center) < 85.0:
+				inside_room.is_cleared = true
+				var rs = get_node_or_null("/root/RunState")
+				if rs:
+					rs.add_bits(25)
+				spawn_damage_number(player.global_position, "+25 BITS DECRYPTED", Color("f59e0b"))
 				if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 					get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
-				_show_director_banner("RECOVERY MEDBAY // +2 HP RESTORED", "Nanite biocircuits repaired.")
-		elif inside_room.room_type == "SHOP":
+				_show_director_banner("DATA CACHE RECOVERED // +25 BITS", "Encrypted cache deciphered.")
+				queue_redraw()
+		elif inside_room.room_type == "SHRINE":
 			var s_center: Vector2 = inside_room.bounds.get_center()
-			if p_pos.distance_to(s_center) < 70.0:
+			if p_pos.distance_to(s_center) < 85.0:
 				inside_room.is_cleared = true
-				_show_shop_interface()
+				if is_instance_valid(player):
+					player.has_aegis_shield = true
+					player.invulnerable_timer = 1.0
+					player.queue_redraw()
+				var rs = get_node_or_null("/root/RunState")
+				if rs:
+					rs.heal(1)
+				spawn_damage_number(player.global_position, "NEURAL AEGIS ONLINE (+1 HP)", Color("818cf8"))
+				if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+					get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 1.5)
+				_show_director_banner("NEURAL SHRINE // AEGIS ATTUNEMENT", "Nanite Aegis shield online. Will absorb the next lethal impact. +1 HP restored.")
+				queue_redraw()
+		elif inside_room.room_type == "RECOVERY":
+			var f_center: Vector2 = inside_room.bounds.get_center()
+			if p_pos.distance_to(f_center) < 85.0:
+				var rs = get_node_or_null("/root/RunState")
+				var cur_hp: int = player.health if is_instance_valid(player) else (rs.current_health if rs else 5)
+				var max_hp: int = player.max_health if is_instance_valid(player) else (rs.max_health if rs else 5)
+				if cur_hp >= max_hp:
+					if medbay_full_hp_cooldown <= 0.0:
+						medbay_full_hp_cooldown = 2.0
+						spawn_damage_number(player.global_position, "VITALS 100% // CHARGE PRESERVED", Color("38bdf8"))
+						if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+							get_node("/root/AudioSynth").play("empty_ammo", 0.05, 2.0)
+				else:
+					inside_room.is_cleared = true
+					if rs:
+						rs.heal(2)
+					if is_instance_valid(player):
+						player.health = mini(max_hp, cur_hp + 2)
+						player.queue_redraw()
+					spawn_damage_number(player.global_position, "+2 HP RESTORED", Color("22c55e"))
+					if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+						get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
+					_show_director_banner("RECOVERY MEDBAY // +2 HP RESTORED", "Nanite biocircuits repaired.")
+					queue_redraw()
 		elif inside_room.room_type == "GIFT":
 			var g_center: Vector2 = inside_room.bounds.get_center()
-			if p_pos.distance_to(g_center) < 70.0:
+			if p_pos.distance_to(g_center) < 85.0:
 				inside_room.is_cleared = true
+				queue_redraw()
 				_show_gift_interface()
 
 
@@ -561,7 +769,7 @@ func _proceed_through_exit_portal() -> void:
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("powerup_pickup", 0.05, 3.0)
 
-	var nav: Dictionary = rs.advance_room(dungeon_layout.rooms.size() - 1)
+	var nav: Dictionary = rs.advance_floor()
 	if nav.get("is_new_biome", false):
 		var next_b: int = rs.progression.current_biome
 		var b_info: Dictionary = BIOME_DATA_SCRIPT.get_biome(next_b)
@@ -577,6 +785,10 @@ func _proceed_through_exit_portal() -> void:
 		dungeon_layout = null
 		_load_room(0)
 	else:
+		var cur_fl: int = nav.get("floor", 1)
+		var tot_fl: int = nav.get("total_floors", 3)
+		var boss_notice: String = " [BOSS CHAMBER]" if nav.get("is_boss_floor", false) else ""
+		_show_director_banner("FLOOR ADVANCEMENT // FLOOR %d of %d%s" % [cur_fl, tot_fl, boss_notice], "Staging tactical operations in sector grid.")
 		dungeon_layout = null
 		_load_room(0)
 
@@ -584,10 +796,13 @@ func _proceed_through_exit_portal() -> void:
 func _update_hud_hearts() -> void:
 	if not is_instance_valid(hearts_box) or not is_instance_valid(player):
 		return
+	if is_instance_valid(health_label):
+		health_label.text = "HEALTH  %d / %d" % [player.health, player.max_health]
+		health_label.add_theme_color_override("font_color", Color("fb496e") if player.health <= 2 else Color("ffe4ea"))
 
 	while hearts_box.get_child_count() < player.max_health:
 		var heart_rect := TextureRect.new()
-		heart_rect.custom_minimum_size = Vector2(28, 28)
+		heart_rect.custom_minimum_size = Vector2(16, 16)
 		heart_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		heart_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		hearts_box.add_child(heart_rect)
@@ -616,7 +831,17 @@ func _draw() -> void:
 	else:
 		_draw_single_room_arena(current_room_data, tint, ticks, pulse)
 
-	# 3. Hand-authored obstacles with slate body, cyan top trim, and telemetry LEDs
+	# 3. Draw active toxic acid puddles on floor
+	for puddle in active_acid_puddles:
+		var p_pos: Vector2 = puddle.get("pos", Vector2.ZERO)
+		var p_rad: float = puddle.get("radius", 60.0)
+		var p_col: Color = puddle.get("color", Color("22c55e"))
+		var p_pulse: float = 0.7 + 0.3 * sin(float(ticks) * 0.008)
+		draw_circle(p_pos, p_rad, Color(p_col.r, p_col.g, p_col.b, 0.35 * p_pulse))
+		draw_arc(p_pos, p_rad, 0.0, TAU, 24, p_col, 2.0)
+		draw_circle(p_pos, p_rad * 0.5, Color(p_col.r, p_col.g, p_col.b, 0.20))
+
+	# 4. Hand-authored obstacles with slate body, cyan top trim, and telemetry LEDs
 	for r in obstacle_rects:
 		if fountain_rect.size != Vector2.ZERO and r == fountain_rect:
 			continue
@@ -631,14 +856,14 @@ func _draw() -> void:
 		draw_circle(r.position + Vector2(6, 6), 2.0, Color("22c55e") if blink_g else Color("14532d"))
 		draw_circle(r.position + Vector2(13, 6), 2.0, Color("ef4444") if blink_r else Color("7f1d1d"))
 
-	# 4. Exit Doors & Holographic Route Signs (if in single room mode)
+	# 5. Exit Doors & Holographic Route Signs (if in single room mode)
 	if (not dungeon_layout or dungeon_layout.corridors.is_empty()) and current_room_data and not current_room_data.exit_doors.is_empty():
 		_draw_exit_doors(current_room_data, ticks, pulse)
 
-	# 5. Off-screen hostile radar chevrons at viewport bounds
+	# 6. Off-screen hostile radar chevrons at viewport bounds
 	_draw_radar_chevrons()
 
-	# 6. Incoming Enemy Spawn Telegraph Reticles
+	# 7. Incoming Enemy Spawn Telegraph Reticles
 	_draw_spawn_telegraphs(ticks)
 
 
@@ -650,6 +875,14 @@ func _draw_multi_room_floor(layout: RefCounted, biome: Dictionary, ticks: int, p
 
 	# 1. Draw Corridors
 	for c in layout.corridors:
+		var skip_corridor := false
+		for r in layout.rooms:
+			if r.is_secret and not r.is_revealed:
+				if r.secret_corridor_rect == c:
+					skip_corridor = true
+					break
+		if skip_corridor:
+			continue
 		draw_rect(c, bg_floor_col, true)
 		for gx in range(int(c.position.x), int(c.end.x), 48):
 			draw_line(Vector2(gx, c.position.y), Vector2(gx, c.end.y), grid_color, 1.0)
@@ -666,21 +899,28 @@ func _draw_multi_room_floor(layout: RefCounted, biome: Dictionary, ticks: int, p
 			draw_line(Vector2(c.end.x, c.position.y), Vector2(c.end.x, c.end.y), wall_inner, 5.0)
 			draw_line(Vector2(c.end.x, c.position.y), Vector2(c.end.x, c.end.y), wall_glow, 2.0)
 
-	# 2. Draw Rooms
+	# 2. Draw Rooms with Soul Knight-inspired floor variety & hazards
 	for r in layout.rooms:
+		if r.is_secret and not r.is_revealed:
+			continue
 		var b: Rect2 = r.bounds
 		draw_rect(b, bg_floor_col, true)
 		for gx in range(int(b.position.x), int(b.end.x), 64):
 			draw_line(Vector2(gx, b.position.y), Vector2(gx, b.end.y), grid_color, 1.0)
 		for gy in range(int(b.position.y), int(b.end.y), 64):
 			draw_line(Vector2(b.position.x, gy), Vector2(b.end.x, gy), grid_color, 1.0)
+		_draw_biome_floor_surface(r, b, biome, ticks, pulse)
 		_draw_chamfered_room_outline(b, wall_inner, wall_glow)
-		_draw_room_emblem(r.room_type, b.get_center(), pulse, b)
+		_draw_room_emblem(r.room_type, b.get_center(), pulse, b, r.is_cleared)
 
-	# 3. Draw Doorway Thresholds & Lockdown Laser Barriers
+	# 3. Draw Doorway Thresholds & Lockdown Laser Barriers / Secret Walls
 	for d_dict in layout.doorways:
 		var d_rect: Rect2 = d_dict.get("rect", Rect2())
 		var r_idx: int = int(d_dict.get("room_idx", -1))
+		var is_secret_door: bool = d_dict.get("is_secret", false) and not d_dict.get("is_revealed", false)
+		if is_secret_door:
+			_draw_secret_wall_fissure(d_rect, ticks, pulse)
+			continue
 		var is_locked: bool = false
 		if current_room_data and current_room_data.index == r_idx and not active_door_barriers.is_empty():
 			is_locked = true
@@ -701,11 +941,137 @@ func _draw_multi_room_floor(layout: RefCounted, biome: Dictionary, ticks: int, p
 				for dx in range(int(d_rect.position.x), int(d_rect.end.x), 16):
 					draw_circle(Vector2(dx + 8, d_rect.get_center().y), 2.5, wall_glow * 0.7)
 
-	# 4. Draw Exit Portal in Exit Room (if not boss floor)
+	# 4. Draw Exit Portal in Exit Room (if extract floor or boss defeated)
 	if layout.exit_portal_pos != Vector2.ZERO:
 		var last_r: RefCounted = layout.rooms.back()
-		if last_r and (last_r.is_cleared or last_r.room_type != "BOSS"):
+		if last_r and (last_r.is_cleared or last_r.room_type in ["EXTRACT", "START"] or (last_r.room_type == "BOSS" and room_cleared)):
 			_draw_exit_portal(layout.exit_portal_pos, pulse, biome.get("portal_color", Color.CYAN))
+
+
+func _draw_secret_wall_fissure(d_rect: Rect2, ticks: int, pulse: float) -> void:
+	# Holographic cracked barrier over secret doorway
+	draw_rect(d_rect, Color(0.02, 0.04, 0.09, 0.96), true)
+	draw_rect(d_rect, Color(0.75, 0.25, 0.95, 0.55), false, 1.2)
+
+	# Scanlines
+	var is_vert := d_rect.size.x < d_rect.size.y
+	if is_vert:
+		for y in range(int(d_rect.position.y), int(d_rect.end.y), 8):
+			draw_line(Vector2(d_rect.position.x + 2, y), Vector2(d_rect.end.x - 2, y), Color(0.6, 0.2, 0.9, 0.25), 1.0)
+	else:
+		for x in range(int(d_rect.position.x), int(d_rect.end.x), 8):
+			draw_line(Vector2(x, d_rect.position.y + 2), Vector2(x, d_rect.end.y - 2), Color(0.6, 0.2, 0.9, 0.25), 1.0)
+
+	# Jagged electric fissure
+	var center := d_rect.get_center()
+	var crack_pts := PackedVector2Array()
+	var jitter := sin(float(ticks) * 0.015) * 2.5
+	if is_vert:
+		crack_pts.append(Vector2(center.x, d_rect.position.y))
+		crack_pts.append(Vector2(center.x - 4.0 + jitter, center.y - d_rect.size.y * 0.25))
+		crack_pts.append(Vector2(center.x + 5.0 - jitter, center.y))
+		crack_pts.append(Vector2(center.x - 3.0, center.y + d_rect.size.y * 0.25))
+		crack_pts.append(Vector2(center.x, d_rect.end.y))
+	else:
+		crack_pts.append(Vector2(d_rect.position.x, center.y))
+		crack_pts.append(Vector2(center.x - d_rect.size.x * 0.25, center.y - 4.0 + jitter))
+		crack_pts.append(Vector2(center.x, center.y + 5.0 - jitter))
+		crack_pts.append(Vector2(center.x + d_rect.size.x * 0.25, center.y - 3.0))
+		crack_pts.append(Vector2(d_rect.end.x, center.y))
+
+	# Glowing fracture outline & core
+	draw_polyline(crack_pts, Color(0.85, 0.35, 1.0, 0.95), 2.5)
+	draw_polyline(crack_pts, Color.WHITE, 1.0)
+	draw_circle(center, 4.5 * pulse, Color("c084fc"))
+	draw_circle(center, 2.0, Color.WHITE)
+
+
+func _draw_biome_floor_surface(r: RefCounted, b: Rect2, biome: Dictionary, ticks: int, pulse: float) -> void:
+	var pattern: String = biome.get("floor_pattern", "CIRCUITS")
+	var grid_color: Color = biome.get("grid_color", Color(0.0, 0.94, 1.0, 0.22))
+	var accent: Color = biome.get("accent", Color("38bdf8"))
+
+	match pattern:
+		"CIRCUITS":
+			var center_pt := b.get_center()
+			var trace_col := Color(grid_color.r, grid_color.g, grid_color.b, 0.35)
+			draw_line(Vector2(b.position.x + 32.0, center_pt.y), Vector2(b.end.x - 32.0, center_pt.y), trace_col, 2.0)
+			draw_line(Vector2(center_pt.x, b.position.y + 32.0), Vector2(center_pt.x, b.end.y - 32.0), trace_col, 2.0)
+			for offset in [Vector2(-90, -70), Vector2(90, -70), Vector2(-90, 70), Vector2(90, 70)]:
+				var node_pos: Vector2 = center_pt + offset
+				if b.has_point(node_pos):
+					draw_circle(node_pos, 3.5, accent * 0.6)
+					draw_circle(node_pos, 1.5, Color.WHITE)
+
+		"ICE_GLACIER":
+			var ice_col := Color(0.5, 0.85, 1.0, 0.12 + 0.05 * sin(float(ticks) * 0.003))
+			var sheet_rect := Rect2(b.position.x + 40.0, b.position.y + 40.0, b.size.x - 80.0, b.size.y - 80.0)
+			draw_rect(sheet_rect, ice_col, true)
+			draw_rect(sheet_rect, Color(0.6, 0.9, 1.0, 0.25), false, 1.5)
+			var c := b.get_center()
+			draw_line(c + Vector2(-60, -40), c + Vector2(20, -10), Color(0.8, 0.95, 1.0, 0.35), 1.5)
+			draw_line(c + Vector2(20, -10), c + Vector2(70, 45), Color(0.8, 0.95, 1.0, 0.35), 1.5)
+			draw_line(c + Vector2(-30, 50), c + Vector2(10, 20), Color(0.8, 0.95, 1.0, 0.35), 1.5)
+
+		"TOXIC_VINES":
+			var slime_col := Color(0.1, 0.6, 0.25, 0.14)
+			var c := b.get_center()
+			draw_circle(c + Vector2(-80, -40), 38.0, slime_col)
+			draw_circle(c + Vector2(75, 45), 44.0, slime_col)
+			draw_circle(c + Vector2(-40, 50), 30.0, slime_col)
+			draw_arc(c + Vector2(-80, -40), 38.0, 0.2, 2.8, 16, Color("22c55e") * 0.4, 2.0)
+			draw_arc(c + Vector2(75, 45), 44.0, 1.2, 4.2, 16, Color("22c55e") * 0.4, 2.0)
+
+		"MAGMA_CRACKS":
+			var lava_glow := Color(1.0, 0.35, 0.1, 0.20 * pulse)
+			var c := b.get_center()
+			var pts1 := PackedVector2Array([
+				c + Vector2(-110, -50),
+				c + Vector2(-40, -30),
+				c + Vector2(10, -5),
+				c + Vector2(80, 25),
+				c + Vector2(120, 60)
+			])
+			draw_polyline(pts1, lava_glow * 1.5, 3.0)
+			draw_polyline(pts1, Color("f97316") * 0.6, 1.5)
+			var pts2 := PackedVector2Array([
+				c + Vector2(-30, 70),
+				c + Vector2(10, -5),
+				c + Vector2(50, -60)
+			])
+			draw_polyline(pts2, lava_glow * 1.5, 3.0)
+			draw_polyline(pts2, Color("f97316") * 0.6, 1.5)
+
+	# Draw room hazards (Soul Knight-style floor hazards: ICE SLICKS, ACID POOLS, LAVA VENTS)
+	if "hazards" in r and r.hazards is Array:
+		for h in r.hazards:
+			var h_rect: Rect2 = h.get("rect", Rect2())
+			var h_type: String = h.get("type", "ACID")
+			var h_col: Color = h.get("color", Color("22c55e"))
+			match h_type:
+				"ICE":
+					draw_rect(h_rect, Color(0.4, 0.8, 1.0, 0.22), true)
+					draw_rect(h_rect, Color("7dd3fc"), false, 1.2)
+					draw_circle(h_rect.get_center(), 6.0, Color(0.8, 0.95, 1.0, 0.5))
+					var font := ThemeDB.fallback_font
+					if font:
+						draw_string(font, h_rect.position + Vector2(6, 14), "❄ ICE SLICK (+SPEED)", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color("7dd3fc") * 0.9)
+				"ACID", "TOXIC":
+					var a_pulse := 0.7 + 0.3 * sin(float(ticks) * 0.007)
+					draw_rect(h_rect, Color(0.1, 0.8, 0.2, 0.28 * a_pulse), true)
+					draw_rect(h_rect, h_col, false, 1.5)
+					draw_circle(h_rect.get_center(), 5.0, Color("86efac") * 0.7)
+					var font := ThemeDB.fallback_font
+					if font:
+						draw_string(font, h_rect.position + Vector2(6, 14), "☣ CAUSTIC ACID (DMG)", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color("86efac") * 0.9)
+				"LAVA":
+					var l_pulse := 0.6 + 0.4 * sin(float(ticks) * 0.009)
+					draw_rect(h_rect, Color(1.0, 0.25, 0.05, 0.32 * l_pulse), true)
+					draw_rect(h_rect, Color("f97316"), false, 1.8)
+					draw_circle(h_rect.get_center(), 7.0, Color("fbbf24") * 0.8)
+				_:
+					draw_rect(h_rect, Color(h_col.r, h_col.g, h_col.b, 0.25), true)
+					draw_rect(h_rect, h_col, false, 1.2)
 
 
 func _draw_single_room_arena(room_data: RefCounted, tint: Color, _ticks: int, pulse: float) -> void:
@@ -719,7 +1085,7 @@ func _draw_single_room_arena(room_data: RefCounted, tint: Color, _ticks: int, pu
 		draw_line(Vector2(active_bounds.position.x, y), Vector2(active_bounds.end.x, y), grid_color, 1.0)
 	_draw_chamfered_room_outline(active_bounds, Color(0.01, 0.02, 0.04, 0.95), Color("00f0ff"))
 	if room_data:
-		_draw_room_emblem(room_data.room_type, active_bounds.get_center(), pulse, active_bounds)
+		_draw_room_emblem(room_data.room_type, active_bounds.get_center(), pulse, active_bounds, room_data.is_cleared if room_data else false)
 
 
 func _draw_chamfered_room_outline(active_bounds: Rect2, wall_inner: Color, wall_glow: Color, c_inset: float = 36.0) -> void:
@@ -744,39 +1110,98 @@ func _draw_chamfered_room_outline(active_bounds: Rect2, wall_inner: Color, wall_
 		draw_circle(pt, 1.5, Color.WHITE)
 
 
-func _draw_room_emblem(r_type: String, center_pt: Vector2, pulse: float, bounds: Rect2) -> void:
+func _draw_emblem_label(center_pt: Vector2, radius: float, text: String, color: Color) -> void:
+	var font := ThemeDB.fallback_font
+	if not font:
+		return
+	var viewport_size := get_viewport_rect().size
+	var max_text_width := minf(280.0, viewport_size.x - 24.0)
+	var f_size := 11
+	var str_sz := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, f_size)
+	while str_sz.x > max_text_width and f_size > 8:
+		f_size -= 1
+		str_sz = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, f_size)
+	var canvas_transform := get_viewport().get_canvas_transform()
+	var screen_center: Vector2 = canvas_transform * center_pt
+	var pad := Vector2(6.0, 3.0)
+	var screen_left := clampf(screen_center.x - str_sz.x * 0.5, 6.0 + pad.x, maxf(6.0 + pad.x, viewport_size.x - str_sz.x - pad.x - 6.0))
+	var screen_baseline := clampf(screen_center.y + radius + 18.0, 76.0 + str_sz.y, viewport_size.y - 8.0)
+	var label_pos := canvas_transform.affine_inverse() * Vector2(screen_left, screen_baseline)
+	var bg_rect := Rect2(label_pos.x - pad.x, label_pos.y - str_sz.y + 2.0, str_sz.x + pad.x * 2.0, str_sz.y + pad.y * 2.0)
+	draw_rect(bg_rect, Color(0.015, 0.04, 0.08, 0.92), true)
+	draw_rect(bg_rect, color * 0.65, false, 1.2)
+	draw_string(font, label_pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, f_size, color)
+
+
+func _draw_room_emblem(r_type: String, center_pt: Vector2, pulse: float, bounds: Rect2, is_cleared: bool = false) -> void:
+	var p_dist: float = player.global_position.distance_to(center_pt) if is_instance_valid(player) else 999.0
+	var is_nearby: bool = p_dist < 140.0
+	var rs_node = get_node_or_null("/root/RunState") if is_inside_tree() else null
+
 	match r_type:
 		"START":
 			# Ingress airlock staging dock
+			var dock_col := Color("38bdf8")
 			draw_circle(center_pt, 48.0, Color(0.0, 0.0, 0.0, 0.60))
 			draw_circle(center_pt, 44.0, Color(0.04, 0.14, 0.24, 0.85))
-			draw_arc(center_pt, 44.0, 0.0, TAU, 36, Color("38bdf8"), 2.5)
+			draw_arc(center_pt, 44.0, 0.0, TAU, 36, dock_col, 2.5)
 			draw_arc(center_pt, 30.0, 0.0, TAU, 28, Color("67e8f9"), 1.5)
-			draw_circle(center_pt, 14.0 * pulse, Color("38bdf8"))
+			draw_circle(center_pt, 14.0 * pulse, dock_col)
 			draw_circle(center_pt, 4.0, Color.WHITE)
 			for i in range(4):
 				var a := float(i) * TAU / 4.0
-				draw_line(center_pt + Vector2(cos(a), sin(a)) * 16.0, center_pt + Vector2(cos(a), sin(a)) * 32.0, Color("38bdf8"), 2.0)
+				draw_line(center_pt + Vector2(cos(a), sin(a)) * 16.0, center_pt + Vector2(cos(a), sin(a)) * 32.0, dock_col, 2.0)
+			_draw_emblem_label(center_pt, 48.0, "INGRESS DOCK // ROUTE READY", dock_col)
 
 		"RECOVERY":
-			# Glowing Green Medical Cross
-			draw_circle(center_pt, 56.0, Color(0.0, 0.0, 0.0, 0.60))
-			draw_circle(center_pt, 52.0, Color(0.02, 0.18, 0.10, 0.90))
-			draw_arc(center_pt, 52.0, 0.0, TAU, 36, Color("22c55e"), 3.0)
-			draw_arc(center_pt, 38.0, 0.0, TAU, 28, Color("4ade80"), 1.5)
-			var arm_w := 14.0
-			var arm_len := 42.0
-			draw_rect(Rect2(center_pt.x - arm_w * 0.5, center_pt.y - arm_len * 0.5, arm_w, arm_len), Color("22c55e"), true)
-			draw_rect(Rect2(center_pt.x - arm_len * 0.5, center_pt.y - arm_w * 0.5, arm_len, arm_w), Color("22c55e"), true)
-			draw_rect(Rect2(center_pt.x - arm_w * 0.5 + 2, center_pt.y - arm_len * 0.5 + 2, arm_w - 4, arm_len - 4), Color.WHITE, true)
-			draw_rect(Rect2(center_pt.x - arm_len * 0.5 + 2, center_pt.y - arm_w * 0.5 + 2, arm_len - 4, arm_w - 4), Color.WHITE, true)
+			if is_cleared:
+				var dep_col := Color(0.40, 0.45, 0.50, 0.6)
+				draw_circle(center_pt, 50.0, Color(0.02, 0.03, 0.05, 0.65))
+				draw_arc(center_pt, 46.0, 0.0, TAU, 32, dep_col * 0.7, 1.5)
+				var arm_w := 12.0
+				var arm_len := 36.0
+				draw_rect(Rect2(center_pt.x - arm_w * 0.5, center_pt.y - arm_len * 0.5, arm_w, arm_len), dep_col * 0.5, true)
+				draw_rect(Rect2(center_pt.x - arm_len * 0.5, center_pt.y - arm_w * 0.5, arm_len, arm_w), dep_col * 0.5, true)
+				_draw_emblem_label(center_pt, 50.0, "[ MEDBAY DEPLETED ]", Color(0.45, 0.50, 0.55))
+			else:
+				var med_col := Color("22c55e")
+				var cur_hp: int = player.health if is_instance_valid(player) else (rs_node.current_health if rs_node else 5)
+				var max_hp: int = player.max_health if is_instance_valid(player) else (rs_node.max_health if rs_node else 5)
+				var is_full_hp: bool = cur_hp >= max_hp
+
+				# Vertical ascending beacon beam
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(0.13, 0.77, 0.37, 0.35 * pulse), 6.0)
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(1.0, 1.0, 1.0, 0.65 * pulse), 2.0)
+
+				draw_circle(center_pt, 56.0, Color(0.0, 0.0, 0.0, 0.65))
+				draw_circle(center_pt, 52.0, Color(0.02, 0.18, 0.10, 0.90))
+				draw_arc(center_pt, 52.0, 0.0, TAU, 36, med_col, 3.0)
+				draw_arc(center_pt, 38.0, 0.0, TAU, 28, Color("4ade80") * pulse, 1.8)
+				var arm_w := 14.0
+				var arm_len := 42.0
+				draw_rect(Rect2(center_pt.x - arm_w * 0.5, center_pt.y - arm_len * 0.5, arm_w, arm_len), med_col, true)
+				draw_rect(Rect2(center_pt.x - arm_len * 0.5, center_pt.y - arm_w * 0.5, arm_len, arm_w), med_col, true)
+				draw_rect(Rect2(center_pt.x - arm_w * 0.5 + 2, center_pt.y - arm_len * 0.5 + 2, arm_w - 4, arm_len - 4), Color.WHITE, true)
+				draw_rect(Rect2(center_pt.x - arm_len * 0.5 + 2, center_pt.y - arm_w * 0.5 + 2, arm_len - 4, arm_w - 4), Color.WHITE, true)
+
+				var badge_text := "RECOVERY BAY (+2 HP)"
+				var badge_col := med_col
+				if is_nearby:
+					if is_full_hp:
+						badge_text = "[ VITALS 100% // CHARGE SAVED ]"
+						badge_col = Color("38bdf8")
+					else:
+						badge_text = ">>> STEP ONTO DAIS (+2 HP) <<<"
+						badge_col = Color("4ade80")
+				_draw_emblem_label(center_pt, 56.0, badge_text, badge_col)
 
 		"SHOP":
-			# Glowing Cyan Shopping Cart Emblem
-			draw_circle(center_pt, 52.0, Color(0.0, 0.0, 0.0, 0.60))
-			draw_circle(center_pt, 48.0, Color(0.02, 0.14, 0.22, 0.90))
-			draw_arc(center_pt, 48.0, 0.0, TAU, 36, Color("00f0ff"), 3.0)
 			var s_col := Color("00f0ff")
+			var b_count: int = rs_node.bits if rs_node else 0
+			draw_circle(center_pt, 52.0, Color(0.0, 0.0, 0.0, 0.65))
+			draw_circle(center_pt, 48.0, Color(0.02, 0.14, 0.22, 0.90))
+			draw_arc(center_pt, 48.0, 0.0, TAU, 36, s_col, 3.0)
+			draw_arc(center_pt, 36.0, 0.0, TAU, 28, Color("38bdf8") * pulse, 1.5)
 			draw_line(center_pt + Vector2(-16, -10), center_pt + Vector2(10, -10), s_col, 3.0)
 			draw_line(center_pt + Vector2(10, -10), center_pt + Vector2(6, 8), s_col, 3.0)
 			draw_line(center_pt + Vector2(6, 8), center_pt + Vector2(-12, 8), s_col, 3.0)
@@ -785,22 +1210,54 @@ func _draw_room_emblem(r_type: String, center_pt: Vector2, pulse: float, bounds:
 			draw_circle(center_pt + Vector2(-8, 14), 3.5, s_col)
 			draw_circle(center_pt + Vector2(6, 14), 3.5, s_col)
 
+			var badge_text := "SHOP KIOSK (BITS: %d)" % b_count
+			var badge_col := s_col
+			if is_nearby:
+				badge_text = ">>> STEP ONTO KIOSK TO BROWSE <<<"
+				badge_col = Color("67e8f9")
+			elif is_cleared:
+				badge_text = "[ SHOP KIOSK // RE-ARMED (%d BITS) ]" % b_count
+			_draw_emblem_label(center_pt, 52.0, badge_text, badge_col)
+
 		"GIFT":
-			# Glowing Purple Diamond Emblem
-			draw_circle(center_pt, 52.0, Color(0.0, 0.0, 0.0, 0.60))
-			draw_circle(center_pt, 48.0, Color(0.12, 0.05, 0.22, 0.90))
-			draw_arc(center_pt, 48.0, 0.0, TAU, 36, Color("c084fc"), 3.0)
-			var d_pts := PackedVector2Array([
-				center_pt + Vector2(0, -22),
-				center_pt + Vector2(20, 0),
-				center_pt + Vector2(0, 22),
-				center_pt + Vector2(-20, 0)
-			])
-			draw_colored_polygon(d_pts, Color(0.75, 0.52, 0.98, 0.40))
-			var d_closed := PackedVector2Array(d_pts)
-			d_closed.append(d_pts[0])
-			draw_polyline(d_closed, Color("c084fc"), 3.0)
-			draw_circle(center_pt, 6.0 * pulse, Color.WHITE)
+			if is_cleared:
+				var dep_col := Color(0.40, 0.45, 0.50, 0.6)
+				draw_circle(center_pt, 48.0, Color(0.02, 0.03, 0.05, 0.65))
+				draw_arc(center_pt, 44.0, 0.0, TAU, 32, dep_col * 0.7, 1.5)
+				var d_pts := PackedVector2Array([
+					center_pt + Vector2(0, -16),
+					center_pt + Vector2(14, 0),
+					center_pt + Vector2(0, 16),
+					center_pt + Vector2(-14, 0)
+				])
+				draw_polyline(PackedVector2Array([d_pts[0], d_pts[1], d_pts[2], d_pts[3], d_pts[0]]), dep_col * 0.6, 1.5)
+				_draw_emblem_label(center_pt, 48.0, "[ GIFT CLAIMED ]", Color(0.45, 0.50, 0.55))
+			else:
+				var g_col := Color("c084fc")
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(0.75, 0.52, 0.98, 0.35 * pulse), 6.0)
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(1.0, 1.0, 1.0, 0.65 * pulse), 2.0)
+
+				draw_circle(center_pt, 52.0, Color(0.0, 0.0, 0.0, 0.65))
+				draw_circle(center_pt, 48.0, Color(0.12, 0.05, 0.22, 0.90))
+				draw_arc(center_pt, 48.0, 0.0, TAU, 36, g_col, 3.0)
+				var d_pts := PackedVector2Array([
+					center_pt + Vector2(0, -22),
+					center_pt + Vector2(20, 0),
+					center_pt + Vector2(0, 22),
+					center_pt + Vector2(-20, 0)
+				])
+				draw_colored_polygon(d_pts, Color(0.75, 0.52, 0.98, 0.40))
+				var d_closed := PackedVector2Array(d_pts)
+				d_closed.append(d_pts[0])
+				draw_polyline(d_closed, g_col, 3.0)
+				draw_circle(center_pt, 6.0 * pulse, Color.WHITE)
+
+				var badge_text := "GIFT CACHE (FREE UPGRADE)"
+				var badge_col := g_col
+				if is_nearby:
+					badge_text = ">>> STEP TO EXTRACT UPGRADE <<<"
+					badge_col = Color("f0abfc")
+				_draw_emblem_label(center_pt, 52.0, badge_text, badge_col)
 
 		"COMBAT", "ELITE":
 			var h_col := Color("ef4444") if r_type == "ELITE" else Color(0.85, 0.25, 0.25, 0.45)
@@ -815,6 +1272,122 @@ func _draw_room_emblem(r_type: String, center_pt: Vector2, pulse: float, bounds:
 				draw_rect(b_rect, h_col, false, 1.2)
 				for s in range(0, 48, 12):
 					draw_line(Vector2(b_rect.position.x + s, b_rect.position.y), Vector2(b_rect.position.x + s + 8, b_rect.end.y), h_col, 1.5)
+
+		"EXTRACT":
+			pass
+
+		"CACHE":
+			if is_cleared:
+				var dep_col := Color(0.40, 0.45, 0.50, 0.6)
+				draw_circle(center_pt, 48.0, Color(0.02, 0.03, 0.05, 0.65))
+				draw_arc(center_pt, 44.0, 0.0, TAU, 32, dep_col * 0.7, 1.5)
+				draw_rect(Rect2(center_pt.x - 14.0, center_pt.y - 12.0, 28.0, 24.0), dep_col * 0.5, false, 1.5)
+				_draw_emblem_label(center_pt, 48.0, "[ CACHE DECRYPTED ]", Color(0.45, 0.50, 0.55))
+			else:
+				var c_col := Color("f59e0b")
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(0.96, 0.62, 0.04, 0.35 * pulse), 6.0)
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(1.0, 1.0, 1.0, 0.65 * pulse), 2.0)
+
+				draw_circle(center_pt, 52.0, Color(0.0, 0.0, 0.0, 0.65))
+				draw_circle(center_pt, 48.0, Color(0.18, 0.12, 0.02, 0.90))
+				draw_arc(center_pt, 48.0, 0.0, TAU, 36, c_col, 3.0)
+				draw_arc(center_pt, 34.0, 0.0, TAU, 28, Color("fbbf24") * pulse, 1.5)
+				draw_rect(Rect2(center_pt.x - 16.0, center_pt.y - 14.0, 32.0, 28.0), c_col, false, 2.5)
+				draw_line(center_pt + Vector2(-16.0, -2.0), center_pt + Vector2(16.0, -2.0), Color("fbbf24"), 2.0)
+				draw_circle(center_pt + Vector2(0.0, 3.0), 3.0, Color.WHITE)
+
+				var badge_text := "DATA CACHE (+25 BITS)"
+				var badge_col := c_col
+				if is_nearby:
+					badge_text = ">>> STEP TO DECRYPT +25 BITS <<<"
+					badge_col = Color("fde047")
+				_draw_emblem_label(center_pt, 52.0, badge_text, badge_col)
+
+		"SHRINE":
+			if is_cleared:
+				var dep_col := Color(0.40, 0.45, 0.50, 0.6)
+				draw_circle(center_pt, 48.0, Color(0.02, 0.03, 0.05, 0.65))
+				draw_arc(center_pt, 44.0, 0.0, TAU, 32, dep_col * 0.7, 1.5)
+				draw_circle(center_pt, 8.0, dep_col * 0.5)
+				_draw_emblem_label(center_pt, 48.0, "[ SHRINE ATTUNED ]", Color(0.45, 0.50, 0.55))
+			else:
+				var sh_col := Color("818cf8")
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(0.51, 0.55, 0.97, 0.35 * pulse), 6.0)
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(1.0, 1.0, 1.0, 0.65 * pulse), 2.0)
+
+				draw_circle(center_pt, 54.0, Color(0.0, 0.0, 0.0, 0.65))
+				draw_circle(center_pt, 50.0, Color(0.08, 0.04, 0.20, 0.90))
+				draw_arc(center_pt, 50.0, 0.0, TAU, 36, sh_col, 3.0)
+				draw_arc(center_pt, 36.0, 0.0, TAU, 28, Color("a5b4fc") * pulse, 1.5)
+				draw_circle(center_pt, 12.0 * pulse, sh_col)
+				draw_circle(center_pt, 4.0, Color.WHITE)
+				for i in range(8):
+					var a := float(i) * TAU / 8.0
+					draw_line(center_pt + Vector2(cos(a), sin(a)) * 14.0, center_pt + Vector2(cos(a), sin(a)) * 26.0, Color("a5b4fc"), 1.5)
+
+				var badge_text := "NEURAL SHRINE (AEGIS)"
+				var badge_col := sh_col
+				if is_nearby:
+					badge_text = ">>> STEP FOR AEGIS SHIELD (+1 HP) <<<"
+					badge_col = Color("c7d2fe")
+				_draw_emblem_label(center_pt, 54.0, badge_text, badge_col)
+
+		"TRANSIT":
+			if is_cleared:
+				var dep_col := Color(0.40, 0.45, 0.50, 0.6)
+				draw_circle(center_pt, 46.0, Color(0.02, 0.03, 0.05, 0.65))
+				draw_arc(center_pt, 42.0, 0.0, TAU, 32, dep_col * 0.7, 1.5)
+				draw_line(center_pt + Vector2(-12.0, -8.0), center_pt + Vector2(0.0, 4.0), dep_col * 0.6, 2.0)
+				draw_line(center_pt + Vector2(0.0, 4.0), center_pt + Vector2(12.0, -8.0), dep_col * 0.6, 2.0)
+				_draw_emblem_label(center_pt, 46.0, "[ CONDUIT DISCHARGED ]", Color(0.45, 0.50, 0.55))
+			else:
+				var tr_col := Color("00f0ff")
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(0.0, 0.94, 1.0, 0.35 * pulse), 6.0)
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(1.0, 1.0, 1.0, 0.65 * pulse), 2.0)
+
+				draw_circle(center_pt, 48.0, Color(0.0, 0.0, 0.0, 0.55))
+				draw_circle(center_pt, 44.0, Color(0.03, 0.10, 0.20, 0.90))
+				draw_arc(center_pt, 44.0, 0.0, TAU, 36, tr_col, 2.8)
+				draw_arc(center_pt, 32.0, 0.0, TAU, 28, Color("38bdf8") * pulse, 1.8)
+				var t_col := Color("38bdf8")
+				draw_line(center_pt + Vector2(-16.0, -10.0), center_pt + Vector2(0.0, 6.0), t_col, 2.5)
+				draw_line(center_pt + Vector2(0.0, 6.0), center_pt + Vector2(16.0, -10.0), t_col, 2.5)
+				draw_line(center_pt + Vector2(-12.0, -18.0), center_pt + Vector2(0.0, -6.0), Color.WHITE, 1.8)
+				draw_line(center_pt + Vector2(0.0, -6.0), center_pt + Vector2(12.0, -18.0), Color.WHITE, 1.8)
+				draw_circle(center_pt + Vector2(0.0, 6.0), 3.0, Color.WHITE)
+
+				var badge_text := "HYPER-CONDUIT (OVERDRIVE)"
+				var badge_col := tr_col
+				if is_nearby:
+					badge_text = ">>> STEP FOR +35% SPEED & +15 BITS <<<"
+					badge_col = Color("a5f3fc")
+				_draw_emblem_label(center_pt, 48.0, badge_text, badge_col)
+
+		"SECRET":
+			if is_cleared:
+				var dep_col := Color(0.40, 0.45, 0.50, 0.6)
+				draw_circle(center_pt, 48.0, Color(0.02, 0.03, 0.05, 0.65))
+				draw_arc(center_pt, 44.0, 0.0, TAU, 32, dep_col * 0.7, 1.5)
+				draw_circle(center_pt, 10.0, dep_col * 0.5)
+				_draw_emblem_label(center_pt, 48.0, "[ VAULT SALVAGED ]", Color(0.45, 0.50, 0.55))
+			else:
+				var v_col := Color("c084fc")
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(0.75, 0.52, 0.98, 0.40 * pulse), 6.0)
+				draw_line(center_pt + Vector2(0, 8), center_pt + Vector2(0, -60), Color(1.0, 1.0, 1.0, 0.70 * pulse), 2.0)
+
+				draw_circle(center_pt, 54.0, Color(0.0, 0.0, 0.0, 0.65))
+				draw_circle(center_pt, 50.0, Color(0.12, 0.04, 0.22, 0.92))
+				draw_arc(center_pt, 50.0, 0.0, TAU, 40, v_col, 3.0)
+				draw_arc(center_pt, 36.0, 0.0, TAU, 30, Color("e879f9") * pulse, 2.0)
+				draw_circle(center_pt, 14.0 * pulse, v_col)
+				draw_circle(center_pt, 5.0, Color.WHITE)
+
+				var badge_text := "QUANTUM VAULT (+1 MAX HP & +75 BITS)"
+				var badge_col := v_col
+				if is_nearby:
+					badge_text = ">>> STEP TO SALVAGE VAULT <<<"
+					badge_col = Color("f472b6")
+				_draw_emblem_label(center_pt, 54.0, badge_text, badge_col)
 
 		"BOSS":
 			# Boss Overlord Dais with pulsating red concentric rings & runes
@@ -838,6 +1411,7 @@ func _draw_exit_portal(pos: Vector2, pulse: float, portal_col: Color) -> void:
 	draw_arc(pos, 18.0, -spin * 1.5, -spin * 1.5 + TAU * 0.75, 20, Color.WHITE, 2.0)
 	draw_circle(pos, 12.0 * pulse, portal_col)
 	draw_circle(pos, 4.0, Color.WHITE)
+	_draw_emblem_label(pos, 42.0, "WARP EXTRACTION", portal_col)
 
 
 func _draw_exit_doors(room_data: RefCounted, ticks: int, pulse: float) -> void:
@@ -1019,6 +1593,10 @@ func _create_walls(room_rect: Rect2 = ROOM_RECT) -> void:
 		if is_instance_valid(w):
 			w.queue_free()
 	active_walls.clear()
+	for sw in active_secret_walls:
+		if is_instance_valid(sw):
+			sw.queue_free()
+	active_secret_walls.clear()
 
 	if dungeon_layout and not dungeon_layout.corridors.is_empty():
 		_create_floor_walls(dungeon_layout)
@@ -1126,8 +1704,64 @@ func _create_floor_walls(layout: RefCounted) -> void:
 				var w_len := b.end.y - cur_y
 				_add_wall(Vector2(b.end.x + 10.0, cur_y + w_len * 0.5), Vector2(20.0, w_len))
 
+	# 3. Build destructible secret walls over unrevealed secret doorways
+	for d in layout.doorways:
+		if d.get("is_secret", false) and not d.get("is_revealed", false):
+			var d_rect: Rect2 = d.get("rect", Rect2())
+			var sec_room_idx: int = int(d.get("secret_room_idx", -1))
+			var sec_wall: StaticBody2D = SECRET_WALL_SCRIPT.new() as StaticBody2D
+			sec_wall.position = d_rect.get_center()
+			sec_wall.game_ref = self
+			sec_wall.room_index = sec_room_idx
+			var c_shape := CollisionShape2D.new()
+			var r_shape := RectangleShape2D.new()
+			r_shape.size = d_rect.size
+			c_shape.shape = r_shape
+			sec_wall.add_child(c_shape)
+			add_child(sec_wall)
+			active_secret_walls.append(sec_wall)
+
+
+func reveal_secret_room(room_idx: int) -> void:
+	if not dungeon_layout:
+		return
+	for r in dungeon_layout.rooms:
+		if r.index == room_idx:
+			r.is_revealed = true
+			break
+
+	for d in dungeon_layout.doorways:
+		if int(d.get("secret_room_idx", -1)) == room_idx or int(d.get("room_idx", -1)) == room_idx:
+			d["is_revealed"] = true
+
+	# Remove the secret wall physics bodies
+	var remaining_walls: Array[StaticBody2D] = []
+	for sw in active_secret_walls:
+		if is_instance_valid(sw):
+			if "room_index" in sw and sw.room_index == room_idx:
+				sw.queue_free()
+			else:
+				remaining_walls.append(sw)
+	active_secret_walls = remaining_walls
+
+	var rs = get_node_or_null("/root/RunState")
+	if rs and room_idx >= 0 and room_idx < rs.dungeon_layout_summary.size():
+		rs.dungeon_layout_summary[room_idx]["is_revealed"] = true
+
+	# Audio cue & screen shake
+	add_trauma(0.35)
+	trigger_glitch(0.50)
+	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+		var synth = get_node("/root/AudioSynth")
+		if synth.has_method("play"):
+			synth.play("powerup_pickup", 0.05, 2.0)
+
+	_show_director_banner("/// HIDDEN CHAMBER BREACHED // QUANTUM VAULT UNLOCKED ///", "Classified sector data core exposed. High-value salvage detected.")
+	queue_redraw()
+
 
 func _lock_room_doorways(room: RefCounted) -> void:
+	doors_unlocked = false
 	_unlock_room_doorways()
 	for d in room.doorway_rects:
 		var barrier := StaticBody2D.new()
@@ -1201,6 +1835,83 @@ func _add_fountain_obstacle(pos: Vector2, radius: float = 44.0) -> void:
 	obstacle_rects.append(fountain_rect)
 
 
+func _add_tactical_prop(pos: Vector2, size: Vector2, ptype: String) -> Node2D:
+	var prop: Node2D = DESTRUCTIBLE_PROP_SCRIPT.new()
+	prop.position = pos
+	prop.prop_size = size
+	prop.prop_type = ptype
+	prop.game_ref = self
+	add_child(prop)
+	active_obstacles.append(prop)
+	obstacle_rects.append(Rect2(pos - size * 0.5, size))
+	return prop
+
+
+func on_prop_destroyed(prop: Node2D) -> void:
+	if not is_instance_valid(prop):
+		return
+	var p_pos: Vector2 = prop.position
+	var p_type: String = prop.prop_type
+	active_obstacles.erase(prop)
+	obstacle_rects.erase(prop.prop_rect)
+
+	match p_type:
+		"EXPLOSIVE_BARREL":
+			add_trauma(0.40)
+			trigger_glitch(0.60)
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("hit_impact", 0.05, 3.0)
+			DEBRIS_EMITTER_SCRIPT.spawn_shards(self, p_pos, Color("ef4444"), "hexagon", 12)
+			for enemy in active_enemies:
+				if is_instance_valid(enemy):
+					var d: float = p_pos.distance_to(enemy.global_position)
+					if d <= 130.0:
+						if enemy.has_method("take_damage"):
+							enemy.take_damage(3)
+						if "velocity" in enemy:
+							enemy.velocity += (enemy.global_position - p_pos).normalized() * 260.0
+			if is_instance_valid(player) and p_pos.distance_to(player.global_position) <= 90.0:
+				player.take_damage(1)
+			for sw in active_secret_walls:
+				if is_instance_valid(sw) and p_pos.distance_to(sw.global_position) <= 150.0:
+					sw.take_damage(1, "explosion")
+
+		"CRYO_CANISTER":
+			add_trauma(0.25)
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("powerup_pickup", 0.05, -2.0)
+			DEBRIS_EMITTER_SCRIPT.spawn_shards(self, p_pos, Color("38bdf8"), "diamond", 10)
+			for enemy in active_enemies:
+				if is_instance_valid(enemy) and p_pos.distance_to(enemy.global_position) <= 150.0:
+					if enemy.has_method("apply_debuff"):
+						enemy.apply_debuff("CRYO", 3.5)
+					elif "move_speed" in enemy:
+						enemy.move_speed *= 0.40
+
+		"TOXIC_VAT":
+			add_trauma(0.20)
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("hit_impact", 0.05, -3.0)
+			DEBRIS_EMITTER_SCRIPT.spawn_shards(self, p_pos, Color("22c55e"), "chevron", 8)
+			active_acid_puddles.append({
+				"pos": p_pos,
+				"radius": 75.0,
+				"timer": 6.5,
+				"color": Color("22c55e")
+			})
+
+		"DATA_PYLON":
+			add_trauma(0.25)
+			DEBRIS_EMITTER_SCRIPT.spawn_shards(self, p_pos, Color("00f0ff"), "diamond", 8)
+			var rs = get_node_or_null("/root/RunState")
+			if rs:
+				rs.add_bits(15)
+				_show_director_banner("DATA PYLON CACHE // +15 BITS", "Direct bit extraction successful.")
+
+	queue_redraw()
+
+
+
 var touch_controls: Control = null
 
 
@@ -1251,6 +1962,12 @@ func _on_player_dashed() -> void:
 		var rs = get_node_or_null("/root/RunState")
 		var t: float = rs.run_time if rs else 0.0
 		tracker.record_dash(t)
+	if is_instance_valid(camera):
+		if is_instance_valid(camera_pulse_tween) and camera_pulse_tween.is_running():
+			camera_pulse_tween.kill()
+		camera_pulse_tween = create_tween()
+		camera_pulse_tween.tween_property(camera, "zoom", Vector2(1.045, 1.045), 0.07).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		camera_pulse_tween.tween_property(camera, "zoom", Vector2.ONE, 0.22).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
 
 func _on_player_damaged(amount: int) -> void:
@@ -1289,11 +2006,26 @@ func _on_player_shot_hit(enemy: Node2D) -> void:
 func spawn_damage_number(pos: Vector2, text: String, col: Color = Color("38bdf8")) -> void:
 	var lbl := Label.new()
 	lbl.text = text
-	lbl.global_position = pos + Vector2(randf_range(-12.0, 12.0), randf_range(-18.0, -8.0))
-	lbl.add_theme_font_size_override("font_size", 13)
+	lbl.custom_minimum_size = Vector2(220.0, 34.0)
+	lbl.size = lbl.custom_minimum_size
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.add_theme_font_size_override("font_size", 12)
 	lbl.add_theme_color_override("font_color", col)
+	lbl.add_theme_color_override("font_outline_color", Color(0.01, 0.02, 0.05, 0.95))
+	lbl.add_theme_constant_override("outline_size", 3)
 	lbl.z_index = 50
-	add_child(lbl)
+	var screen_pos: Vector2 = get_viewport().get_canvas_transform() * (pos + Vector2(randf_range(-18.0, 18.0), randf_range(-28.0, -12.0)))
+	var viewport_size := get_viewport_rect().size
+	lbl.position = Vector2(
+		clampf(screen_pos.x - lbl.size.x * 0.5, 6.0, maxf(6.0, viewport_size.x - lbl.size.x - 6.0)),
+		clampf(screen_pos.y - lbl.size.y * 0.5, 66.0, maxf(66.0, viewport_size.y - lbl.size.y - 12.0))
+	)
+	if is_instance_valid(ui_layer):
+		ui_layer.add_child(lbl)
+	else:
+		add_child(lbl)
 
 	var tween := create_tween().set_parallel(true)
 	tween.tween_property(lbl, "position:y", lbl.position.y - 28.0, 0.45).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
@@ -1302,9 +2034,17 @@ func spawn_damage_number(pos: Vector2, text: String, col: Color = Color("38bdf8"
 
 
 func _load_room(index: int) -> void:
+	if room_transition_active:
+		return
+	var animate_swap := has_loaded_room and is_instance_valid(transition_cover)
+	if animate_swap:
+		room_transition_active = true
+		await _animate_transition_cover(true, 0.16)
+
 	room_cleared = false
 	doors_unlocked = false
 	boss_active = false
+	boss_spawn_initiated = false
 	boss_ref = null
 	pending_spawn_telegraphs.clear()
 	if index == 0:
@@ -1339,13 +2079,15 @@ func _load_room(index: int) -> void:
 
 	if not dungeon_layout or dungeon_layout.rooms.is_empty():
 		var wave_count: int = rs_node.progression.sector_total_waves if (rs_node and rs_node.progression) else 3
+		var is_boss_fl: bool = rs_node.progression.is_boss_floor() if (rs_node and rs_node.progression) else true
 		dungeon_layout = dungeon_generator.generate_dungeon(
 			sec_seed,
 			room_count,
 			wave_count,
 			true,
 			rs_node.progression.difficulty if rs_node.progression else rs_node.difficulty,
-			rs_node.progression.sector_index if rs_node.progression else rs_node.current_sector
+			rs_node.progression.sector_index if rs_node.progression else rs_node.current_sector,
+			is_boss_fl
 		)
 		if rs_node:
 			rs_node.dungeon_layout_summary.clear()
@@ -1374,6 +2116,7 @@ func _load_room(index: int) -> void:
 
 	boss_active = false
 	boss_vanguard_active = false
+	boss_spawn_initiated = false
 	boss_ref = null
 	if is_instance_valid(boss_bar_container):
 		boss_bar_container.visible = false
@@ -1390,29 +2133,49 @@ func _load_room(index: int) -> void:
 	# Dynamically create boundary walls for room bounds
 	_create_walls(current_room_data.bounds if current_room_data else ROOM_RECT)
 
-	# Place procedural obstacle geometry
+	# Place procedural obstacle & tactical destructible prop geometry
 	if dungeon_layout and not dungeon_layout.corridors.is_empty():
 		for rm in dungeon_layout.rooms:
-			for r in rm.obstacles:
-				_add_obstacle(r.get_center(), r.size)
-			if rm.room_type in ["START", "RECOVERY"]:
+			for i in range(rm.obstacles.size()):
+				var r: Rect2 = rm.obstacles[i]
+				var ptype: String = rm.prop_types[i] if (i < rm.prop_types.size()) else ""
+				if not ptype.is_empty():
+					_add_tactical_prop(r.get_center(), r.size, ptype)
+				else:
+					_add_obstacle(r.get_center(), r.size)
+			if rm.room_type == "START":
 				var f_center: Vector2 = rm.bounds.get_center()
 				_add_fountain_obstacle(f_center, 44.0)
 	else:
-		for r in current_room_data.obstacles:
-			_add_obstacle(r.get_center(), r.size)
-		if current_room_data and current_room_data.room_type in ["START", "RECOVERY"]:
+		for i in range(current_room_data.obstacles.size()):
+			var r: Rect2 = current_room_data.obstacles[i]
+			var ptype: String = current_room_data.prop_types[i] if (i < current_room_data.prop_types.size()) else ""
+			if not ptype.is_empty():
+				_add_tactical_prop(r.get_center(), r.size, ptype)
+			else:
+				_add_obstacle(r.get_center(), r.size)
+		if current_room_data and current_room_data.room_type == "START":
 			var f_center: Vector2 = current_room_data.bounds.get_center()
 			_add_fountain_obstacle(f_center, 44.0)
 
 	if nav_grid:
 		nav_grid.build_grid(current_room_data.bounds if current_room_data else ROOM_RECT, obstacle_rects, 24.0)
 
-	# Service chambers are safe traversal/reward stops, not extra combat waves.
-	if current_room_data.room_type in ["START", "RECOVERY", "SHOP", "GIFT"]:
+	# Service & extract chambers are safe traversal/reward stops, not extra combat waves.
+	var cur_b: int = rs_node.progression.current_biome if (rs_node and rs_node.progression) else (rs_node.current_biome if rs_node else 1)
+	if encounter_director:
+		encounter_director.current_biome = cur_b
+		if encounter_director.evolution_manager:
+			encounter_director.evolution_manager.current_biome = cur_b
+
+	if current_room_data.room_type in ["START", "RECOVERY", "SHOP", "GIFT", "EXTRACT", "CACHE", "SHRINE", "TRANSIT"]:
 		_handle_non_wave_room(current_room_data.room_type)
 		queue_redraw()
 		_update_debug_overlay()
+		has_loaded_room = true
+		if animate_swap or (is_instance_valid(transition_cover) and transition_cover.modulate.a > 0.0):
+			await _animate_transition_cover(false, 0.26)
+			room_transition_active = false
 		return
 
 	# Setup 3–5 combat waves for combat chambers
@@ -1427,11 +2190,22 @@ func _load_room(index: int) -> void:
 
 	queue_redraw()
 	_update_debug_overlay()
+	has_loaded_room = true
+	if animate_swap or (is_instance_valid(transition_cover) and transition_cover.modulate.a > 0.0):
+		await _animate_transition_cover(false, 0.26)
+		room_transition_active = false
 
 
 func _handle_non_wave_room(room_type: String) -> void:
-	doors_unlocked = true
+	room_cleared = true
+	var is_multi_room: bool = dungeon_layout != null and not dungeon_layout.corridors.is_empty()
+	if not is_multi_room:
+		doors_unlocked = true
+	else:
+		doors_unlocked = false
 	var rs_node = get_node_or_null("/root/RunState") if is_inside_tree() else null
+	if current_room_data and current_room_data.is_cleared and room_type in ["RECOVERY", "CACHE", "SHRINE", "TRANSIT", "GIFT"]:
+		return
 	match room_type:
 		"START":
 			var cur_sec: int = rs_node.progression.sector_index if (rs_node and rs_node.progression) else 1
@@ -1439,20 +2213,87 @@ func _handle_non_wave_room(room_type: String) -> void:
 				"CALIBRATION DOCK // SECTOR %d STAGING" % cur_sec,
 				"SAFE STAGING AREA // SELECT AN INGRESS ROUTE"
 			)
-			_unlock_exit_doors()
+			if not is_multi_room:
+				_unlock_exit_doors()
+		"EXTRACT":
+			_show_director_banner(
+				"SECTOR EXTRACTION GATEWAY // WARP READY",
+				"ROUTE TERMINUS // STEP THROUGH THE WARP PORTAL TO ADVANCE"
+			)
+			if not is_multi_room:
+				_unlock_exit_doors()
 		"RECOVERY":
+			var cur_hp: int = player.health if is_instance_valid(player) else (rs_node.current_health if rs_node else 5)
+			var max_hp: int = player.max_health if is_instance_valid(player) else (rs_node.max_health if rs_node else 5)
+			if cur_hp >= max_hp:
+				if is_instance_valid(player):
+					spawn_damage_number(player.global_position, "VITALS 100% // CHARGE PRESERVED", Color("38bdf8"))
+				_show_director_banner("RECOVERY MEDBAY // CHARGE PRESERVED", "Vitals at 100% capacity. Dais charge held in reserve.")
+			else:
+				if rs_node:
+					rs_node.heal(2)
+				if is_instance_valid(player):
+					player.health = mini(max_hp, cur_hp + 2)
+					player.queue_redraw()
+					spawn_damage_number(player.global_position, "+2 HP RESTORED", Color("22c55e"))
+				if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+					get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
+				_show_director_banner("RECOVERY MEDBAY // +2 HP RESTORED", "Nanite biocircuits repaired. Route doors open.")
+			if current_room_data:
+				current_room_data.is_cleared = true
+			if not is_multi_room:
+				_unlock_exit_doors()
+		"CACHE":
 			if rs_node:
-				rs_node.heal(2)
+				rs_node.add_bits(25)
+			if is_instance_valid(player):
+				spawn_damage_number(player.global_position, "+25 BITS DECRYPTED", Color("f59e0b"))
 			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 				get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
-			_show_director_banner("RECOVERY MEDBAY // +2 HP RESTORED", "Nanite biocircuits repaired. Route doors open.")
-			_unlock_exit_doors()
+			_show_director_banner("DATA CACHE RECOVERED // +25 BITS", "Encrypted cache deciphered.")
+			if current_room_data:
+				current_room_data.is_cleared = true
+			if not is_multi_room:
+				_unlock_exit_doors()
+		"SHRINE":
+			if is_instance_valid(player):
+				player.has_aegis_shield = true
+				player.invulnerable_timer = 1.0
+				player.queue_redraw()
+				spawn_damage_number(player.global_position, "NEURAL AEGIS ONLINE (+1 HP)", Color("818cf8"))
+			if rs_node:
+				rs_node.heal(1)
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 1.5)
+			_show_director_banner("NEURAL SHRINE // AEGIS ATTUNEMENT", "Nanite Aegis shield online. Will absorb the next lethal impact. +1 HP restored.")
+			if current_room_data:
+				current_room_data.is_cleared = true
+			if not is_multi_room:
+				_unlock_exit_doors()
+		"TRANSIT":
+			var rs = rs_node
+			if rs:
+				rs.move_speed_mult = minf(rs.move_speed_mult * 1.35, 2.5)
+				rs.add_bits(15)
+			if is_instance_valid(player):
+				player.current_ammo = player.get_max_ammo()
+				player.has_speed_overdrive = true
+				player.queue_redraw()
+				spawn_damage_number(player.global_position, "OVERDRIVE // +35% SPEED & +15 BITS", Color("00f0ff"))
+			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+				get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 1.0)
+			_show_director_banner("HYPER-CONDUIT CHARGED // OVERDRIVE ENGAGED", "+35% Thruster Acceleration & Full Ammo Recharged. +15 Bits.")
+			if current_room_data:
+				current_room_data.is_cleared = true
+			if not is_multi_room:
+				_unlock_exit_doors()
 		"SHOP":
 			_show_shop_interface()
 		"GIFT":
 			_show_gift_interface()
 		_:
-			_unlock_exit_doors()
+			if not is_multi_room:
+				_unlock_exit_doors()
 
 
 func _show_shop_interface() -> void:
@@ -1461,54 +2302,68 @@ func _show_shop_interface() -> void:
 		glitch_material.set_shader_parameter("glitch_intensity", 0.0)
 	if touch_controls:
 		touch_controls.enabled = false
+		touch_controls.visible = false
+		if touch_controls.has_method("reset_controls"):
+			touch_controls.reset_controls()
 	get_tree().paused = true
 	var rs = get_node_or_null("/root/RunState")
-	var stock: Array = current_room_data.shop_stock if current_room_data else []
+	var stock: Array = current_room_data.shop_stock if (current_room_data and "shop_stock" in current_room_data and not current_room_data.shop_stock.is_empty()) else []
 	if stock.is_empty():
 		stock = dungeon_generator._generate_shop_stock(RandomNumberGenerator.new())
+		if current_room_data and "shop_stock" in current_room_data:
+			current_room_data.shop_stock = stock
+
+	if draft_header_label:
+		draft_header_label.text = "BLACK MARKET // DATA TERMINAL"
+	if draft_sub_label:
+		draft_sub_label.text = "Install tactical subroutines with collected Bits. Available: %d Bits" % (rs.bits if rs else 0)
 
 	for child in upgrade_cards_box.get_children():
 		child.queue_free()
 
 	for item in stock:
 		var card := Button.new()
-		card.custom_minimum_size = Vector2(230, 210)
+		card.custom_minimum_size = Vector2(190, 200)
 		var item_id: String = item.get("id", "OVERCLOCK")
 		var cost: int = int(item.get("cost", 5))
 		var title: String = item.get("title", item_id)
 		var desc: String = item.get("desc", "+Upgrade")
 		var rarity: String = item.get("rarity", "COMMON")
+		var is_purchased: bool = item.get("purchased", false)
 		var can_afford: bool = rs != null and rs.bits >= cost
 		var is_capped: bool = rs != null and rs.get_upgrade_stack_count(item_id) >= rs.get_upgrade_stack_cap(item_id)
 
 		var status_text := "COST: %d BITS" % cost
-		if is_capped:
+		if is_purchased:
+			status_text = "[ INSTALLED ]"
+		elif is_capped:
 			status_text = "[ FULLY STACKED ]"
 		elif not can_afford:
-			status_text = "COST: %d BITS (HAVE %d)" % [cost, (rs.bits if rs else 0)]
+			status_text = "COST: %d BITS\n(HAVE %d)" % [cost, (rs.bits if rs else 0)]
 
-		card.text = "\n[ SHOP // %s ]\n%s // %s\n\n%s\n\n%s" % [
+		card.text = "\n[ SHOP // %s ]\n%s\n%s\n\n%s\n\n%s" % [
 			title,
 			rarity,
 			status_text,
 			desc,
-			"Tap to purchase" if (can_afford and not is_capped) else "Unavailable"
+			"Tap to purchase" if (can_afford and not is_capped and not is_purchased) else ("Purchased" if is_purchased else "Unavailable")
 		]
-		card.disabled = not can_afford or is_capped
+		card.disabled = not can_afford or is_capped or is_purchased
 		card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		card.pressed.connect(func():
-			if rs and rs.bits >= cost and not is_capped:
+			if rs and rs.bits >= cost and not is_capped and not item.get("purchased", false):
 				rs.spend_bits(cost)
 				rs.apply_upgrade(item_id)
+				item["purchased"] = true
 				if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 					get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
-				_close_shop_or_gift()
+				_show_shop_interface()
 		)
 		upgrade_cards_box.add_child(card)
 
 	var bypass_btn := Button.new()
-	bypass_btn.custom_minimum_size = Vector2(230, 210)
-	bypass_btn.text = "\n[ BYPASS TERMINAL ]\n\nSave bits for later.\n\nProceed to exit doors."
+	bypass_btn.custom_minimum_size = Vector2(190, 200)
+	bypass_btn.text = "\n[ EXIT TERMINAL ]\n\nLeave kiosk.\n\nResume run."
 	bypass_btn.pressed.connect(_close_shop_or_gift)
 	upgrade_cards_box.add_child(bypass_btn)
 
@@ -1521,40 +2376,87 @@ func _show_gift_interface() -> void:
 		glitch_material.set_shader_parameter("glitch_intensity", 0.0)
 	if touch_controls:
 		touch_controls.enabled = false
+		touch_controls.visible = false
+		if touch_controls.has_method("reset_controls"):
+			touch_controls.reset_controls()
 	get_tree().paused = true
 	var rs = get_node_or_null("/root/RunState")
-	var gifts: Array = current_room_data.gift_choices if current_room_data else []
+	var gifts: Array[Dictionary] = rs.get_random_upgrade_choices(2) if rs else []
 	if gifts.is_empty():
-		gifts = ["PHANTOM_DRIVE", "NANO_INFUSION"]
+		gifts.append(_make_gift_fallback(rs))
+	elif gifts.size() == 1 and gifts[0].get("id", "") == "FIELD_REPAIR" and rs and rs.current_health >= rs.max_health:
+		# A heal is not a reward when the player is already at full health.
+		gifts[0] = _make_gift_fallback(rs)
+
+	if draft_header_label:
+		draft_header_label.text = "GIFT CACHE // REWARD TERMINAL"
+	if draft_sub_label:
+		if gifts.size() == 1 and gifts[0].get("id", "") == "DATA_BITS":
+			draft_sub_label.text = "All subroutines are fully stacked. Claim this 25-bit cache instead."
+		elif gifts.size() == 1 and gifts[0].get("id", "") == "FIELD_REPAIR":
+			draft_sub_label.text = "All subroutines are fully stacked. Claim a 1 HP field repair instead."
+		else:
+			draft_sub_label.text = "Select 1 complimentary subroutine to install into memory."
 
 	for child in upgrade_cards_box.get_children():
 		child.queue_free()
 
-	for item_id in gifts:
+	for offer in gifts:
 		var card := Button.new()
-		card.custom_minimum_size = Vector2(230, 210)
+		card.custom_minimum_size = Vector2(220, 170)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var item_id: String = offer.get("id", "FIELD_REPAIR")
+		var title: String = offer.get("title", item_id.replace("_", " "))
+		var description: String = offer.get("desc", "Install this cache reward.")
 		var stack_count: int = (rs.get_upgrade_stack_count(item_id) + 1) if rs else 1
-		var stack_cap: int = rs.get_upgrade_stack_cap(item_id) if rs else 2
-		var rarity: String = dungeon_generator.get_upgrade_rarity(item_id) if dungeon_generator else "COMMON"
-		card.text = "\n[ CACHE // %s ]\n%s // FREE UPGRADE\n(STACK %d/%d)\n\nTap to extract subroutine." % [item_id, rarity, stack_count, stack_cap]
+		var stack_cap: int = rs.get_upgrade_stack_cap(item_id) if (rs and item_id != "FIELD_REPAIR") else 0
+		var rarity: String = offer.get("rarity", "COMMON")
+		var stack_line := "RESOURCE CACHE" if item_id == "DATA_BITS" else ("FIELD REPAIR" if item_id == "FIELD_REPAIR" else "STACK %d / %d" % [stack_count, stack_cap])
+		card.text = "%s\n%s  •  %s\n%s\n\nTap to claim" % [title, rarity, stack_line, description]
 		card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		card.pressed.connect(func():
-			if rs:
-				rs.apply_upgrade(item_id)
+			if not rs:
+				return
+			if item_id == "DATA_BITS":
+				rs.add_bits(25)
+			elif not rs.apply_upgrade(item_id):
+				return
 			if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 				get_node("/root/AudioSynth").play("powerup_pickup", 0.0, 0.0)
+			_show_director_banner("GIFT CACHE CLAIMED // %s" % title, description)
 			_close_shop_or_gift()
 		)
 		upgrade_cards_box.add_child(card)
 
+	upgrade_container.z_index = 100
 	upgrade_container.visible = true
+
+
+func _make_gift_fallback(rs) -> Dictionary:
+	if rs and rs.current_health < rs.max_health:
+		return {
+			"id": "FIELD_REPAIR",
+			"title": "FIELD REPAIR",
+			"desc": "+1 HP",
+			"rarity": "COMMON"
+		}
+	return {
+		"id": "DATA_BITS",
+		"title": "DATA CACHE",
+		"desc": "+25 BITS",
+		"rarity": "COMMON"
+	}
 
 
 func _close_shop_or_gift() -> void:
 	upgrade_container.visible = false
+	if current_room_data and current_room_data.room_type == "GIFT":
+		current_room_data.is_cleared = true
 	get_tree().paused = false
+	shop_cooldown = 1.2
 	if touch_controls:
 		touch_controls.enabled = true
+		touch_controls.visible = true
 	_unlock_exit_doors()
 
 
@@ -1635,7 +2537,10 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 		_show_director_banner("WAVE %d / %d // REINFORCEMENTS" % [wave_num, total_w], "Hostile wave engaged.")
 
 	if rs_node and wave_num == 1:
-		var active_muts: Array[String] = encounter_director.evolution_manager.get_active_mutations_summary()
+		var cur_b: int = rs_node.progression.current_biome if (rs_node and rs_node.progression) else (rs_node.current_biome if rs_node else 1)
+		var active_muts: Array[String] = []
+		if cur_b > 1 and encounter_director and encounter_director.evolution_manager:
+			active_muts = encounter_director.evolution_manager.get_active_mutations_summary()
 		var mut_desc := ", ".join(active_muts) if not active_muts.is_empty() else "Standard swarm baseline"
 		rs_node.record_tactic(rs_node.current_room_index + 1, encounter.tactic, encounter.banner_sub, mut_desc)
 
@@ -1787,6 +2692,8 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 
 
 func _spawn_boss(pos: Vector2) -> void:
+	if boss_active or (is_instance_valid(boss_ref) and not boss_ref.is_queued_for_deletion()):
+		return
 	var rs_node = get_node_or_null("/root/RunState")
 	var cur_sector: int = rs_node.progression.sector_index if (rs_node and rs_node.progression) else 1
 	var cur_seed: int = rs_node.current_seed if rs_node else 1337
@@ -2068,6 +2975,11 @@ func _on_enemy_defeated(enemy_node: Node2D) -> void:
 		get_node("/root/AudioSynth").play("hit_impact", 0.12, -2.0)
 
 	if active_enemies.is_empty() and pending_spawn_telegraphs.is_empty() and not room_cleared:
+		if current_room_data and current_room_data.room_type == "BOSS":
+			if is_boss_core:
+				room_cleared = true
+				_on_room_cleared()
+			return
 		if rs and rs.progression and rs.progression.advance_wave():
 			rs.current_wave = rs.progression.current_wave
 			_trigger_next_wave()
@@ -2100,14 +3012,19 @@ func _on_room_cleared() -> void:
 
 	# Report combat outcome to EncounterDirector & EvolutionManager
 	var new_adaptations: Array[Dictionary] = []
+	var cur_biome: int = rs.progression.current_biome if (rs and rs.progression) else (rs.current_biome if rs else 1)
 	if encounter_director and tracker and rs:
+		encounter_director.current_biome = cur_biome
+		if encounter_director.evolution_manager:
+			encounter_director.evolution_manager.current_biome = cur_biome
 		new_adaptations = encounter_director.record_encounter_result(
 			maxi(0, rs.progression.sector_index - 1) if rs.progression else maxi(0, rs.current_sector - 1),
 			damage_taken_this_sector,
 			sector_combat_time,
 			tracker.get_profile(),
 			current_sector_tactic,
-			tracker
+			tracker,
+			cur_biome
 		)
 		rs.set_evolution_log(encounter_director.evolution_manager.evolution_history)
 
@@ -2230,7 +3147,9 @@ func _unlock_exit_doors() -> void:
 
 
 func _enter_door(door: Dictionary) -> void:
-	if not doors_unlocked or run_over:
+	if not doors_unlocked or not room_cleared or not active_enemies.is_empty() or not pending_spawn_telegraphs.is_empty() or run_over:
+		return
+	if dungeon_layout and not dungeon_layout.corridors.is_empty():
 		return
 	doors_unlocked = false
 
@@ -2283,14 +3202,19 @@ func _on_player_died() -> void:
 			enemy.set_physics_process(false)
 
 	var rs = get_node_or_null("/root/RunState")
+	var cur_biome: int = rs.progression.current_biome if (rs and rs.progression) else (rs.current_biome if rs else 1)
 	if encounter_director and tracker and rs:
+		encounter_director.current_biome = cur_biome
+		if encounter_director.evolution_manager:
+			encounter_director.evolution_manager.current_biome = cur_biome
 		encounter_director.record_encounter_result(
 			maxi(0, rs.progression.sector_index - 1) if rs.progression else maxi(0, rs.current_sector - 1),
 			damage_taken_this_sector,
 			sector_combat_time,
 			tracker.get_profile(),
 			current_sector_tactic,
-			tracker
+			tracker,
+			cur_biome
 		)
 		rs.set_evolution_log(encounter_director.evolution_manager.evolution_history)
 
@@ -2347,68 +3271,124 @@ func _create_ui() -> void:
 		empty_heart_tex.atlas = hearts_tex
 		empty_heart_tex.region = Rect2(32, 0, 32, 32)
 
-	# Top Status Bar Container
-	# Top HUD - Left Column: Health / Hearts
-	var hearts_container := HBoxContainer.new()
-	hearts_container.position = Vector2(24, 16)
-	hearts_container.add_theme_constant_override("separation", 8)
-	ui_layer.add_child(hearts_container)
+	# Responsive top HUD: health has its own high-contrast card so it stays visible
+	# instead of being covered by the combat telemetry at narrow viewport sizes.
+	var top_bar := PanelContainer.new()
+	top_bar.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	top_bar.offset_left = 12
+	top_bar.offset_top = 10
+	top_bar.offset_right = -12
+	top_bar.offset_bottom = 58
+	var top_style := StyleBoxFlat.new()
+	top_style.bg_color = Color(0.015, 0.03, 0.07, 0.94)
+	top_style.border_color = Color(0.0, 0.75, 0.95, 0.42)
+	top_style.set_border_width_all(1)
+	top_style.set_corner_radius_all(10)
+	top_style.content_margin_left = 7
+	top_style.content_margin_right = 7
+	top_style.content_margin_top = 5
+	top_style.content_margin_bottom = 5
+	top_bar.add_theme_stylebox_override("panel", top_style)
+	ui_layer.add_child(top_bar)
+	var top_row := HBoxContainer.new()
+	top_row.add_theme_constant_override("separation", 7)
+	top_bar.add_child(top_row)
 
+	var health_card := PanelContainer.new()
+	health_card.custom_minimum_size = Vector2(150, 38)
+	var health_style := StyleBoxFlat.new()
+	health_style.bg_color = Color(0.16, 0.025, 0.065, 0.96)
+	health_style.border_color = Color("fb496e")
+	health_style.set_border_width_all(1)
+	health_style.set_corner_radius_all(7)
+	health_style.content_margin_left = 8
+	health_style.content_margin_right = 8
+	health_style.content_margin_top = 3
+	health_style.content_margin_bottom = 3
+	health_card.add_theme_stylebox_override("panel", health_style)
+	top_row.add_child(health_card)
+	var health_stack := VBoxContainer.new()
+	health_stack.add_theme_constant_override("separation", 0)
+	health_card.add_child(health_stack)
+	health_label = Label.new()
+	health_label.text = "HEALTH  5 / 5"
+	health_label.add_theme_font_size_override("font_size", 13)
+	health_label.add_theme_color_override("font_color", Color("ffe4ea"))
+	health_stack.add_child(health_label)
 	hearts_box = HBoxContainer.new()
-	hearts_box.add_theme_constant_override("separation", 4)
-	hearts_container.add_child(hearts_box)
+	hearts_box.add_theme_constant_override("separation", 1)
+	health_stack.add_child(hearts_box)
 
-	# Top HUD - Center Column: Cyber Telemetry Pill (Elims + Energy Cells)
 	var telemetry_pill := PanelContainer.new()
-	telemetry_pill.position = Vector2(270, 12)
-	telemetry_pill.custom_minimum_size = Vector2(300, 36)
-	var pill_style := StyleBoxFlat.new()
-	pill_style.bg_color = Color(0.03, 0.06, 0.12, 0.88)
-	pill_style.border_color = Color("1e293b")
-	pill_style.set_border_width_all(1)
-	pill_style.set_corner_radius_all(18)
-	pill_style.content_margin_left = 18
-	pill_style.content_margin_right = 18
-	pill_style.content_margin_top = 4
-	pill_style.content_margin_bottom = 4
-	telemetry_pill.add_theme_stylebox_override("panel", pill_style)
-	ui_layer.add_child(telemetry_pill)
-
-	var telemetry_hbox := HBoxContainer.new()
-	telemetry_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	telemetry_hbox.add_theme_constant_override("separation", 24)
-	telemetry_pill.add_child(telemetry_hbox)
-
+	telemetry_pill.custom_minimum_size = Vector2(220, 38)
+	var telemetry_style := StyleBoxFlat.new()
+	telemetry_style.bg_color = Color(0.03, 0.06, 0.12, 0.94)
+	telemetry_style.border_color = Color("1e293b")
+	telemetry_style.set_border_width_all(1)
+	telemetry_style.set_corner_radius_all(8)
+	telemetry_style.content_margin_left = 8
+	telemetry_style.content_margin_right = 8
+	telemetry_pill.add_theme_stylebox_override("panel", telemetry_style)
+	top_row.add_child(telemetry_pill)
+	var telemetry_vbox := VBoxContainer.new()
+	telemetry_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	telemetry_vbox.add_theme_constant_override("separation", 1)
+	telemetry_pill.add_child(telemetry_vbox)
 	elims_label = Label.new()
-	elims_label.text = "ELIMS 00  •  BITS 00"
+	elims_label.text = "ELIMS 0  •  BITS 0"
 	elims_label.add_theme_color_override("font_color", Color("38bdf8"))
-	elims_label.add_theme_font_size_override("font_size", 14)
-	telemetry_hbox.add_child(elims_label)
-
+	elims_label.add_theme_font_size_override("font_size", 11)
+	telemetry_vbox.add_child(elims_label)
 	ammo_label = Label.new()
-	ammo_label.text = "CELLS 16/16"
-	ammo_label.add_theme_color_override("font_color", Color("38bdf8"))
-	ammo_label.add_theme_font_size_override("font_size", 14)
-	telemetry_hbox.add_child(ammo_label)
+	ammo_label.text = "CELLS 16 / 16"
+	ammo_label.add_theme_color_override("font_color", Color("00f0ff"))
+	ammo_label.add_theme_font_size_override("font_size", 11)
+	telemetry_vbox.add_child(ammo_label)
 
-	# Top HUD - Right Column: Sector & Room Badge
+	var sector_pill := PanelContainer.new()
+	sector_pill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sector_pill.custom_minimum_size = Vector2(160, 38)
+	var sector_style := StyleBoxFlat.new()
+	sector_style.bg_color = Color(0.02, 0.05, 0.10, 0.94)
+	sector_style.border_color = Color("1e293b")
+	sector_style.set_border_width_all(1)
+	sector_style.set_corner_radius_all(8)
+	sector_style.content_margin_left = 8
+	sector_style.content_margin_right = 8
+	sector_pill.add_theme_stylebox_override("panel", sector_style)
+	top_row.add_child(sector_pill)
 	sector_label = Label.new()
-	sector_label.position = Vector2(600, 20)
-	sector_label.text = "SEC 1  •  RM 1/6"
+	sector_label.text = "BIOME 1 • SEC 1 • RM 1/6"
+	sector_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sector_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	sector_label.clip_text = true
 	sector_label.add_theme_color_override("font_color", Color("38bdf8"))
-	sector_label.add_theme_font_size_override("font_size", 14)
-	ui_layer.add_child(sector_label)
+	sector_label.add_theme_font_size_override("font_size", 11)
+	sector_pill.add_child(sector_label)
 
-	# HUD Touch Pause Button (Top Right corner, 48dp+ touch target, inset from edge)
+	var dbg_btn := Button.new()
+	dbg_btn.custom_minimum_size = Vector2(46, 38)
+	dbg_btn.text = "DBG"
+	var dbg_btn_style := StyleBoxFlat.new()
+	dbg_btn_style.bg_color = Color(0.06, 0.08, 0.18, 0.95)
+	dbg_btn_style.border_color = Color("c084fc")
+	dbg_btn_style.set_border_width_all(1)
+	dbg_btn_style.set_corner_radius_all(7)
+	dbg_btn.add_theme_stylebox_override("normal", dbg_btn_style)
+	dbg_btn.add_theme_stylebox_override("hover", dbg_btn_style)
+	dbg_btn.add_theme_stylebox_override("pressed", dbg_btn_style)
+	dbg_btn.add_theme_color_override("font_color", Color("c084fc"))
+	dbg_btn.pressed.connect(toggle_debug_overlay)
+	top_row.add_child(dbg_btn)
+
 	var pause_btn := Button.new()
-	pause_btn.position = Vector2(888, 12)
-	pause_btn.custom_minimum_size = Vector2(48, 48)
-	pause_btn.text = "||"
+	pause_btn.custom_minimum_size = Vector2(48, 38)
+	pause_btn.text = "Ⅱ"
 	var pause_btn_style := StyleBoxFlat.new()
-	pause_btn_style.bg_color = Color(0.06, 0.10, 0.20, 0.85)
+	pause_btn_style.bg_color = Color(0.06, 0.10, 0.20, 0.95)
 	pause_btn_style.border_color = Color("38bdf8")
 	pause_btn_style.set_border_width_all(1)
-	pause_btn_style.set_corner_radius_all(6)
+	pause_btn_style.set_corner_radius_all(7)
 	pause_btn.add_theme_stylebox_override("normal", pause_btn_style)
 	pause_btn.add_theme_stylebox_override("hover", pause_btn_style)
 	pause_btn.add_theme_stylebox_override("pressed", pause_btn_style)
@@ -2417,24 +3397,23 @@ func _create_ui() -> void:
 		if not run_over and is_instance_valid(pause_menu):
 			pause_menu.open_pause()
 	)
-	ui_layer.add_child(pause_btn)
+	top_row.add_child(pause_btn)
 
-	# HUD Debug Overlay Toggle Button (48dp+ touch target)
-	var dbg_btn := Button.new()
-	dbg_btn.position = Vector2(830, 12)
-	dbg_btn.custom_minimum_size = Vector2(48, 48)
-	dbg_btn.text = "DBG"
-	var dbg_btn_style := StyleBoxFlat.new()
-	dbg_btn_style.bg_color = Color(0.06, 0.08, 0.18, 0.85)
-	dbg_btn_style.border_color = Color("c084fc")
-	dbg_btn_style.set_border_width_all(1)
-	dbg_btn_style.set_corner_radius_all(6)
-	dbg_btn.add_theme_stylebox_override("normal", dbg_btn_style)
-	dbg_btn.add_theme_stylebox_override("hover", dbg_btn_style)
-	dbg_btn.add_theme_stylebox_override("pressed", dbg_btn_style)
-	dbg_btn.add_theme_color_override("font_color", Color("c084fc"))
-	dbg_btn.pressed.connect(toggle_debug_overlay)
-	ui_layer.add_child(dbg_btn)
+	# Minimap remains anchored to the top-right on every aspect ratio.
+	minimap_hud = MINIMAP_HUD_SCRIPT.new()
+	minimap_hud.anchor_left = 1.0
+	minimap_hud.anchor_right = 1.0
+	minimap_hud.anchor_top = 0.0
+	minimap_hud.anchor_bottom = 0.0
+	minimap_hud.offset_left = -154.0
+	minimap_hud.offset_right = -12.0
+	minimap_hud.offset_top = 66.0
+	minimap_hud.offset_bottom = 162.0
+	minimap_hud.minimap_tapped.connect(func():
+		if not run_over and is_instance_valid(pause_menu):
+			pause_menu.open_pause()
+	)
+	ui_layer.add_child(minimap_hud)
 
 	# Telemetry & Evolution Debug Inspector Panel
 	debug_overlay = PanelContainer.new()
@@ -2637,16 +3616,67 @@ func _create_ui() -> void:
 	debrief_terminal.visible = false
 
 
+func _init_transition_layer() -> void:
+	transition_layer = CanvasLayer.new()
+	transition_layer.name = "ScreenTransitions"
+	transition_layer.layer = 50
+	transition_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(transition_layer)
+	transition_cover = ColorRect.new()
+	transition_cover.name = "RoomReveal"
+	transition_cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	transition_cover.color = Color("030712")
+	transition_cover.modulate.a = 1.0
+	transition_cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	transition_layer.add_child(transition_cover)
+
+
+func _animate_transition_cover(covered: bool, duration: float) -> void:
+	if not is_instance_valid(transition_cover):
+		return
+	transition_cover.visible = true
+	var target_alpha := 1.0 if covered else 0.0
+	var transition_tween := create_tween()
+	transition_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	transition_tween.set_trans(Tween.TRANS_CUBIC)
+	transition_tween.set_ease(Tween.EASE_IN_OUT)
+	transition_tween.tween_property(transition_cover, "modulate:a", target_alpha, duration)
+	await transition_tween.finished
+	if not covered:
+		transition_cover.visible = false
+
+
 func _show_director_banner(title: String, sub: String) -> void:
 	if not is_instance_valid(director_banner):
 		return
+	if is_instance_valid(banner_tween) and banner_tween.is_running():
+		banner_tween.kill()
 	banner_title.text = title
 	banner_sub.text = sub
 	director_banner.visible = true
+	director_banner.modulate.a = 0.0
+	director_banner.position.y = 56.0
+	director_banner.pivot_offset = director_banner.size * 0.5
+	director_banner.scale = Vector2(0.96, 0.96)
+	banner_tween = create_tween().set_parallel(true)
+	banner_tween.tween_property(director_banner, "modulate:a", 1.0, 0.16)
+	banner_tween.tween_property(director_banner, "position:y", 68.0, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	banner_tween.tween_property(director_banner, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	banner_timer = 4.0
 	add_trauma(0.28)
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("mutation_alert", 0.05, 0.0)
+
+
+func _hide_director_banner() -> void:
+	if not is_instance_valid(director_banner):
+		return
+	if is_instance_valid(banner_tween) and banner_tween.is_running():
+		banner_tween.kill()
+	banner_tween = create_tween().set_parallel(true)
+	banner_tween.tween_property(director_banner, "modulate:a", 0.0, 0.18)
+	banner_tween.tween_property(director_banner, "position:y", 56.0, 0.18)
+	banner_tween.chain().tween_callback(func(): director_banner.visible = false)
 
 
 func toggle_debug_overlay() -> void:
@@ -2675,7 +3705,9 @@ func _update_debug_overlay() -> void:
 	var t_name: String = current_room_data.template_name if current_room_data else "UNKNOWN"
 	var r_type: String = current_room_data.room_type if current_room_data else "COMBAT"
 
-	var active_muts: Array[String] = encounter_director.evolution_manager.get_active_mutations_summary() if encounter_director else []
+	var active_muts: Array[String] = []
+	if encounter_director and encounter_director.evolution_manager:
+		active_muts = encounter_director.evolution_manager.get_active_mutations_summary()
 	var mut_str: String = "\n    • ".join(active_muts) if not active_muts.is_empty() else "None (Baseline)"
 
 	debug_content.text = """SEED: #%d  |  SECTOR: %d / %d  |  GEN: %d

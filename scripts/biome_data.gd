@@ -17,7 +17,12 @@ const BIOMES: Array[Dictionary] = [
 		"laser_gate": Color(0.0, 0.94, 1.0, 0.85),
 		"laser_locked": Color(0.95, 0.20, 0.20, 0.95),
 		"portal_color": Color(0.15, 0.85, 1.0, 1.0),
-		"sector_tint": Color(0.88, 0.95, 1.0)
+		"sector_tint": Color(0.88, 0.95, 1.0),
+		"floor_pattern": "CIRCUITS",
+		"hazard_type": "EMP",
+		"hazard_color": Color("00f0ff"),
+		"default_barrel": "EXPLOSIVE_BARREL",
+		"prop_style": "TECH"
 	},
 	{
 		"id": "CRYO_SUBSYSTEM",
@@ -32,7 +37,12 @@ const BIOMES: Array[Dictionary] = [
 		"laser_gate": Color(0.49, 0.83, 0.99, 0.85),
 		"laser_locked": Color(1.0, 0.20, 0.40, 0.95),
 		"portal_color": Color(0.40, 0.90, 1.0, 1.0),
-		"sector_tint": Color(0.80, 0.92, 1.0)
+		"sector_tint": Color(0.80, 0.92, 1.0),
+		"floor_pattern": "ICE_GLACIER",
+		"hazard_type": "ICE",
+		"hazard_color": Color("7dd3fc"),
+		"default_barrel": "CRYO_CANISTER",
+		"prop_style": "CRYO"
 	},
 	{
 		"id": "TOXIC_BIOSYSTEM",
@@ -47,7 +57,12 @@ const BIOMES: Array[Dictionary] = [
 		"laser_gate": Color(0.20, 0.85, 0.50, 0.85),
 		"laser_locked": Color(1.0, 0.35, 0.10, 0.95),
 		"portal_color": Color(0.25, 0.95, 0.65, 1.0),
-		"sector_tint": Color(0.85, 1.0, 0.90)
+		"sector_tint": Color(0.85, 1.0, 0.90),
+		"floor_pattern": "TOXIC_VINES",
+		"hazard_type": "TOXIC",
+		"hazard_color": Color("22c55e"),
+		"default_barrel": "TOXIC_VAT",
+		"prop_style": "BIO"
 	},
 	{
 		"id": "CRIMSON_CORE",
@@ -62,7 +77,12 @@ const BIOMES: Array[Dictionary] = [
 		"laser_gate": Color(0.95, 0.40, 0.20, 0.85),
 		"laser_locked": Color(1.0, 0.10, 0.10, 0.95),
 		"portal_color": Color(1.0, 0.40, 0.30, 1.0),
-		"sector_tint": Color(1.0, 0.85, 0.80)
+		"sector_tint": Color(1.0, 0.85, 0.80),
+		"floor_pattern": "MAGMA_CRACKS",
+		"hazard_type": "LAVA",
+		"hazard_color": Color("f97316"),
+		"default_barrel": "EXPLOSIVE_BARREL",
+		"prop_style": "MAGMA"
 	}
 ]
 

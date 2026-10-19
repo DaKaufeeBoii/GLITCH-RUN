@@ -26,6 +26,7 @@ var species_policies: Dictionary = {}
 var species_evidence: Dictionary = {}
 var evolution_history: Array[Dictionary] = []
 var active_combatants: Array[RefCounted] = []
+var current_biome: int = 2
 
 
 func _init() -> void:
@@ -139,6 +140,14 @@ func get_genome_for_spawn(family: String) -> RefCounted:
 	var t: int = get_species_tier(family)
 	snapshot.tier = t
 
+	if current_biome <= 1:
+		snapshot.tier = 0
+		snapshot.active_mutations.clear()
+		snapshot.variant_id = "%s-v0-%04d" % [family, randi() % 10000]
+		if not snapshot in active_combatants:
+			active_combatants.append(snapshot)
+		return snapshot
+
 	# Ensure confirmed major evolution mutations are present on spawned phenotype
 	if family == "CHASER":
 		if t >= 1 and not snapshot.active_mutations.has("RAPID_PURSUIT"):
@@ -172,12 +181,16 @@ func register_spawned_combatant(genome: RefCounted) -> void:
 
 
 func get_species_tier(family: String) -> int:
+	if current_biome <= 1:
+		return 0
 	return int(species_evidence.get(family, {}).get("tier", 0))
 
 
 func get_species_health_multiplier(family: String) -> int:
 	## Health doubling invariant: every confirmed major evolution doubles max health.
 	## max_health = base_health * 2^tier
+	if current_biome <= 1:
+		return 1
 	var t: int = get_species_tier(family)
 	return int(pow(2, t))
 
@@ -188,10 +201,16 @@ func process_encounter_end(
 	combat_duration: float,
 	player_profile: Dictionary,
 	_selected_tactic: String,
-	tracker: RefCounted = null
+	tracker: RefCounted = null,
+	biome_index: int = -1
 ) -> Array[Dictionary]:
 	## Evaluates combat outcomes under strict species evidence isolation.
 	## A species evolves ONLY when its own observed battle data justifies adaptation.
+	if biome_index > 0:
+		current_biome = biome_index
+	if current_biome <= 1:
+		return []
+
 	var new_adaptations: Array[Dictionary] = []
 
 	# 1. Update fitness metrics for active combatant snapshots
@@ -510,6 +529,8 @@ func _evolve_family_pool(family: String, _sector_index: int) -> void:
 
 func get_active_mutations_summary() -> Array[String]:
 	var summary: Array[String] = []
+	if current_biome <= 1:
+		return summary
 	for family in ["CHASER", "DASHER", "SHOOTER"]:
 		var ev: Dictionary = species_evidence.get(family, {})
 		var t: int = int(ev.get("tier", 0))

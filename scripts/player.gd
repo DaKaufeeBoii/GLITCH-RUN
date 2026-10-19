@@ -45,6 +45,10 @@ var debuff_burn_timer := 0.0
 var debuff_burn_tick := 0.0
 
 var ghost_spawn_timer := 0.0
+var visual_clock := 0.0
+var muzzle_flash_timer := 0.0
+var has_aegis_shield := false
+var has_speed_overdrive := false
 
 
 func _ready() -> void:
@@ -112,6 +116,8 @@ func _on_runstate_health_updated(curr: int, max_h: int) -> void:
 func _physics_process(delta: float) -> void:
 	if dead:
 		return
+	visual_clock += delta
+	muzzle_flash_timer = maxf(0.0, muzzle_flash_timer - delta)
 
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
 	damage_cooldown = maxf(0.0, damage_cooldown - delta)
@@ -176,6 +182,12 @@ func _physics_process(delta: float) -> void:
 
 	rotation = aim_direction.angle()
 	move_and_slide()
+	if dash_time > 0.0:
+		for i in range(get_slide_collision_count()):
+			var col := get_slide_collision(i)
+			var collider := col.get_collider()
+			if collider and collider.is_in_group("secret_walls") and collider.has_method("take_damage"):
+				collider.take_damage(1, "dash")
 	queue_redraw()
 
 	if (Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_SPACE)) and dash_cooldown <= 0.0:
@@ -267,6 +279,17 @@ func _apply_dash_damage() -> void:
 func take_damage(amount: int) -> void:
 	if dead or damage_cooldown > 0.0 or dash_time > 0.0:
 		return
+	if has_aegis_shield:
+		has_aegis_shield = false
+		damage_cooldown = 0.65
+		_trigger_emp_shockwave()
+		var game_node = get_parent()
+		if game_node and game_node.has_method("spawn_damage_number"):
+			game_node.spawn_damage_number(global_position, "AEGIS DEFLECTED!", Color("818cf8"))
+		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
+			get_node("/root/AudioSynth").play("bullet_hit", 0.05, 3.0)
+		queue_redraw()
+		return
 	health = maxi(0, health - amount)
 	if is_inside_tree():
 		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
@@ -335,6 +358,7 @@ func _fire() -> void:
 
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("blaster", 0.08, -3.0)
+	muzzle_flash_timer = 0.075
 
 	if count == 1:
 		_spawn_bullet(aim_direction, extra_dmg)
@@ -372,6 +396,15 @@ func _spawn_bullet(dir: Vector2, extra_dmg: int) -> void:
 
 
 func _draw() -> void:
+	# Subtle engine glow and idle core pulse make the operative feel powered-on.
+	var engine_pulse := 0.65 + (sin(visual_clock * 8.0) + 1.0) * 0.16
+	draw_circle(Vector2(-11, 0), 5.0 + engine_pulse, Color(0.05, 0.82, 1.0, 0.10 + engine_pulse * 0.07))
+	draw_circle(Vector2(-11, 0), 2.0 + engine_pulse * 0.45, Color(0.18, 0.88, 1.0, 0.5))
+	if muzzle_flash_timer > 0.0:
+		var flash_alpha := muzzle_flash_timer / 0.075
+		draw_circle(Vector2(19, 0), 5.0 + 5.0 * flash_alpha, Color(0.55, 0.92, 1.0, 0.3 * flash_alpha))
+		draw_line(Vector2(15, 0), Vector2(25 + 5 * flash_alpha, 0), Color(1, 1, 1, flash_alpha), 2.0)
+
 	var body_color := Color("38bdf8") # Sleek cyber cyan
 	if dash_time > 0.0:
 		body_color = Color("c084fc") # Dynamic purple during invulnerable dash
@@ -422,3 +455,28 @@ func _draw() -> void:
 		draw_circle(Vector2.ZERO, 19.0, Color(0.2, 0.8, 1.0, 0.22))
 	if debuff_burn_timer > 0.0:
 		draw_circle(Vector2.ZERO, 17.0, Color(0.5, 1.0, 0.2, 0.22))
+
+	# Neural Aegis Shield: Rotating energetic hex-barrier and orbital sparks
+	if has_aegis_shield:
+		var ticks := Time.get_ticks_msec()
+		var rot_ang := float(ticks) * 0.003
+		var shield_col := Color("818cf8")
+		var s_pts := PackedVector2Array()
+		for i in range(6):
+			var a := rot_ang + float(i) * TAU / 6.0
+			s_pts.append(Vector2(cos(a), sin(a)) * 26.0)
+		var s_closed := PackedVector2Array(s_pts)
+		s_closed.append(s_pts[0])
+		draw_polyline(s_closed, shield_col, 2.0)
+		draw_colored_polygon(s_pts, Color(shield_col.r, shield_col.g, shield_col.b, 0.15))
+		for i in range(3):
+			var a := -rot_ang * 1.6 + float(i) * TAU / 3.0
+			draw_circle(Vector2(cos(a), sin(a)) * 30.0, 2.5, Color.WHITE)
+
+	# Thruster Overdrive: Dynamic jet streams when moving
+	if has_speed_overdrive and not velocity.is_zero_approx():
+		var back_dir := -velocity.normalized()
+		draw_line(Vector2(-11, -7), Vector2(-11, -7) + back_dir * 18.0, Color("00f0ff"), 2.2)
+		draw_line(Vector2(-11, 7), Vector2(-11, 7) + back_dir * 18.0, Color("00f0ff"), 2.2)
+		draw_circle(Vector2(-11, -7) + back_dir * 8.0, 2.0, Color.WHITE)
+		draw_circle(Vector2(-11, 7) + back_dir * 8.0, 2.0, Color.WHITE)

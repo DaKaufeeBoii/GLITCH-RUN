@@ -10,6 +10,7 @@ var settings_panel: Control
 var how_to_play_panel: Control
 var records_label: Label
 var difficulty_btn: Button
+var menu_transitioning := false
 
 const DIFFICULTIES := ["NORMAL", "HARD", "HYPERGRID"]
 var difficulty_index := 0
@@ -193,6 +194,24 @@ func _build_ui() -> void:
 	_build_settings_modal()
 	_build_how_to_play_modal()
 
+	# Fade and lift the menu in, then cascade its touch targets into place.
+	main_row.modulate.a = 0.0
+	main_row.scale = Vector2(0.97, 0.97)
+	main_row.pivot_offset = Vector2(400.0, 250.0)
+	var entrance := create_tween().set_parallel(true)
+	entrance.set_trans(Tween.TRANS_CUBIC)
+	entrance.set_ease(Tween.EASE_OUT)
+	entrance.tween_property(main_row, "modulate:a", 1.0, 0.34)
+	entrance.tween_property(main_row, "scale", Vector2.ONE, 0.42)
+	for i in range(btn_vbox.get_child_count()):
+		var button := btn_vbox.get_child(i) as Control
+		button.modulate.a = 0.0
+		var button_tween := create_tween()
+		button_tween.tween_interval(0.08 + float(i) * 0.045)
+		button_tween.set_trans(Tween.TRANS_CUBIC)
+		button_tween.set_ease(Tween.EASE_OUT)
+		button_tween.tween_property(button, "modulate:a", 1.0, 0.2)
+
 
 func _update_records_display() -> void:
 	var rs: Node = get_node_or_null("/root/RunState") if is_inside_tree() else null
@@ -222,11 +241,28 @@ func _on_difficulty_pressed() -> void:
 
 
 func _on_play_pressed() -> void:
+	if menu_transitioning:
+		return
+	menu_transitioning = true
 	_play_click()
 	var rs: Node = get_node_or_null("/root/RunState") if is_inside_tree() else null
 	if rs:
 		rs.start_new_run()
 	if is_inside_tree():
+		var cover := ColorRect.new()
+		cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		cover.color = Color("030712")
+		cover.modulate.a = 0.0
+		cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cover.process_mode = Node.PROCESS_MODE_ALWAYS
+		cover.z_index = 20
+		add_child(cover)
+		var tween := create_tween()
+		tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+		tween.set_trans(Tween.TRANS_CUBIC)
+		tween.set_ease(Tween.EASE_IN_OUT)
+		tween.tween_property(cover, "modulate:a", 1.0, 0.24)
+		await tween.finished
 		get_tree().change_scene_to_file("res://scenes/main.tscn")
 
 

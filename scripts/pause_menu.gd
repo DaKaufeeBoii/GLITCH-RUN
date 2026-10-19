@@ -53,42 +53,61 @@ func _handle_back_request() -> void:
 
 func _build_ui() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	mouse_filter = Control.MOUSE_FILTER_STOP
 
 	# Translucent backdrop
 	var bg := ColorRect.new()
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.color = Color(0.015, 0.025, 0.05, 0.92)
+	bg.color = Color(0.015, 0.025, 0.05, 0.94)
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(bg)
 
-	var center := CenterContainer.new()
-	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(center)
-	var content_scroll := ScrollContainer.new()
-	content_scroll.custom_minimum_size = Vector2(520, 500)
-	content_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	center.add_child(content_scroll)
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left", 24)
+	margin.add_theme_constant_override("margin_top", 14)
+	margin.add_theme_constant_override("margin_right", 24)
+	margin.add_theme_constant_override("margin_bottom", 14)
+	margin.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(margin)
 
-	var main_vbox := VBoxContainer.new()
-	main_vbox.custom_minimum_size = Vector2(480, 0)
-	main_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	main_vbox.add_theme_constant_override("separation", 12)
-	main_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	content_scroll.add_child(main_vbox)
+	var root_vbox := VBoxContainer.new()
+	root_vbox.add_theme_constant_override("separation", 8)
+	margin.add_child(root_vbox)
+
+	# Top Bar: Title & Stats
+	var top_bar := HBoxContainer.new()
+	top_bar.alignment = BoxContainer.ALIGNMENT_BEGIN
+	root_vbox.add_child(top_bar)
 
 	title_label = Label.new()
 	title_label.text = "TACTICAL OVERVIEW // PAUSED"
-	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_label.add_theme_font_size_override("font_size", 22)
+	title_label.add_theme_font_size_override("font_size", 18)
 	title_label.add_theme_color_override("font_color", Color("38bdf8"))
-	main_vbox.add_child(title_label)
+	top_bar.add_child(title_label)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_bar.add_child(spacer)
 
 	stats_label = Label.new()
-	stats_label.text = "SECTOR 1/6  •  ELIMS: 0  •  TIME: 00:00"
-	stats_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	stats_label.text = "SECTOR 1/6  •  ELIMS: 0  •  BITS: 0  •  TIME: 00:00"
 	stats_label.add_theme_font_size_override("font_size", 12)
 	stats_label.add_theme_color_override("font_color", Color("94a3b8"))
-	main_vbox.add_child(stats_label)
+	top_bar.add_child(stats_label)
+
+	# Main Body: Split into Left Column (Map & Subroutines) and Right Column (Action Buttons)
+	var body_hbox := HBoxContainer.new()
+	body_hbox.add_theme_constant_override("separation", 16)
+	body_hbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root_vbox.add_child(body_hbox)
+
+	# LEFT COLUMN: Map & Subroutines
+	var left_vbox := VBoxContainer.new()
+	left_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left_vbox.add_theme_constant_override("separation", 8)
+	body_hbox.add_child(left_vbox)
 
 	# Sector Topology & Mini-Map Panel
 	minimap_box = PanelContainer.new()
@@ -97,12 +116,13 @@ func _build_ui() -> void:
 	map_style.border_color = Color("38bdf8")
 	map_style.set_border_width_all(1)
 	map_style.set_corner_radius_all(4)
-	map_style.content_margin_left = 12
+	map_style.content_margin_left = 10
 	map_style.content_margin_top = 6
-	map_style.content_margin_right = 12
+	map_style.content_margin_right = 10
 	map_style.content_margin_bottom = 6
 	minimap_box.add_theme_stylebox_override("panel", map_style)
-	main_vbox.add_child(minimap_box)
+	minimap_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left_vbox.add_child(minimap_box)
 
 	var map_vbox := VBoxContainer.new()
 	map_vbox.add_theme_constant_override("separation", 4)
@@ -116,11 +136,12 @@ func _build_ui() -> void:
 
 	minimap_nodes_hbox = Control.new()
 	minimap_nodes_hbox.set_script(SECTOR_MAP_SCRIPT)
-	minimap_nodes_hbox.custom_minimum_size = Vector2(480, 180)
+	minimap_nodes_hbox.custom_minimum_size = Vector2(500, 150)
+	minimap_nodes_hbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	map_vbox.add_child(minimap_nodes_hbox)
 
 	minimap_branch_label = Label.new()
-	minimap_branch_label.text = "Start [o]  •  Combat [•]  •  Recovery [+]  •  Shop [🛒]  •  Tech Cache [◆]  •  Overlord [Ω]"
+	minimap_branch_label.text = "Start [o]  •  Combat [•]  •  Recovery [+]  •  Shop [🛒]  •  Tech Cache [◆]  •  Shrine [▲]  •  Overlord [Ω]"
 	minimap_branch_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	minimap_branch_label.add_theme_font_size_override("font_size", 10)
 	minimap_branch_label.add_theme_color_override("font_color", Color("64748b"))
@@ -133,37 +154,57 @@ func _build_ui() -> void:
 	style.border_color = Color("38bdf8")
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(4)
-	style.content_margin_left = 12
-	style.content_margin_top = 8
-	style.content_margin_right = 12
-	style.content_margin_bottom = 8
+	style.content_margin_left = 10
+	style.content_margin_top = 6
+	style.content_margin_right = 10
+	style.content_margin_bottom = 6
 	upg_box.add_theme_stylebox_override("panel", style)
-	main_vbox.add_child(upg_box)
+	upg_box.custom_minimum_size = Vector2(0, 130)
+	left_vbox.add_child(upg_box)
 
-	upgrades_vbox = VBoxContainer.new()
-	upgrades_vbox.add_theme_constant_override("separation", 3)
-	upg_box.add_child(upgrades_vbox)
+	var upg_inner := VBoxContainer.new()
+	upg_inner.add_theme_constant_override("separation", 3)
+	upg_box.add_child(upg_inner)
 
 	var upg_header := Label.new()
 	upg_header.text = "ACTIVE INSTALLED SUBROUTINES:"
 	upg_header.add_theme_font_size_override("font_size", 11)
 	upg_header.add_theme_color_override("font_color", Color("38bdf8"))
-	upgrades_vbox.add_child(upg_header)
+	upg_inner.add_child(upg_header)
 
-	# Action Buttons (Touch-friendly 48dp+ sizing)
+	var upg_scroll := ScrollContainer.new()
+	upg_scroll.custom_minimum_size = Vector2(0, 85)
+	upg_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	upg_inner.add_child(upg_scroll)
+
+	upgrades_vbox = VBoxContainer.new()
+	upgrades_vbox.add_theme_constant_override("separation", 2)
+	upgrades_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	upg_scroll.add_child(upgrades_vbox)
+
+	# RIGHT COLUMN: Action Buttons
 	var btn_vbox := VBoxContainer.new()
+	btn_vbox.custom_minimum_size = Vector2(280, 0)
+	btn_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	btn_vbox.add_theme_constant_override("separation", 8)
-	main_vbox.add_child(btn_vbox)
+	body_hbox.add_child(btn_vbox)
 
 	var resume_btn := Button.new()
 	resume_btn.text = "RESUME SIMULATION"
-	resume_btn.custom_minimum_size = Vector2(0, 46)
+	resume_btn.custom_minimum_size = Vector2(0, 44)
+	var resume_style := StyleBoxFlat.new()
+	resume_style.bg_color = Color(0.06, 0.16, 0.28, 0.95)
+	resume_style.border_color = Color("38bdf8")
+	resume_style.set_border_width_all(1)
+	resume_style.set_corner_radius_all(4)
+	resume_btn.add_theme_stylebox_override("normal", resume_style)
+	resume_btn.add_theme_color_override("font_color", Color("38bdf8"))
 	resume_btn.pressed.connect(close_pause)
 	btn_vbox.add_child(resume_btn)
 
 	var htp_btn := Button.new()
 	htp_btn.text = "HOW TO PLAY"
-	htp_btn.custom_minimum_size = Vector2(0, 44)
+	htp_btn.custom_minimum_size = Vector2(0, 40)
 	htp_btn.pressed.connect(func():
 		_play_click()
 		how_to_play_panel.visible = true
@@ -172,7 +213,7 @@ func _build_ui() -> void:
 
 	var settings_btn := Button.new()
 	settings_btn.text = "SETTINGS"
-	settings_btn.custom_minimum_size = Vector2(0, 44)
+	settings_btn.custom_minimum_size = Vector2(0, 40)
 	settings_btn.pressed.connect(func():
 		_play_click()
 		settings_panel.visible = true
@@ -181,7 +222,7 @@ func _build_ui() -> void:
 
 	var restart_btn := Button.new()
 	restart_btn.text = "RESTART RUN"
-	restart_btn.custom_minimum_size = Vector2(0, 44)
+	restart_btn.custom_minimum_size = Vector2(0, 40)
 	restart_btn.pressed.connect(func():
 		_show_confirmation(
 			"ABANDON CURRENT RUN?",
@@ -193,7 +234,7 @@ func _build_ui() -> void:
 
 	var menu_btn := Button.new()
 	menu_btn.text = "ABORT TO MAIN MENU"
-	menu_btn.custom_minimum_size = Vector2(0, 44)
+	menu_btn.custom_minimum_size = Vector2(0, 40)
 	menu_btn.pressed.connect(func():
 		_show_confirmation(
 			"ABORT TO TITLE MENU?",
@@ -206,6 +247,13 @@ func _build_ui() -> void:
 	quit_btn = Button.new()
 	quit_btn.text = "QUIT SESSION"
 	quit_btn.custom_minimum_size = Vector2(0, 48)
+	var quit_style := StyleBoxFlat.new()
+	quit_style.bg_color = Color(0.20, 0.05, 0.06, 0.90)
+	quit_style.border_color = Color("ef4444")
+	quit_style.set_border_width_all(1)
+	quit_style.set_corner_radius_all(4)
+	quit_btn.add_theme_stylebox_override("normal", quit_style)
+	quit_btn.add_theme_color_override("font_color", Color("fca5a5"))
 	quit_btn.pressed.connect(func():
 		_show_confirmation(
 			"TERMINATE APPLICATION // QUIT SESSION",
@@ -274,6 +322,14 @@ func open_pause() -> void:
 
 	get_tree().paused = true
 	visible = true
+	var p = get_parent()
+	if p:
+		var game_node = p.get_parent()
+		if game_node and "touch_controls" in game_node and is_instance_valid(game_node.touch_controls):
+			game_node.touch_controls.visible = false
+			game_node.touch_controls.enabled = false
+			if game_node.touch_controls.has_method("reset_controls"):
+				game_node.touch_controls.reset_controls()
 	_play_click()
 
 
@@ -281,6 +337,12 @@ func close_pause() -> void:
 	if is_inside_tree():
 		get_tree().paused = false
 	visible = false
+	var p = get_parent()
+	if p:
+		var game_node = p.get_parent()
+		if game_node and "touch_controls" in game_node and is_instance_valid(game_node.touch_controls):
+			game_node.touch_controls.visible = true
+			game_node.touch_controls.enabled = true
 	_play_click()
 	resume_requested.emit()
 
@@ -294,15 +356,29 @@ func _show_confirmation(title: String, message: String, callback: Callable) -> v
 
 func _confirm_restart() -> void:
 	confirm_panel.visible = false
-	get_tree().paused = false
+	if is_inside_tree():
+		get_tree().paused = false
 	visible = false
+	var p = get_parent()
+	if p:
+		var game_node = p.get_parent()
+		if game_node and "touch_controls" in game_node and is_instance_valid(game_node.touch_controls):
+			game_node.touch_controls.visible = true
+			game_node.touch_controls.enabled = true
 	restart_requested.emit()
 
 
 func _confirm_menu() -> void:
 	confirm_panel.visible = false
-	get_tree().paused = false
+	if is_inside_tree():
+		get_tree().paused = false
 	visible = false
+	var p = get_parent()
+	if p:
+		var game_node = p.get_parent()
+		if game_node and "touch_controls" in game_node and is_instance_valid(game_node.touch_controls):
+			game_node.touch_controls.visible = true
+			game_node.touch_controls.enabled = true
 	menu_requested.emit()
 
 

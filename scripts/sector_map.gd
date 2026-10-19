@@ -78,6 +78,12 @@ func _room_color(room_type: String) -> Color:
 			return Color("22c55e") # Medical green
 		"ELITE":
 			return Color("f97316") # Orange threat
+		"CACHE":
+			return Color("f59e0b") # Amber cache
+		"SHRINE":
+			return Color("818cf8") # Indigo shrine
+		"TRANSIT":
+			return Color("38bdf8") # Cyan conduit
 		"BOSS":
 			return Color("ef4444") # Crimson Overlord
 		_:
@@ -145,10 +151,16 @@ func _draw() -> void:
 
 	# 2. Corridors connecting chambers
 	for i in range(total):
-		var conns: Array = room_summaries[i].get("connections", [])
+		var s_from: Dictionary = room_summaries[i]
+		if s_from.get("is_secret", false) and not s_from.get("is_revealed", false):
+			continue
+		var conns: Array = s_from.get("connections", [])
 		for target in conns:
 			var target_index := int(target)
 			if target_index <= i or target_index >= total:
+				continue
+			var s_to: Dictionary = room_summaries[target_index]
+			if s_to.get("is_secret", false) and not s_to.get("is_revealed", false):
 				continue
 			var traversed := i < active_room_index
 			_draw_corridor(positions[i], positions[target_index], traversed)
@@ -159,11 +171,17 @@ func _draw() -> void:
 	var pulse := 0.75 + 0.25 * sin(float(ticks) * 0.007)
 
 	for i in range(total):
-		var r_type: String = room_summaries[i].get("room_type", "COMBAT")
+		var summary: Dictionary = room_summaries[i]
+		var is_secret: bool = summary.get("is_secret", false)
+		var is_revealed: bool = summary.get("is_revealed", false)
+		if is_secret and not is_revealed:
+			continue
+
+		var r_type: String = summary.get("room_type", "COMBAT")
 		var pos: Vector2 = positions[i]
 		var is_current := (i == active_room_index)
 		var is_cleared := (i < active_room_index)
-		var accent := _room_color(r_type)
+		var accent := Color("c084fc") if is_secret else _room_color(r_type)
 
 		var c_size := BOSS_CHAMBER_SIZE if r_type == "BOSS" else (Vector2(32.0, 26.0) if r_type == "START" else CHAMBER_SIZE)
 		var fill_col := Color(0.03, 0.06, 0.12, 0.96)
@@ -234,13 +252,64 @@ func _draw() -> void:
 				draw_arc(pos, 7.0, 0.0, TAU, 16, b_col, 1.5)
 				draw_circle(pos, 3.0 * pulse, b_col)
 
-			_: # COMBAT, ELITE
-				# Tactical crosshair / corner obstacles
-				var obs_col := Color("f97316") if r_type == "ELITE" else Color(0.22, 0.74, 0.97, 0.6)
-				draw_line(pos + Vector2(-4, 0), pos + Vector2(4, 0), obs_col, 1.2)
-				draw_line(pos + Vector2(0, -4), pos + Vector2(0, 4), obs_col, 1.2)
+			"CACHE":
+				# Amber diamond cache
+				var c_pts := PackedVector2Array([
+					pos + Vector2(0, -5),
+					pos + Vector2(5, 0),
+					pos + Vector2(0, 5),
+					pos + Vector2(-5, 0)
+				])
+				draw_colored_polygon(c_pts, Color(0.96, 0.62, 0.04, 0.45))
+				var c_border := PackedVector2Array(c_pts)
+				c_border.append(c_pts[0])
+				draw_polyline(c_border, Color("f59e0b"), 1.2)
+
+			"SHRINE":
+				# Indigo triangle shrine
+				var s_pts := PackedVector2Array([
+					pos + Vector2(0, -6),
+					pos + Vector2(5, 4),
+					pos + Vector2(-5, 4)
+				])
+				draw_colored_polygon(s_pts, Color(0.51, 0.55, 0.97, 0.45))
+				var s_border := PackedVector2Array(s_pts)
+				s_border.append(s_pts[0])
+				draw_polyline(s_border, Color("818cf8"), 1.2)
+
+			"TRANSIT":
+				# Cyan transit chevrons
+				var t_col := Color("38bdf8")
+				draw_line(pos + Vector2(-4, -4), pos + Vector2(0, 0), t_col, 1.5)
+				draw_line(pos + Vector2(0, 0), pos + Vector2(-4, 4), t_col, 1.5)
+				draw_line(pos + Vector2(0, -4), pos + Vector2(4, 0), t_col, 1.5)
+				draw_line(pos + Vector2(4, 0), pos + Vector2(0, 4), t_col, 1.5)
+
+			"SECRET":
+				# Quantum Vault glyph
+				draw_rect(Rect2(pos.x - 5, pos.y - 5, 10, 10), Color("c084fc"), false, 1.5)
+				draw_circle(pos, 2.5 * pulse, Color.WHITE)
+
+			"ELITE":
+				# High threat orange diamond with center dot
+				var e_pts := PackedVector2Array([
+					pos + Vector2(0, -6),
+					pos + Vector2(6, 0),
+					pos + Vector2(0, 6),
+					pos + Vector2(-6, 0)
+				])
+				draw_colored_polygon(e_pts, Color(0.97, 0.45, 0.09, 0.40))
+				var e_border := PackedVector2Array(e_pts)
+				e_border.append(e_pts[0])
+				draw_polyline(e_border, Color("f97316"), 1.5)
+				draw_circle(pos, 2.0, Color("f97316"))
+
+			_: # COMBAT (Represented as Combat [•] in legend - NEVER drawn as a plus cross)
+				var c_col: Color = Color("38bdf8") if not is_cleared else Color("64748b")
+				draw_circle(pos, 3.2, c_col)
+				draw_arc(pos, 6.0, 0.0, TAU, 12, Color(c_col.r, c_col.g, c_col.b, 0.40), 1.0)
 				if is_cleared:
-					draw_circle(pos, 3.0, Color("22c55e"))
+					draw_circle(pos, 1.5, Color("22c55e"))
 
 		# Status marker below room
 		if font:

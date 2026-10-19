@@ -42,6 +42,12 @@ class RoomData extends RefCounted:
 	var is_active: bool = false
 	var doorway_rects: Array[Rect2] = []
 	var grid_pos: Vector2i = Vector2i.ZERO
+	var prop_types: Array[String] = [] # "EXPLOSIVE_BARREL", "CRYO_CANISTER", "TOXIC_VAT", "SERVER_RACK", "HEAVY_BARRIER", "DATA_PYLON"
+	var hazards: Array[Dictionary] = [] # Array of { "rect": Rect2, "type": String, "color": Color }
+	var is_secret: bool = false
+	var is_revealed: bool = false
+	var secret_wall_rect: Rect2 = Rect2()
+	var secret_corridor_rect: Rect2 = Rect2()
 
 	func to_dict() -> Dictionary:
 		var obs_list: Array[Dictionary] = []
@@ -57,7 +63,11 @@ class RoomData extends RefCounted:
 			"enemy_count": enemy_spawns.size(),
 			"tactical_context": tactical_context.duplicate(),
 			"grid_x": grid_pos.x,
-			"grid_y": grid_pos.y
+			"grid_y": grid_pos.y,
+			"prop_types": prop_types.duplicate(),
+			"hazards_count": hazards.size(),
+			"is_secret": is_secret,
+			"is_revealed": is_revealed
 		}
 
 class DungeonLayout extends RefCounted:
@@ -136,12 +146,14 @@ func generate_dungeon(
 	regular_wave_count: int = 5,
 	procedural_floor: bool = false,
 	difficulty: String = "NORMAL",
-	sector_index: int = 1
+	sector_index: int = 1,
+	is_boss_floor: bool = true
 ) -> DungeonLayout:
 	## Generates a completely validated, connected procedural dungeon layout from a seed.
 	var layout := DungeonLayout.new()
 	layout.seed_value = seed_val
 	layout.total_rooms = room_count
+	layout.is_boss_floor = is_boss_floor
 
 	# Derive independent sub-seeds for graph topology, geometry templates, and spawn compositions
 	var graph_seed := ((seed_val * 65537) ^ 0x12345) & 0x7FFFFFFF
@@ -161,13 +173,13 @@ func generate_dungeon(
 	# in order and insert a seed-selected set of safe perk rooms between them.
 	var room_types: Array[String] = []
 	if procedural_floor:
-		room_types = _compose_procedural_floor(room_count, regular_wave_count, graph_rng, difficulty, sector_index)
+		room_types = _compose_procedural_floor(room_count, regular_wave_count, graph_rng, difficulty, sector_index, is_boss_floor)
 	else:
 		for i in range(room_count):
 			if i == 0:
 				room_types.append("START")
 			elif i == room_count - 1:
-				room_types.append("BOSS")
+				room_types.append("BOSS" if is_boss_floor else "EXTRACT")
 			elif i == 1:
 				room_types.append("COMBAT")
 			elif i == 2 or i == 6:
@@ -194,8 +206,54 @@ func generate_dungeon(
 
 	if procedural_floor:
 		_build_floor_corridors_and_thresholds(layout, room_types)
+		_designate_secret_room(layout, geom_rng)
 
 	return layout
+
+
+func _designate_secret_room(layout: DungeonLayout, rng: RandomNumberGenerator) -> void:
+	if layout.rooms.size() < 5:
+		return
+	var candidates: Array[RoomData] = []
+	for r in layout.rooms:
+		if r.index > 0 and r.index < layout.rooms.size() - 1:
+			if r.connections.size() == 1 and not r.room_type in ["START", "BOSS", "EXTRACT"]:
+				candidates.append(r)
+	if candidates.is_empty():
+		return
+	var chosen: RoomData = candidates[rng.randi_range(0, candidates.size() - 1)]
+	chosen.is_secret = true
+	chosen.is_revealed = false
+	chosen.template_name = "SECRET_VAULT"
+	chosen.room_type = "SECRET"
+	chosen.enemy_spawns.clear()
+
+	var parent_idx: int = chosen.connections[0]
+	var secret_corridor := Rect2()
+	for c in layout.corridors:
+		if chosen.bounds.grow(20.0).intersects(c):
+			secret_corridor = c
+			break
+	chosen.secret_corridor_rect = secret_corridor
+
+	for d in layout.doorways:
+		var r_idx: int = int(d.get("room_idx", -1))
+		var d_rect: Rect2 = d.get("rect", Rect2())
+		if r_idx == chosen.index or (r_idx == parent_idx and secret_corridor.size != Vector2.ZERO and d_rect.intersects(secret_corridor.grow(10.0))):
+			d["is_secret"] = true
+			d["is_revealed"] = false
+			d["secret_room_idx"] = chosen.index
+			if r_idx == parent_idx:
+				chosen.secret_wall_rect = d_rect
+
+	if chosen.secret_wall_rect.size == Vector2.ZERO:
+		for d in layout.doorways:
+			if int(d.get("room_idx", -1)) == chosen.index:
+				chosen.secret_wall_rect = d.get("rect", Rect2())
+				d["is_secret"] = true
+				d["is_revealed"] = false
+				d["secret_room_idx"] = chosen.index
+				break
 
 
 func _compose_procedural_floor(
@@ -203,12 +261,15 @@ func _compose_procedural_floor(
 	regular_wave_count: int,
 	rng: RandomNumberGenerator,
 	difficulty: String = "NORMAL",
-	sector_index: int = 1
+	sector_index: int = 1,
+	is_boss_floor: bool = true
 ) -> Array[String]:
 	var types: Array[String] = ["START"]
-	var encounter_count := mini(regular_wave_count, maxi(1, room_count - 2))
-	var optional_count := maxi(0, room_count - encounter_count - 2)
-	var service_pool: Array[String] = ["SHOP", "GIFT", "RECOVERY"]
+	var intermediate_rooms := maxi(1, room_count - 2)
+	var max_encounters := intermediate_rooms if room_count < 5 else maxi(1, intermediate_rooms - mini(2, maxi(1, int(intermediate_rooms * 0.40))))
+	var encounter_count := mini(regular_wave_count, max_encounters)
+	var optional_count := maxi(1 if room_count >= 5 else 0, room_count - encounter_count - 2)
+	var service_pool: Array[String] = ["SHOP", "GIFT", "CACHE", "SHRINE", "RECOVERY", "TRANSIT"]
 	for i in range(service_pool.size() - 1, 0, -1):
 		var j := rng.randi_range(0, i)
 		var temp := service_pool[i]
@@ -245,12 +306,21 @@ func _compose_procedural_floor(
 			types.append(service_pool[service_index])
 			service_index += 1
 
-	# Room counts are derived from scheduled waves plus 0–3 service rooms.
-	# If a caller supplies extra capacity, fill it with encounters so no rooms
-	# silently disappear from the forward route.
+	# Room counts are derived from scheduled waves plus service / exploration rooms.
+	# Interleave non-combat exploration and combat encounters so not every room requires battle.
+	var non_combat_pool: Array[String] = ["CACHE", "TRANSIT", "SHRINE", "RECOVERY"]
+	var non_combat_idx := 0
 	while types.size() < room_count - 1:
-		types.append("COMBAT")
-	types.append("BOSS")
+		if service_index < service_pool.size():
+			types.append(service_pool[service_index])
+			service_index += 1
+		else:
+			types.append(non_combat_pool[non_combat_idx % non_combat_pool.size()])
+			non_combat_idx += 1
+	if is_boss_floor:
+		types.append("BOSS")
+	else:
+		types.append("EXTRACT")
 	return types
 
 
@@ -294,7 +364,7 @@ func _build_topology_graph(
 	var service_indices: Array[int] = []
 	for i in range(1, count):
 		var r_type := room_types[i] if i < room_types.size() else "COMBAT"
-		if r_type in ["SHOP", "GIFT", "RECOVERY"]:
+		if r_type in ["SHOP", "GIFT", "RECOVERY", "CACHE", "SHRINE"]:
 			service_indices.append(i)
 		else:
 			spine_indices.append(i)
@@ -336,9 +406,10 @@ func _build_topology_graph(
 			var fallback_pos := Vector2i(max_x + 1, 0)
 			occupied[fallback_pos] = room_idx
 			grid_positions[room_idx] = fallback_pos
-			var prev_idx: int = spine_indices[idx - 1]
-			layout.adjacency[prev_idx].append(room_idx)
-			layout.adjacency[room_idx].append(prev_idx)
+			var parent_pos := Vector2i(max_x, 0)
+			var parent_idx: int = occupied.get(parent_pos, spine_indices[idx - 1])
+			layout.adjacency[parent_idx].append(room_idx)
+			layout.adjacency[room_idx].append(parent_idx)
 
 	# 2. Place service rooms (Shop, Recovery, Gift) as side wings branching from combat rooms
 	for s_idx in service_indices:
@@ -382,10 +453,11 @@ func _build_topology_graph(
 			var max_x := 0
 			for pos in grid_positions.values():
 				max_x = maxi(max_x, pos.x)
-			var fallback_pos := Vector2i(max_x + 1, 1)
+			var fallback_pos := Vector2i(max_x + 1, 0)
 			occupied[fallback_pos] = s_idx
 			grid_positions[s_idx] = fallback_pos
-			var parent_idx: int = spine_indices[maxi(0, spine_indices.size() - 2)]
+			var parent_pos := Vector2i(max_x, 0)
+			var parent_idx: int = occupied.get(parent_pos, 0)
 			layout.adjacency[parent_idx].append(s_idx)
 			layout.adjacency[s_idx].append(parent_idx)
 
@@ -451,27 +523,9 @@ func _build_floor_corridors_and_thresholds(layout: DungeonLayout, _room_types: A
 				top_r.doorway_rects.append(d_top)
 				bot_r.doorway_rects.append(d_bot)
 
-			# Case 3: Diagonal / L-shaped bypass connection (e.g. from service room back to main spine)
+			# Only cardinal adjacent rooms have physical connecting corridors
 			else:
-				var min_x_r: RoomData = room_u if gu.x < gv.x else room_v
-				var max_x_r: RoomData = room_v if gu.x < gv.x else room_u
-				var h_cx := min_x_r.bounds.end.x
-				var h_cw := max_x_r.bounds.get_center().x - h_cx + 65.0
-				var h_cy := min_x_r.bounds.get_center().y - 65.0
-				var h_corr := Rect2(h_cx, h_cy, h_cw, 130.0)
-				layout.corridors.append(h_corr)
-
-				var v_top_y := minf(min_x_r.bounds.get_center().y, max_x_r.bounds.position.y)
-				var v_bot_y := maxf(min_x_r.bounds.get_center().y, max_x_r.bounds.position.y)
-				var v_corr := Rect2(max_x_r.bounds.get_center().x - 65.0, v_top_y, 130.0, maxf(130.0, v_bot_y - v_top_y + 10.0))
-				layout.corridors.append(v_corr)
-
-				var d_start := Rect2(h_cx - 14.0, h_cy, 28.0, 130.0)
-				var d_end := Rect2(max_x_r.bounds.get_center().x - 65.0, max_x_r.bounds.position.y - 14.0, 130.0, 28.0)
-				layout.doorways.append({ "rect": d_start, "room_idx": min_x_r.index, "normal": Vector2.RIGHT, "is_locked": false })
-				layout.doorways.append({ "rect": d_end, "room_idx": max_x_r.index, "normal": Vector2.UP, "is_locked": false })
-				min_x_r.doorway_rects.append(d_start)
-				max_x_r.doorway_rects.append(d_end)
+				continue
 
 	var f_min := Vector2(99999.0, 99999.0)
 	var f_max := Vector2(-99999.0, -99999.0)
@@ -511,8 +565,8 @@ func _generate_valid_room(
 			var r_size := Vector2(760.0, 560.0)
 			if room_type == "START":
 				r_size = Vector2(640.0, 480.0)
-			elif room_type in ["SHOP", "RECOVERY", "GIFT"]:
-				r_size = Vector2(620.0, 460.0)
+			elif room_type in ["SHOP", "RECOVERY", "GIFT", "EXTRACT", "CACHE", "SHRINE", "TRANSIT"]:
+				r_size = Vector2(760.0, 560.0) if room_type in ["EXTRACT", "TRANSIT"] else Vector2(620.0, 460.0)
 			elif room_type == "BOSS":
 				r_size = Vector2(1100.0, 800.0)
 			else:
@@ -528,7 +582,10 @@ func _generate_valid_room(
 						r_size = Vector2(720.0, 520.0) # Compact Combat Cell
 			room.bounds = Rect2(cell_center - r_size * 0.5, r_size)
 			room.player_spawn = cell_center - Vector2(100.0, 0.0)
-			if room_type == "START":
+			# `is_cleared` also represents whether an interactable reward has been
+			# claimed. Mark only non-reward traversal rooms complete here; reward
+			# rooms must stay active until the player reaches their offer.
+			if room_type in ["START", "EXTRACT"]:
 				room.is_cleared = true
 		else:
 			if index == 0:
@@ -606,8 +663,13 @@ func _generate_valid_room(
 
 				# Determine forward target room
 				var target_idx: int = index + 1
-				if procedural_floor and not forward_targets.is_empty():
-					target_idx = forward_targets[mini(d_idx, forward_targets.size() - 1)]
+				if procedural_floor:
+					if not forward_targets.is_empty():
+						target_idx = forward_targets[mini(d_idx, forward_targets.size() - 1)]
+					elif layout.adjacency.has(index) and not layout.adjacency[index].is_empty():
+						target_idx = layout.adjacency[index][0]
+					else:
+						target_idx = mini(index + 1, layout.total_rooms - 1)
 				elif num_doors >= 2:
 					if d_idx == 0:
 						target_idx = index + 1
@@ -618,8 +680,8 @@ func _generate_valid_room(
 				else:
 					target_idx = index + 1
 
-				# If Room 1: guarantee door 0 and door 1 lead to distinct forward rooms (> 1)
-				if index == 1 and num_doors >= 2:
+				# If Room 1: guarantee door 0 and door 1 lead to distinct forward rooms (> 1) in legacy single-room arena mode
+				if not procedural_floor and index == 1 and num_doors >= 2:
 					if d_idx == 0:
 						target_idx = 2
 					elif d_idx == 1:
@@ -640,15 +702,16 @@ func _generate_valid_room(
 					"label": label
 				})
 
-				# Ensure topology adjacency includes this connection
-				if not layout.adjacency.has(index):
-					layout.adjacency[index] = []
-				if not target_idx in layout.adjacency[index]:
-					layout.adjacency[index].append(target_idx)
-				if not layout.adjacency.has(target_idx):
-					layout.adjacency[target_idx] = []
-				if not index in layout.adjacency[target_idx]:
-					layout.adjacency[target_idx].append(index)
+				# Ensure topology adjacency includes this connection ONLY for non-procedural single-room arena mode
+				if not procedural_floor:
+					if not layout.adjacency.has(index):
+						layout.adjacency[index] = []
+					if not target_idx in layout.adjacency[index]:
+						layout.adjacency[index].append(target_idx)
+					if not layout.adjacency.has(target_idx):
+						layout.adjacency[target_idx] = []
+					if not index in layout.adjacency[target_idx]:
+						layout.adjacency[target_idx].append(index)
 
 			room.exit_door = room.exit_doors[0].pos
 
@@ -667,7 +730,7 @@ func _generate_valid_room(
 
 		# Generate Enemy Spawns
 		_generate_enemy_spawns(room, index, room_type, spawn_rng)
-		if procedural_floor and room_type in ["START", "RECOVERY", "SHOP", "GIFT"]:
+		if procedural_floor and room_type in ["START", "RECOVERY", "SHOP", "GIFT", "EXTRACT", "CACHE", "SHRINE", "TRANSIT"]:
 			room.enemy_spawns.clear()
 
 		# Validate Reachability & Clearances via BFS Grid Flood-Fill
@@ -710,10 +773,18 @@ func _get_door_label(target_idx: int, room_type: String) -> String:
 			return "SUBROUTINE CACHE // FREE REWARD"
 		"RECOVERY":
 			return "RECOVERY BAY (+2 HP)"
+		"CACHE":
+			return "SUPPLY CACHE (+25 BITS)"
+		"SHRINE":
+			return "NEURAL SHRINE // ATTUNEMENT"
+		"TRANSIT":
+			return "TRANSIT CONDUIT // SAFE ROUTE"
 		"ELITE":
 			return "ELITE THREAT // HIGH REWARD"
 		"BOSS":
 			return "NEXUS // OVERLORD CORE"
+		"EXTRACT":
+			return "GATEWAY // EXTRACTION DOCK"
 		_:
 			return "CHAMBER %d // COMBAT WAVE" % (target_idx + 1)
 
@@ -723,12 +794,22 @@ func _pick_template_name(_index: int, room_type: String, rng: RandomNumberGenera
 		return "CALIBRATION_OPEN"
 	if room_type == "BOSS":
 		return "BOSS_NEXUS"
+	if room_type == "EXTRACT":
+		return "GATEWAY_EXTRACT"
 	if room_type == "SHOP":
 		return "SHOP_DEPOT"
 	if room_type == "GIFT":
 		return "GIFT_VAULT"
 	if room_type == "RECOVERY":
 		return "RECOVERY_BAY"
+	if room_type == "TRANSIT":
+		return "CONDUIT_STATION"
+	if room_type == "CACHE":
+		return "CACHE_CHAMBER"
+	if room_type == "SHRINE":
+		return "SHRINE_SANCTUARY"
+	if room_type == "SECRET":
+		return "SECRET_VAULT"
 
 	var templates := [
 		"QUAD_PILLARS",
@@ -736,13 +817,17 @@ func _pick_template_name(_index: int, room_type: String, rng: RandomNumberGenera
 		"SPLIT_LANE",
 		"COVER_FORTRESS",
 		"HAZARD_CORRIDOR",
-		"CROSS_INTERSECTION"
+		"CROSS_INTERSECTION",
+		"BARREL_CROSSFIRE",
+		"LAB_WORKSTATIONS"
 	]
 	return templates[rng.randi() % templates.size()]
 
 
 func _apply_template_geometry(room: RoomData, template_name: String, _rng: RandomNumberGenerator) -> void:
 	room.obstacles.clear()
+	room.prop_types.clear()
+	room.hazards.clear()
 	var center := room.bounds.get_center()
 
 	match template_name:
@@ -751,9 +836,24 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			room.tactical_context.chokepoint_ratio = 0.0
 			room.tactical_context.flanking_lanes = 2
 
+		"GATEWAY_EXTRACT":
+			# Fortified extraction dock with perimeter defensive barriers and data pylons
+			room.obstacles.append(Rect2(Vector2(center.x - 130.0, center.y - 30.0), Vector2(36.0, 60.0)))
+			room.prop_types.append("HEAVY_BARRIER")
+			room.obstacles.append(Rect2(Vector2(center.x + 94.0, center.y - 30.0), Vector2(36.0, 60.0)))
+			room.prop_types.append("HEAVY_BARRIER")
+			room.obstacles.append(Rect2(Vector2(center.x - 160.0, center.y - 95.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("DATA_PYLON")
+			room.obstacles.append(Rect2(Vector2(center.x + 124.0, center.y + 59.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("DATA_PYLON")
+			room.tactical_context.has_cover = true
+			room.tactical_context.chokepoint_ratio = 0.15
+			room.tactical_context.flanking_lanes = 3
+
 		"SHOP_DEPOT":
-			# Central merchant kiosk with clear perimeter pathways
+			# Central merchant kiosk with server racks
 			room.obstacles.append(Rect2(Vector2(center.x - 30.0, center.y - 25.0), Vector2(60.0, 50.0)))
+			room.prop_types.append("SERVER_RACK")
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.15
 			room.tactical_context.flanking_lanes = 3
@@ -761,8 +861,11 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 		"GIFT_VAULT":
 			# Secure cache station in center with decorative corner pylons
 			room.obstacles.append(Rect2(Vector2(center.x - 24.0, center.y - 24.0), Vector2(48.0, 48.0)))
+			room.prop_types.append("DATA_PYLON")
 			room.obstacles.append(Rect2(Vector2(center.x - 140.0, center.y - 80.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("SERVER_RACK")
 			room.obstacles.append(Rect2(Vector2(center.x + 104.0, center.y + 44.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("SERVER_RACK")
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.20
 			room.tactical_context.flanking_lanes = 3
@@ -770,7 +873,61 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 		"RECOVERY_BAY":
 			# Twin medbay pods flanking center aisle
 			room.obstacles.append(Rect2(Vector2(center.x - 110.0, center.y - 80.0), Vector2(50.0, 36.0)))
+			room.prop_types.append("SERVER_RACK")
 			room.obstacles.append(Rect2(Vector2(center.x + 60.0, center.y + 44.0), Vector2(50.0, 36.0)))
+			room.prop_types.append("SERVER_RACK")
+			room.tactical_context.has_cover = true
+			room.tactical_context.chokepoint_ratio = 0.20
+			room.tactical_context.flanking_lanes = 3
+
+		"CONDUIT_STATION":
+			# Hyper-Conduit Boost Station: Center dais completely open, 4 corner data pylons
+			room.obstacles.append(Rect2(Vector2(center.x - 140.0, center.y - 85.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("DATA_PYLON")
+			room.obstacles.append(Rect2(Vector2(center.x + 104.0, center.y - 85.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("DATA_PYLON")
+			room.obstacles.append(Rect2(Vector2(center.x - 140.0, center.y + 55.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("DATA_PYLON")
+			room.obstacles.append(Rect2(Vector2(center.x + 104.0, center.y + 55.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("DATA_PYLON")
+			room.tactical_context.has_cover = true
+			room.tactical_context.chokepoint_ratio = 0.10
+			room.tactical_context.flanking_lanes = 4
+
+		"CACHE_CHAMBER":
+			# Data Cache Chamber: 2 perimeter server racks, center dais open for Data Cache
+			room.obstacles.append(Rect2(Vector2(center.x - 110.0, center.y - 85.0), Vector2(50.0, 30.0)))
+			room.prop_types.append("SERVER_RACK")
+			room.obstacles.append(Rect2(Vector2(center.x + 60.0, center.y - 85.0), Vector2(50.0, 30.0)))
+			room.prop_types.append("SERVER_RACK")
+			room.tactical_context.has_cover = true
+			room.tactical_context.chokepoint_ratio = 0.15
+			room.tactical_context.flanking_lanes = 3
+
+		"SHRINE_SANCTUARY":
+			# Neural Shrine Sanctuary: 2 side pylons, center dais open for Neural Shrine
+			room.obstacles.append(Rect2(Vector2(center.x - 140.0, center.y - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("DATA_PYLON")
+			room.obstacles.append(Rect2(Vector2(center.x + 104.0, center.y - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("DATA_PYLON")
+			room.tactical_context.has_cover = true
+			room.tactical_context.chokepoint_ratio = 0.15
+			room.tactical_context.flanking_lanes = 3
+
+		"SECRET_VAULT":
+			# Fortified Quantum Vault: Heavy reinforced perimeter barriers, open center for Quantum Core
+			room.obstacles.append(Rect2(Vector2(center.x - 130.0, center.y - 85.0), Vector2(60.0, 28.0)))
+			room.prop_types.append("HEAVY_BARRIER")
+			room.obstacles.append(Rect2(Vector2(center.x + 70.0, center.y - 85.0), Vector2(60.0, 28.0)))
+			room.prop_types.append("HEAVY_BARRIER")
+			room.obstacles.append(Rect2(Vector2(center.x - 130.0, center.y + 60.0), Vector2(60.0, 28.0)))
+			room.prop_types.append("HEAVY_BARRIER")
+			room.obstacles.append(Rect2(Vector2(center.x + 70.0, center.y + 60.0), Vector2(60.0, 28.0)))
+			room.prop_types.append("HEAVY_BARRIER")
+			room.obstacles.append(Rect2(Vector2(center.x - 160.0, center.y - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("DATA_PYLON")
+			room.obstacles.append(Rect2(Vector2(center.x + 124.0, center.y - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("DATA_PYLON")
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.20
 			room.tactical_context.flanking_lanes = 3
@@ -780,9 +937,18 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			var y_offset := 95.0
 			var col_size := Vector2(44.0, 44.0)
 			room.obstacles.append(Rect2(Vector2(center.x - x_offset - 22.0, center.y - y_offset - 22.0), col_size))
+			room.prop_types.append("HEAVY_BARRIER")
 			room.obstacles.append(Rect2(Vector2(center.x + x_offset - 22.0, center.y - y_offset - 22.0), col_size))
+			room.prop_types.append("HEAVY_BARRIER")
 			room.obstacles.append(Rect2(Vector2(center.x - x_offset - 22.0, center.y + y_offset - 22.0), col_size))
+			room.prop_types.append("HEAVY_BARRIER")
 			room.obstacles.append(Rect2(Vector2(center.x + x_offset - 22.0, center.y + y_offset - 22.0), col_size))
+			room.prop_types.append("HEAVY_BARRIER")
+			# Reactive barrels placed in tactical flanking pockets
+			room.obstacles.append(Rect2(Vector2(center.x - 18.0, center.y - y_offset - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("EXPLOSIVE_BARREL")
+			room.obstacles.append(Rect2(Vector2(center.x - 18.0, center.y + y_offset - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("CRYO_CANISTER")
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.20
 			room.tactical_context.flanking_lanes = 3
@@ -791,6 +957,12 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 			var wall_w := 260.0
 			var wall_h := 28.0
 			room.obstacles.append(Rect2(Vector2(center.x - wall_w * 0.5, center.y - wall_h * 0.5), Vector2(wall_w, wall_h)))
+			room.prop_types.append("HEAVY_BARRIER")
+			# Explosive barrels on both sides of chokepoint
+			room.obstacles.append(Rect2(Vector2(center.x - wall_w * 0.5 - 45.0, center.y - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("EXPLOSIVE_BARREL")
+			room.obstacles.append(Rect2(Vector2(center.x + wall_w * 0.5 + 9.0, center.y - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("EXPLOSIVE_BARREL")
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.65
 			room.tactical_context.flanking_lanes = 2
@@ -798,7 +970,15 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 		"SPLIT_LANE":
 			var bar_size := Vector2(26.0, 140.0)
 			room.obstacles.append(Rect2(Vector2(center.x - 120.0 - 13.0, center.y - 70.0), bar_size))
+			room.prop_types.append("HEAVY_BARRIER")
 			room.obstacles.append(Rect2(Vector2(center.x + 120.0 - 13.0, center.y - 70.0), bar_size))
+			room.prop_types.append("HEAVY_BARRIER")
+			room.obstacles.append(Rect2(Vector2(center.x - 18.0, center.y - 90.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("TOXIC_VAT")
+			room.obstacles.append(Rect2(Vector2(center.x - 18.0, center.y + 54.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("CRYO_CANISTER")
+			# Central hazard patch between lanes
+			room.hazards.append({ "rect": Rect2(center.x - 45.0, center.y - 30.0, 90.0, 60.0), "type": "HAZARD" })
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.45
 			room.tactical_context.flanking_lanes = 3
@@ -806,15 +986,25 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 		"COVER_FORTRESS":
 			var block_size := Vector2(60.0, 28.0)
 			room.obstacles.append(Rect2(Vector2(center.x - 130.0, center.y - 85.0), block_size))
+			room.prop_types.append("SERVER_RACK")
 			room.obstacles.append(Rect2(Vector2(center.x + 80.0, center.y - 85.0), block_size))
+			room.prop_types.append("SERVER_RACK")
 			room.obstacles.append(Rect2(Vector2(center.x - 130.0, center.y + 60.0), block_size))
+			room.prop_types.append("HEAVY_BARRIER")
 			room.obstacles.append(Rect2(Vector2(center.x + 80.0, center.y + 60.0), block_size))
+			room.prop_types.append("HEAVY_BARRIER")
+			room.obstacles.append(Rect2(Vector2(center.x - 18.0, center.y - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("EXPLOSIVE_BARREL")
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.35
 			room.tactical_context.flanking_lanes = 3
 
 		"HAZARD_CORRIDOR":
 			room.obstacles.append(Rect2(Vector2(center.x - 80.0, center.y - 20.0), Vector2(160.0, 40.0)))
+			room.prop_types.append("SERVER_RACK")
+			# Hazard zones flanking the center
+			room.hazards.append({ "rect": Rect2(center.x - 120.0, center.y - 100.0, 80.0, 50.0), "type": "HAZARD" })
+			room.hazards.append({ "rect": Rect2(center.x + 40.0, center.y + 50.0, 80.0, 50.0), "type": "HAZARD" })
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.30
 			room.tactical_context.flanking_lanes = 2
@@ -822,22 +1012,70 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 
 		"CROSS_INTERSECTION":
 			room.obstacles.append(Rect2(Vector2(center.x - 20.0, center.y - 90.0), Vector2(40.0, 60.0)))
+			room.prop_types.append("HEAVY_BARRIER")
 			room.obstacles.append(Rect2(Vector2(center.x - 20.0, center.y + 30.0), Vector2(40.0, 60.0)))
+			room.prop_types.append("HEAVY_BARRIER")
+			room.obstacles.append(Rect2(Vector2(center.x - 90.0, center.y - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("EXPLOSIVE_BARREL")
+			room.obstacles.append(Rect2(Vector2(center.x + 54.0, center.y - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("TOXIC_VAT")
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.50
 			room.tactical_context.flanking_lanes = 2
+
+		"BARREL_CROSSFIRE":
+			room.obstacles.append(Rect2(Vector2(center.x - 130.0, center.y - 75.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("EXPLOSIVE_BARREL")
+			room.obstacles.append(Rect2(Vector2(center.x + 94.0, center.y - 75.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("EXPLOSIVE_BARREL")
+			room.obstacles.append(Rect2(Vector2(center.x - 130.0, center.y + 39.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("CRYO_CANISTER")
+			room.obstacles.append(Rect2(Vector2(center.x + 94.0, center.y + 39.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("TOXIC_VAT")
+			room.obstacles.append(Rect2(Vector2(center.x - 24.0, center.y - 24.0), Vector2(48.0, 48.0)))
+			room.prop_types.append("HEAVY_BARRIER")
+			room.tactical_context.has_cover = true
+			room.tactical_context.chokepoint_ratio = 0.35
+			room.tactical_context.flanking_lanes = 4
+
+		"LAB_WORKSTATIONS":
+			room.obstacles.append(Rect2(Vector2(center.x - 140.0, center.y - 80.0), Vector2(64.0, 32.0)))
+			room.prop_types.append("SERVER_RACK")
+			room.obstacles.append(Rect2(Vector2(center.x + 76.0, center.y - 80.0), Vector2(64.0, 32.0)))
+			room.prop_types.append("SERVER_RACK")
+			room.obstacles.append(Rect2(Vector2(center.x - 140.0, center.y + 48.0), Vector2(64.0, 32.0)))
+			room.prop_types.append("SERVER_RACK")
+			room.obstacles.append(Rect2(Vector2(center.x + 76.0, center.y + 48.0), Vector2(64.0, 32.0)))
+			room.prop_types.append("SERVER_RACK")
+			room.obstacles.append(Rect2(Vector2(center.x - 18.0, center.y - 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("CRYO_CANISTER")
+			room.tactical_context.has_cover = true
+			room.tactical_context.chokepoint_ratio = 0.40
+			room.tactical_context.flanking_lanes = 3
 
 		"BOSS_NEXUS":
 			var b_size := Vector2(64.0, 64.0)
 			var x_offset := room.bounds.size.x * 0.28
 			var y_offset := room.bounds.size.y * 0.25
 			room.obstacles.append(Rect2(center + Vector2(-x_offset, -y_offset) - b_size * 0.5, b_size))
+			room.prop_types.append("HEAVY_BARRIER")
 			room.obstacles.append(Rect2(center + Vector2(x_offset, -y_offset) - b_size * 0.5, b_size))
+			room.prop_types.append("HEAVY_BARRIER")
 			room.obstacles.append(Rect2(center + Vector2(-x_offset, y_offset) - b_size * 0.5, b_size))
+			room.prop_types.append("HEAVY_BARRIER")
 			room.obstacles.append(Rect2(center + Vector2(x_offset, y_offset) - b_size * 0.5, b_size))
+			room.prop_types.append("HEAVY_BARRIER")
+			# 2 defensive fuel cells in boss chamber
+			room.obstacles.append(Rect2(center + Vector2(-x_offset * 0.4, -y_offset * 0.9) - Vector2(18.0, 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("EXPLOSIVE_BARREL")
+			room.obstacles.append(Rect2(center + Vector2(x_offset * 0.4, y_offset * 0.9) - Vector2(18.0, 18.0), Vector2(36.0, 36.0)))
+			room.prop_types.append("EXPLOSIVE_BARREL")
 			room.tactical_context.has_cover = true
 			room.tactical_context.chokepoint_ratio = 0.15
 			room.tactical_context.flanking_lanes = 4
+
+	while room.prop_types.size() < room.obstacles.size():
+		room.prop_types.append("HEAVY_BARRIER")
 
 	# The enlarged legacy rooms need their cover and lanes spread out too. Scale around
 	# the room center so templates remain legible at the scrolling camera scale.
@@ -886,7 +1124,7 @@ func get_upgrade_rarity(upgrade_id: String) -> String:
 func _generate_enemy_spawns(room: RoomData, index: int, room_type: String, rng: RandomNumberGenerator) -> void:
 	room.enemy_spawns.clear()
 
-	if room_type == "START":
+	if room_type in ["START", "EXTRACT"]:
 		room.enemy_spawns.clear()
 		return
 
@@ -921,7 +1159,7 @@ func _generate_enemy_spawns(room: RoomData, index: int, room_type: String, rng: 
 func generate_wave_spawns(room: RoomData, sector_seed: int, wave_number: int, spawn_budget: int) -> Array[Dictionary]:
 	## Builds a deterministic, room-specific roster for each wave. It varies enemy
 	## roles, count, and spawn positions instead of replaying room.enemy_spawns.
-	if room.room_type in ["START", "BOSS"]:
+	if room.room_type in ["START", "BOSS", "EXTRACT", "SHOP", "GIFT", "RECOVERY", "CACHE", "SHRINE", "TRANSIT", "SECRET"]:
 		return room.enemy_spawns.duplicate(true)
 
 	var rng := RandomNumberGenerator.new()
@@ -1159,8 +1397,8 @@ func _build_fallback_room(
 		var r_size := Vector2(760.0, 560.0)
 		if room_type == "START":
 			r_size = Vector2(640.0, 480.0)
-		elif room_type in ["SHOP", "RECOVERY", "GIFT"]:
-			r_size = Vector2(620.0, 460.0)
+		elif room_type in ["SHOP", "RECOVERY", "GIFT", "EXTRACT", "CACHE", "SHRINE", "TRANSIT"]:
+			r_size = Vector2(760.0, 560.0) if room_type in ["EXTRACT", "TRANSIT"] else Vector2(620.0, 460.0)
 		elif room_type == "BOSS":
 			r_size = Vector2(1100.0, 800.0)
 		room.bounds = Rect2(cell_center - r_size * 0.5, r_size)
@@ -1173,6 +1411,13 @@ func _build_fallback_room(
 			room.enemy_spawns.append({ "type": "SHOOTER", "pos": cell_center + Vector2(120.0, 80.0), "flank_angle": 0.0 })
 		elif room_type == "BOSS":
 			room.enemy_spawns.append({ "type": "BOSS", "pos": cell_center + Vector2(180.0, 0.0), "flank_angle": 0.0 })
+		elif room_type in ["EXTRACT", "START", "CACHE", "SHRINE", "TRANSIT", "SHOP", "GIFT", "RECOVERY"]:
+			room.enemy_spawns.clear()
+			room.is_cleared = room_type in ["START", "EXTRACT"]
+			if room_type == "SHOP":
+				room.shop_stock = _generate_shop_stock(RandomNumberGenerator.new())
+			elif room_type == "GIFT":
+				room.gift_choices = _generate_gift_choices(RandomNumberGenerator.new())
 		room.is_validated = true
 		return room
 

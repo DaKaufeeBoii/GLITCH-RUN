@@ -13,6 +13,7 @@ var learning_policy: RefCounted
 var evolution_manager: RefCounted
 
 var use_learning_policy := true
+var current_biome: int = 1
 
 
 func _init() -> void:
@@ -125,7 +126,7 @@ func prepare_encounter(
 		if family in ["CHASER", "SHOOTER", "DASHER"]:
 			genome = evolution_manager.get_genome_for_spawn(family)
 			# Apply active tactical positioning mutations
-			if pincer_active and family == "CHASER":
+			if pincer_active and family == "CHASER" and current_biome > 1:
 				genome.apply_named_mutation("PINCER_WINGS")
 
 		final_spawn_list.append({
@@ -154,9 +155,13 @@ func record_encounter_result(
 	combat_time: float,
 	player_profile: Dictionary,
 	chosen_tactic: String,
-	tracker: RefCounted = null
+	tracker: RefCounted = null,
+	biome_index: int = -1
 ) -> Array[Dictionary]:
 	## Reports combat feedback to LearningPolicy, AdaptiveDirector, and EvolutionManager.
+	if biome_index > 0:
+		current_biome = biome_index
+
 	adaptive_director.record_tactic_result(chosen_tactic, damage_taken)
 
 	if use_learning_policy:
@@ -165,11 +170,19 @@ func record_encounter_result(
 			var reward: float = learning_policy.compute_reward(damage_taken, combat_time, player_profile, act_id)
 			learning_policy.update_policy(reward)
 
-	return evolution_manager.process_encounter_end(
-		sector_index,
-		damage_taken,
-		combat_time,
-		player_profile,
-		chosen_tactic,
-		tracker
-	)
+	# Evolution mechanics do not begin until a player has completed the first biome (current_biome > 1)
+	if current_biome <= 1:
+		return []
+
+	if is_instance_valid(evolution_manager):
+		evolution_manager.current_biome = current_biome
+		return evolution_manager.process_encounter_end(
+			sector_index,
+			damage_taken,
+			combat_time,
+			player_profile,
+			chosen_tactic,
+			tracker,
+			current_biome
+		)
+	return []

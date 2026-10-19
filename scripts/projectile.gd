@@ -5,6 +5,7 @@ extends Area2D
 @export var damage := 1
 var direction := Vector2.RIGHT
 var lifetime := 1.6
+var visual_clock := 0.0
 var player_source: Node2D = null
 
 var debuff_type := "" # "CRYO", "ACID", "SHOCK"
@@ -20,8 +21,10 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	visual_clock += delta
 	global_position += direction * speed * delta
 	lifetime -= delta
+	queue_redraw()
 	if lifetime <= 0.0:
 		queue_free()
 
@@ -52,6 +55,8 @@ func _on_body_entered(body: Node2D) -> void:
 		return
 
 	# Collided with static arena walls or obstacles
+	if body.has_method("take_damage"):
+		body.take_damage(damage)
 	queue_free()
 
 
@@ -99,8 +104,9 @@ func _draw() -> void:
 		glow_color = Color("c084fc") # High-voltage ion purple
 
 	# Trailing ion energy line
-	draw_line(Vector2(-10, 0), Vector2(2, 0), glow_color * Color(1, 1, 1, 0.55), 3.5)
+	var pulse := 0.8 + (sin(visual_clock * 18.0) + 1.0) * 0.18
+	draw_line(Vector2(-10.0 * pulse, 0), Vector2(2, 0), glow_color * Color(1, 1, 1, 0.55), 3.5 * pulse)
 	# Glowing outer sphere
-	draw_circle(Vector2(2, 0), 4.5, glow_color)
+	draw_circle(Vector2(2, 0), 4.0 + pulse * 0.6, glow_color)
 	# White-hot energetic core
 	draw_circle(Vector2(2, 0), 2.2, Color(1.0, 1.0, 1.0, 1.0))

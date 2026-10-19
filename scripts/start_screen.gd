@@ -2,6 +2,8 @@ extends Control
 ## Minimal tap-to-start splash screen. The existing menu is the second screen.
 
 var prompt: Label
+var splash_stack: VBoxContainer
+var transitioning := false
 var pulse_time := 0.0
 
 
@@ -17,6 +19,8 @@ func _process(delta: float) -> void:
 	pulse_time += delta
 	if is_instance_valid(prompt):
 		prompt.modulate.a = 0.65 + (sin(pulse_time * 2.4) + 1.0) * 0.17
+	if is_instance_valid(splash_stack):
+		splash_stack.rotation = sin(pulse_time * 0.45) * 0.004
 
 
 func _input(event: InputEvent) -> void:
@@ -51,7 +55,8 @@ func _build_screen() -> void:
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(center)
-	var stack := VBoxContainer.new()
+	splash_stack = VBoxContainer.new()
+	var stack := splash_stack
 	stack.custom_minimum_size = Vector2(0, 190)
 	stack.add_theme_constant_override("separation", 18)
 	stack.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -95,9 +100,24 @@ func _build_screen() -> void:
 
 
 func _open_menu() -> void:
-	if not is_inside_tree():
+	if transitioning or not is_inside_tree():
 		return
+	transitioning = true
 	var audio: Node = get_node_or_null("/root/AudioSynth")
 	if audio:
 		audio.play("ui_click")
+	var cover := ColorRect.new()
+	cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	cover.color = Color("030712")
+	cover.modulate.a = 0.0
+	cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cover.process_mode = Node.PROCESS_MODE_ALWAYS
+	cover.z_index = 20
+	add_child(cover)
+	var tween := create_tween()
+	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	tween.set_trans(Tween.TRANS_CUBIC)
+	tween.set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(cover, "modulate:a", 1.0, 0.24)
+	await tween.finished
 	get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")

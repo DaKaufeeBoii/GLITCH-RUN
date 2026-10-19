@@ -19,6 +19,10 @@ const MAX_OPTIONAL_ROOMS_PER_SECTOR := 3
 const SECTORS_PER_BIOME := 3
 const BIOME_DATA_SCRIPT := preload("res://scripts/biome_data.gd")
 
+var current_floor: int = 1 # 1 to total_floors_in_sector
+var total_floors_in_sector: int = 3 # Always odd: 3, 5, or 7 floors per sector
+var seed_play_time: float = 0.0
+
 var run_depth: int = 1 # Monotonically increasing room steps taken across entire run
 var current_biome: int = 1
 var sector_index: int = 1
@@ -49,13 +53,13 @@ func reset() -> void:
 	run_depth = 1
 	current_biome = 1
 	sector_index = 1
+	current_floor = 1
 	room_index = 0
 	rooms_per_sector = DEFAULT_ROOMS_PER_SECTOR
+	update_sector_floors(seed_play_time)
 	_init_sector_wave_schedule()
 	current_wave = 1
 	waves_in_room = 1
-
-
 func _init_sector_wave_schedule() -> void:
 	sector_waves_completed = 0
 	# Schedule 3 to 5 regular waves per sector dynamically across the run (never fixed to 5)
@@ -96,8 +100,58 @@ func get_current_sector_seed() -> int:
 	return derive_sector_seed(base_run_seed, sector_index)
 
 
+func update_sector_floors(play_time_seconds: float = -1.0) -> int:
+	## Enforces an odd number of floors (3, 5, or 7) based on play time in the current seed.
+	if play_time_seconds >= 0.0:
+		seed_play_time = play_time_seconds
+
+	if seed_play_time < 180.0:
+		total_floors_in_sector = 3
+	elif seed_play_time < 450.0:
+		total_floors_in_sector = 5
+	else:
+		total_floors_in_sector = 7
+	return total_floors_in_sector
+
+
+func set_sector_floors(count: int) -> void:
+	## Explicit setter enforcing odd floor bounds [3, 7]
+	var odd_count: int = count if count % 2 != 0 else count + 1
+	total_floors_in_sector = clampi(odd_count, 3, 7)
+
+
+func is_boss_floor() -> bool:
+	## Determines if current floor features a boss encounter:
+	## 3 floors: Boss spawns ONLY at floor 3 (last floor).
+	## 5 floors: Mid-boss at floor 3, final boss at floor 5.
+	## 7 floors: Mid-boss at floor 4, final boss at floor 7.
+	match total_floors_in_sector:
+		3:
+			return current_floor == 3
+		5:
+			return current_floor == 3 or current_floor == 5
+		7:
+			return current_floor == 4 or current_floor == 7
+		_:
+			return current_floor >= total_floors_in_sector
+
+
+func is_mid_boss_encounter() -> bool:
+	if not is_boss_floor():
+		return false
+	if total_floors_in_sector == 5:
+		return current_floor == 3
+	elif total_floors_in_sector == 7:
+		return current_floor == 4
+	return false
+
+
+func is_final_boss_encounter() -> bool:
+	return is_boss_floor() and current_floor == total_floors_in_sector
+
+
 func is_boss_chamber() -> bool:
-	return room_index >= rooms_per_sector - 1
+	return is_boss_floor() and room_index >= rooms_per_sector - 1
 
 
 func is_middle_sector() -> bool:
@@ -106,14 +160,6 @@ func is_middle_sector() -> bool:
 
 func is_final_sector() -> bool:
 	return sector_index >= SECTORS_PER_BIOME
-
-
-func is_mid_boss_encounter() -> bool:
-	return is_middle_sector() and is_boss_chamber()
-
-
-func is_final_boss_encounter() -> bool:
-	return is_final_sector() and is_boss_chamber()
 
 
 func get_current_biome_data() -> Dictionary:
@@ -297,6 +343,48 @@ func advance_room(target_room: int = -1) -> Dictionary:
 		"sector_seed": get_current_sector_seed(),
 		"sector_total_waves": sector_total_waves,
 		"sector_waves_completed": sector_waves_completed
+	}
+
+
+func advance_floor() -> Dictionary:
+	## Advances to the next floor in the current sector, or triggers new sector/biome when all floors are cleared.
+	run_depth += 1
+	current_floor += 1
+	room_index = 0
+	current_wave = 1
+
+	var is_new_sector := false
+	var is_new_biome := false
+
+	if current_floor > total_floors_in_sector:
+		sector_index += 1
+		current_floor = 1
+		is_new_sector = true
+		if sector_index > SECTORS_PER_BIOME:
+			current_biome += 1
+			sector_index = 1
+			is_new_biome = true
+			var b_data := get_current_biome_data()
+			biome_changed.emit(current_biome, b_data.get("name", "NEON PROTOCOL"))
+		update_sector_floors(seed_play_time)
+		_init_sector_wave_schedule()
+		sector_changed.emit(sector_index, get_current_sector_seed())
+
+	room_changed.emit(room_index, rooms_per_sector, sector_index, run_depth)
+	return {
+		"is_new_floor": true,
+		"floor": current_floor,
+		"total_floors": total_floors_in_sector,
+		"is_new_sector": is_new_sector,
+		"is_new_biome": is_new_biome,
+		"biome": current_biome,
+		"sector": sector_index,
+		"room": room_index,
+		"depth": run_depth,
+		"sector_seed": get_current_sector_seed(),
+		"is_boss_floor": is_boss_floor(),
+		"is_mid_boss": is_mid_boss_encounter(),
+		"is_final_boss": is_final_boss_encounter()
 	}
 
 

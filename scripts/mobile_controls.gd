@@ -38,8 +38,26 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		reset_controls()
+
+
+func reset_controls() -> void:
+	move_finger = -1
+	fire_finger = -1
+	move_vector = Vector2.ZERO
+	fire_vector = Vector2.ZERO
+	move_changed.emit(Vector2.ZERO)
+	fire_changed.emit(false)
+	aim_changed.emit(Vector2.ZERO)
+	queue_redraw()
+
+
 func _input(event: InputEvent) -> void:
-	if not enabled:
+	if not enabled or not is_visible_in_tree() or (is_inside_tree() and get_tree().paused):
+		if move_finger != -1 or fire_finger != -1:
+			reset_controls()
 		return
 	if event is InputEventScreenTouch:
 		_handle_touch(event)

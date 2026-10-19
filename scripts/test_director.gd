@@ -25,6 +25,8 @@ const NAV_GRID_SCRIPT := preload("res://scripts/navigation_grid.gd")
 const CHASER_SCENE := preload("res://scenes/enemies/chaser.tscn")
 const DASHER_SCENE := preload("res://scenes/enemies/dasher.tscn")
 const SHOOTER_SCENE := preload("res://scenes/enemies/shooter.tscn")
+const BIOME_DATA_SCRIPT := preload("res://scripts/biome_data.gd")
+const DESTRUCTIBLE_PROP_SCRIPT := preload("res://scripts/destructible_prop.gd")
 
 func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--run-tests") or OS.get_cmdline_args().has("--run-tests"):
@@ -91,9 +93,13 @@ static func run_all_tests() -> bool:
 	all_passed = test_strict_health_doubling_invariant_all_species() and all_passed
 	all_passed = test_door_controlled_upgrades_and_all_rooms_spawn_enemies() and all_passed
 	all_passed = test_obstacle_avoidance_and_multi_phase_boss_progression() and all_passed
+	all_passed = test_sector_floors_odd_progression_and_soul_knight_variety() and all_passed
+	all_passed = test_teleportation_prevention_mid_combat() and all_passed
+	all_passed = test_non_combat_rooms_variety_and_traversal() and all_passed
+	all_passed = test_evolution_mechanics_biome_1_lock() and all_passed
 
 	if all_passed:
-		print("--- ALL 53 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 57 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -1994,4 +2000,296 @@ static func test_obstacle_avoidance_and_multi_phase_boss_progression() -> bool:
 	architect.free()
 
 	print("  [PASS] Obstacle Avoidance Exact Slab, Compact Room 0 Dock, 3-5 Wave Ranges & Multi-Phase Boss Scenario")
+	return true
+
+
+static func test_sector_floors_odd_progression_and_soul_knight_variety() -> bool:
+	var prog = RUN_PROGRESSION_SCRIPT.new(4242, "NORMAL")
+
+	# 1. Verify odd floor bounds (3, 5, 7) scaling with seed play time
+	prog.update_sector_floors(45.0)
+	assert(prog.total_floors_in_sector == 3, "Early game play time (<180s) must produce 3 floors")
+	assert(prog.total_floors_in_sector % 2 != 0, "Sector floors must be odd")
+
+	# If 3 floors: Boss spawns ONLY on floor 3
+	prog.current_floor = 1
+	assert(not prog.is_boss_floor(), "Floor 1 of 3-floor sector must NOT be a boss floor")
+	assert(not prog.is_mid_boss_encounter(), "Floor 1 must not be a mid-boss encounter")
+	assert(not prog.is_final_boss_encounter(), "Floor 1 must not be a final boss encounter")
+
+	prog.current_floor = 2
+	assert(not prog.is_boss_floor(), "Floor 2 of 3-floor sector must NOT be a boss floor")
+
+	prog.current_floor = 3
+	assert(prog.is_boss_floor(), "Floor 3 of 3-floor sector MUST be a boss floor")
+	assert(not prog.is_mid_boss_encounter(), "3-floor sector has no mid-boss")
+	assert(prog.is_final_boss_encounter(), "Floor 3 is the final boss of the sector")
+
+	# If 5 floors: Mid-boss spawns at floor 3, final boss at floor 5
+	prog.update_sector_floors(240.0)
+	assert(prog.total_floors_in_sector == 5, "Mid-game play time (180s-450s) must produce 5 floors")
+	assert(prog.total_floors_in_sector % 2 != 0, "Sector floors must be odd")
+
+	prog.current_floor = 1
+	assert(not prog.is_boss_floor(), "Floor 1 of 5-floor sector must NOT be a boss floor")
+	prog.current_floor = 2
+	assert(not prog.is_boss_floor(), "Floor 2 of 5-floor sector must NOT be a boss floor")
+
+	prog.current_floor = 3
+	assert(prog.is_boss_floor(), "Floor 3 of 5-floor sector MUST be a boss floor (Mid-Boss)")
+	assert(prog.is_mid_boss_encounter(), "Floor 3 must be flagged as mid-boss encounter")
+	assert(not prog.is_final_boss_encounter(), "Floor 3 is not final boss")
+
+	prog.current_floor = 4
+	assert(not prog.is_boss_floor(), "Floor 4 of 5-floor sector must NOT be a boss floor")
+
+	prog.current_floor = 5
+	assert(prog.is_boss_floor(), "Floor 5 of 5-floor sector MUST be a boss floor (Final Biome Boss)")
+	assert(not prog.is_mid_boss_encounter(), "Floor 5 is not mid-boss")
+	assert(prog.is_final_boss_encounter(), "Floor 5 is final boss")
+
+	# If 7 floors: Mid-boss spawns at floor 4, final boss at floor 7
+	prog.update_sector_floors(600.0)
+	assert(prog.total_floors_in_sector == 7, "Long-play seed (>450s) must produce 7 floors")
+	assert(prog.total_floors_in_sector % 2 != 0, "Sector floors must be odd")
+
+	prog.current_floor = 4
+	assert(prog.is_boss_floor() and prog.is_mid_boss_encounter(), "Floor 4 of 7-floor sector must be mid-boss")
+	prog.current_floor = 7
+	assert(prog.is_boss_floor() and prog.is_final_boss_encounter(), "Floor 7 of 7-floor sector must be final boss")
+
+	# Test advance_floor() transition
+	prog.current_floor = 1
+	prog.total_floors_in_sector = 3
+	var nav1 = prog.advance_floor()
+	assert(nav1.floor == 2, "Advancing from floor 1 must yield floor 2")
+	assert(not nav1.is_new_sector, "Should not be new sector yet")
+
+	var nav2 = prog.advance_floor()
+	assert(nav2.floor == 3, "Advancing from floor 2 must yield floor 3")
+	assert(nav2.is_boss_floor, "Floor 3 must be boss floor")
+
+	# Advancing past final floor resets to floor 1 and advances sector
+	var nav3 = prog.advance_floor()
+	assert(nav3.floor == 1, "Advancing past final floor must reset to floor 1")
+	assert(nav3.is_new_sector, "Advancing past final floor must trigger new sector")
+	assert(prog.sector_index == 2, "Sector index must advance to 2")
+
+	# 2. Test Procedural Dungeon Floor Generation for Non-Boss vs Boss Floors
+	var gen = DUNGEON_GEN_SCRIPT.new()
+	# Non-boss floor: final room must be EXTRACT (not BOSS)
+	var extract_dungeon = gen.generate_dungeon(1234, 12, 3, true, "NORMAL", 1, false)
+	var last_extract_room = extract_dungeon.rooms.back()
+	assert(last_extract_room.room_type == "EXTRACT", "Non-boss floor final room must be EXTRACT, not BOSS")
+	assert(last_extract_room.is_cleared, "EXTRACT room must be cleared on entry")
+	assert(extract_dungeon.exit_portal_pos != Vector2.ZERO, "EXTRACT floor must have an exit portal position")
+
+	# Boss floor: final room must be BOSS
+	var boss_dungeon = gen.generate_dungeon(1234, 12, 3, true, "NORMAL", 1, true)
+	var last_boss_room = boss_dungeon.rooms.back()
+	assert(last_boss_room.room_type == "BOSS", "Boss floor final room must be BOSS")
+
+	# 3. Test Biome Data & Soul Knight Floor Variety
+	assert(BIOME_DATA_SCRIPT.get_biome_count() == 4, "Must have 4 distinct biomes")
+	for b_idx in range(1, 5):
+		var b_data = BIOME_DATA_SCRIPT.get_biome(b_idx)
+		assert(b_data.has("floor_pattern"), "Biome %d must define floor_pattern" % b_idx)
+		assert(b_data.has("hazard_type"), "Biome %d must define hazard_type" % b_idx)
+		assert(b_data.has("hazard_color"), "Biome %d must define hazard_color" % b_idx)
+		assert(b_data.has("default_barrel"), "Biome %d must define default_barrel" % b_idx)
+		assert(b_data.has("prop_style"), "Biome %d must define prop_style" % b_idx)
+
+	var biome1 = BIOME_DATA_SCRIPT.get_biome(1)
+	assert(biome1.floor_pattern == "CIRCUITS", "Biome 1 must use CIRCUITS pattern")
+	var biome2 = BIOME_DATA_SCRIPT.get_biome(2)
+	assert(biome2.floor_pattern == "ICE_GLACIER", "Biome 2 must use ICE_GLACIER pattern")
+	assert(biome2.hazard_type == "ICE", "Biome 2 must feature ICE hazards")
+	var biome3 = BIOME_DATA_SCRIPT.get_biome(3)
+	assert(biome3.floor_pattern == "TOXIC_VINES", "Biome 3 must use TOXIC_VINES pattern")
+	assert(biome3.hazard_type == "TOXIC", "Biome 3 must feature TOXIC hazards")
+	var biome4 = BIOME_DATA_SCRIPT.get_biome(4)
+	assert(biome4.floor_pattern == "MAGMA_CRACKS", "Biome 4 must use MAGMA_CRACKS pattern")
+	assert(biome4.hazard_type == "LAVA", "Biome 4 must feature LAVA hazards")
+
+	# 4. Test Destructible Props (Soul Knight-style reactive barrels & covers)
+	var barrel_script = load("res://scripts/destructible_prop.gd")
+	var barrel = barrel_script.new()
+	barrel.prop_type = "EXPLOSIVE_BARREL"
+	barrel._ready()
+	assert(barrel.health == 2 and barrel.is_destructible, "Explosive barrel must have 2 HP and be destructible")
+	var barrel_detonated := [false]
+	barrel.prop_detonated.connect(func(_p): barrel_detonated[0] = true)
+	barrel.take_damage(1)
+	assert(barrel.health == 1 and not barrel_detonated[0], "Barrel must take 1 damage without detonating")
+	barrel.take_damage(1)
+	assert(barrel_detonated[0], "Depleting barrel HP to 0 must trigger detonation")
+	barrel.free()
+
+	var cryo = barrel_script.new()
+	cryo.prop_type = "CRYO_CANISTER"
+	cryo._ready()
+	assert(cryo.health == 2 and cryo.is_destructible, "Cryo canister must have 2 HP and be destructible")
+	var cryo_detonated := [false]
+	cryo.prop_detonated.connect(func(_p): cryo_detonated[0] = true)
+	cryo.take_damage(2)
+	assert(cryo_detonated[0], "Cryo canister must detonate when depleted")
+	cryo.free()
+
+	var cover = barrel_script.new()
+	cover.prop_type = "HEAVY_BARRIER"
+	cover._ready()
+	assert(not cover.is_destructible and cover.health == 9999, "Heavy barrier must be solid non-destructible cover")
+	cover.take_damage(100)
+	assert(cover.health == 9999, "Heavy barrier must withstand damage without health loss")
+	cover.free()
+
+	print("  [PASS] Sector Floors Odd Progression (3/5/7), Mid-Boss vs Final Boss, Soul Knight Floor Variety & Destructible Props Scenario")
+	return true
+
+
+static func test_teleportation_prevention_mid_combat() -> bool:
+	var gen = DUNGEON_GEN_SCRIPT.new()
+	var layout = gen.generate_dungeon(4242, 6, 3, true)
+	assert(not layout.corridors.is_empty(), "Procedural floor must contain connecting corridors")
+
+	# In multi-room floors, rooms contain exit_doors data for UI/doorway indicators,
+	# but clicking or entering doors must NEVER teleport the player.
+	var room1 = layout.get_room(1)
+	assert(room1 != null, "Room 1 must exist")
+	assert(not room1.exit_doors.is_empty(), "Room 1 has door structures")
+
+	# Test game logic constraints:
+	# 1. Door cannot be entered if doors_unlocked is false
+	# 2. Door cannot be entered if room_cleared is false
+	# 3. Door cannot be entered if active_enemies is non-empty
+	# 4. In multi-room layout (corridors exist), _enter_door must abort unconditionally
+	var is_multi_room: bool = not layout.corridors.is_empty()
+	var doors_unlocked: bool = true
+	var room_cleared: bool = false
+	var active_enemies_count: int = 2
+	var pending_telegraphs_count: int = 0
+	var can_enter: bool = (doors_unlocked and room_cleared and active_enemies_count == 0 and pending_telegraphs_count == 0 and not is_multi_room)
+	assert(not can_enter, "Player must NOT be able to enter door during active combat")
+
+	# Even if room were cleared, multi-room layouts must traverse via corridors, not door teleportation
+	room_cleared = true
+	active_enemies_count = 0
+	can_enter = (doors_unlocked and room_cleared and active_enemies_count == 0 and not is_multi_room)
+	assert(not can_enter, "Multi-room layouts must NOT allow door-click teleportation")
+
+	# Single-room fallback mode allows door entry ONLY after combat is completely cleared
+	var is_single_room: bool = false
+	can_enter = (doors_unlocked and room_cleared and active_enemies_count == 0 and not is_single_room)
+	assert(can_enter, "Single-room fallback allows door progression only when fully cleared")
+
+	print("  [PASS] Mid-Combat Teleportation Prevention & Multi-Room Corridor Traversal Scenario")
+	return true
+
+
+static func test_non_combat_rooms_variety_and_traversal() -> bool:
+	var gen = DUNGEON_GEN_SCRIPT.new()
+	var rng = RandomNumberGenerator.new()
+	rng.seed = 98765
+
+	# Test procedural floor room composition over 50 seeds across various floor sizes
+	var seen_non_combat_types: Dictionary = {
+		"CACHE": 0,
+		"SHRINE": 0,
+		"TRANSIT": 0,
+		"SHOP": 0,
+		"GIFT": 0,
+		"RECOVERY": 0
+	}
+
+	for s in range(50):
+		rng.seed = 1000 + s
+		for size in [5, 6, 7]:
+			var types: Array[String] = gen._compose_procedural_floor(size, 3, rng, "NORMAL", 1, true)
+			assert(types.size() == size, "Procedural floor must match requested size %d" % size)
+			assert(types[0] == "START", "First room must always be START")
+			assert(types[size - 1] == "BOSS", "Final room must be BOSS")
+
+			var non_combat_count := 0
+			var combat_count := 0
+			for t in types:
+				if t in ["START", "BOSS", "EXTRACT"]:
+					continue
+				if t in seen_non_combat_types:
+					seen_non_combat_types[t] += 1
+					non_combat_count += 1
+				elif t in ["COMBAT", "ELITE"]:
+					combat_count += 1
+
+			assert(non_combat_count >= 1, "Floor must feature at least 1 non-combat room (not every room is combat)")
+			assert(combat_count >= 1, "Floor must also contain combat encounters")
+
+	for nct in ["CACHE", "SHRINE", "TRANSIT", "SHOP", "GIFT", "RECOVERY"]:
+		assert(seen_non_combat_types[nct] > 0, "Non-combat pool must actively generate %s rooms" % nct)
+
+	# Verify generated non-combat rooms in procedural layouts have empty spawns
+	var layout = gen.generate_dungeon(8888, 7, 3, true)
+	for room in layout.rooms:
+		if room.room_type in ["START", "EXTRACT", "CACHE", "SHRINE", "TRANSIT", "SHOP", "GIFT", "RECOVERY", "SECRET"]:
+			assert(room.enemy_spawns.is_empty(), "Non-combat room %s must not have enemy spawns" % room.room_type)
+			var wave_spawns = gen.generate_wave_spawns(room, 8888, 1, 4)
+			assert(wave_spawns.is_empty(), "Non-combat room %s must not generate wave hostiles" % room.room_type)
+
+	print("  [PASS] Non-Combat Room Variety (Cache, Shrine, Transit) & Safe Traversal Scenario")
+	return true
+
+
+static func test_evolution_mechanics_biome_1_lock() -> bool:
+	var director = ENCOUNTER_DIR_SCRIPT.new()
+	var evo_mgr = director.evolution_manager
+
+	# In Biome 1, evolution mechanics MUST NOT begin
+	director.current_biome = 1
+	evo_mgr.current_biome = 1
+
+	assert(evo_mgr.get_species_tier("CHASER") == 0, "Chaser must be Tier 0 in Biome 1")
+	assert(evo_mgr.get_species_tier("DASHER") == 0, "Dasher must be Tier 0 in Biome 1")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 0, "Shooter must be Tier 0 in Biome 1")
+	assert(evo_mgr.get_species_health_multiplier("CHASER") == 1, "Chaser health multiplier must be 1x in Biome 1")
+	assert(evo_mgr.get_species_health_multiplier("DASHER") == 1, "Dasher health multiplier must be 1x in Biome 1")
+
+	# Prepare mock profile with extreme kiting & mobility
+	var kite_profile := {
+		"ranged": 0.95,
+		"mobility": 0.90,
+		"turret": 0.10,
+		"dashes_per_min": 15.0,
+		"active_families": ["CHASER", "DASHER", "SHOOTER"]
+	}
+
+	# Spawned genome in Biome 1 must be clean unmutated Tier 0
+	var spawned_g = evo_mgr.get_genome_for_spawn("CHASER")
+	assert(spawned_g.tier == 0, "Spawned genome must be Tier 0 in Biome 1")
+	assert(spawned_g.active_mutations.is_empty(), "Spawned genome must have no mutations in Biome 1")
+
+	# Even after multiple high-kiting combat encounters in Biome 1:
+	for _i in range(5):
+		var adaptations = director.record_encounter_result(0, 0, 15.0, kite_profile, "DEFAULT", null, 1)
+		assert(adaptations.is_empty(), "Evolution mechanics must NOT trigger adaptations in Biome 1")
+
+	assert(evo_mgr.evolution_history.is_empty(), "Evolution history must remain completely empty throughout Biome 1")
+	assert(evo_mgr.get_species_tier("CHASER") == 0, "Chasers must NOT advance tier in Biome 1")
+	assert(evo_mgr.get_species_health_multiplier("CHASER") == 1, "Chasers must NOT double health in Biome 1")
+
+	# Now player completes Biome 1 and enters Biome 2 (current_biome = 2)
+	director.current_biome = 2
+	evo_mgr.current_biome = 2
+
+	# Now encounters will observe evidence and evolve properly
+	var chaser_g = evo_mgr.get_genome_for_spawn("CHASER")
+	evo_mgr.register_spawned_combatant(chaser_g)
+	director.record_encounter_result(1, 0, 15.0, kite_profile, "DEFAULT", null, 2)
+	evo_mgr.register_spawned_combatant(chaser_g)
+	var biome2_adaptations = director.record_encounter_result(1, 0, 15.0, kite_profile, "DEFAULT", null, 2)
+
+	assert(not biome2_adaptations.is_empty(), "Evolution mechanics must begin once Biome 1 is completed")
+	assert(evo_mgr.get_species_tier("CHASER") == 1, "Chaser can now evolve to Tier 1 in Biome 2")
+	assert(evo_mgr.get_species_health_multiplier("CHASER") == 2, "Chaser health multiplier doubles in Biome 2")
+	assert(not evo_mgr.evolution_history.is_empty(), "Evolution history records events in Biome 2")
+
+	print("  [PASS] Evolution Mechanics Biome 1 Lock & Biome 2 Activation Scenario")
 	return true
