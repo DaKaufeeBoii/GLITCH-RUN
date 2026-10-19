@@ -2,6 +2,7 @@ extends Node
 ## Central manager for the active roguelite run: health, room progression, upgrades, and score.
 
 signal health_updated(current: int, maximum: int)
+signal bits_updated(total_bits: int)
 signal room_advanced(new_room_index: int, total_rooms: int)
 signal upgrade_applied(upgrade_id: String)
 signal run_completed(won: bool)
@@ -18,6 +19,7 @@ var current_room_index := 0
 var current_wave := 1
 var waves_in_room := 1
 var score := 0
+var bits := 0
 var run_active := false
 var run_won := false
 var is_finalized := false
@@ -110,91 +112,106 @@ const UPGRADE_CATALOG: Array[Dictionary] = [
 		"id": "OVERCLOCK",
 		"title": "OVERCLOCK",
 		"desc": "+35% Weapon Fire Rate",
-		"flavor": "Bypasses plasma heatsinks for hyper-rapid cycles."
+		"flavor": "Bypasses plasma heatsinks for hyper-rapid cycles.",
+		"rarity": "COMMON"
 	},
 	{
 		"id": "HIGH_VOLTAGE",
 		"title": "HIGH VOLTAGE",
 		"desc": "+1 Shot Damage (-10% Fire Rate)",
-		"flavor": "Supercharges plasma bolts with destructive kinetic force."
+		"flavor": "Supercharges plasma bolts with destructive kinetic force.",
+		"rarity": "UNCOMMON"
 	},
 	{
 		"id": "SPLIT_PULSE",
 		"title": "SPLIT PULSE",
 		"desc": "Twin Projectile Volley",
-		"flavor": "Calibrates dual muzzle convergence emitter."
+		"flavor": "Calibrates dual muzzle convergence emitter.",
+		"rarity": "UNCOMMON"
 	},
 	{
 		"id": "PHANTOM_DRIVE",
 		"title": "PHANTOM DRIVE",
 		"desc": "+25% Move Speed, -25% Dash CD",
-		"flavor": "Over-tunes anti-inertial field thrusters."
+		"flavor": "Over-tunes anti-inertial field thrusters.",
+		"rarity": "COMMON"
 	},
 	{
 		"id": "NANO_INFUSION",
 		"title": "NANO INFUSION",
 		"desc": "+2 Max HP & Instantly Heals 2 HP",
-		"flavor": "Deploys regenerative biocircuit patches."
+		"flavor": "Deploys regenerative biocircuit patches.",
+		"rarity": "COMMON"
 	},
 	{
 		"id": "STATIC_BLINK",
 		"title": "STATIC BLINK",
 		"desc": "Dash Zaps Enemies for 2 DMG",
-		"flavor": "Leaves a razor-sharp ionized trail during blink."
+		"flavor": "Leaves a razor-sharp ionized trail during blink.",
+		"rarity": "UNCOMMON"
 	},
 	{
 		"id": "ENERGY_SIPHON",
 		"title": "ENERGY SIPHON",
 		"desc": "25% Chance to Reclaim 1 HP on Kill",
-		"flavor": "Converts downed hostiles into usable repair cells."
+		"flavor": "Converts downed hostiles into usable repair cells.",
+		"rarity": "UNCOMMON"
 	},
 	{
 		"id": "CRYO_ROUNDS",
 		"title": "CRYO MATRIX",
 		"desc": "Shots Inflict 50% Cryo Slow for 3s",
-		"flavor": "Sub-zero endothermic emitters chill enemy movement and thrusters."
+		"flavor": "Sub-zero endothermic emitters chill enemy movement and thrusters.",
+		"rarity": "RARE"
 	},
 	{
 		"id": "ACID_PLASMA",
 		"title": "ACID CORROSION",
 		"desc": "Shots Inflict 1 DMG/sec for 3s",
-		"flavor": "Microscopic nanite swarm eats through hostile armor plating."
+		"flavor": "Microscopic nanite swarm eats through hostile armor plating.",
+		"rarity": "RARE"
 	},
 	{
 		"id": "ARC_DISCHARGE",
 		"title": "ARC DISCHARGE",
 		"desc": "Bolt Hits Shock Adjacent Hostiles for 1 DMG",
-		"flavor": "Ionizes ambient atmosphere with devastating chain lightning."
+		"flavor": "Ionizes ambient atmosphere with devastating chain lightning.",
+		"rarity": "RARE"
 	},
 	{
 		"id": "TACTICAL_RELOAD",
 		"title": "TACTICAL RELOAD",
 		"desc": "Dash Instantly Refills Full Ammo Magazine",
-		"flavor": "Kinetic recycler converts dash momentum directly into cell cartridges."
+		"flavor": "Kinetic recycler converts dash momentum directly into cell cartridges.",
+		"rarity": "UNCOMMON"
 	},
 	{
 		"id": "EXPANDED_BATTERY",
 		"title": "EXPANDED BATTERY",
 		"desc": "+8 Max Ammo Capacity & 35% Faster Reload",
-		"flavor": "Installs high-density capacitors with micro-induction coils."
+		"flavor": "Installs high-density capacitors with micro-induction coils.",
+		"rarity": "COMMON"
 	},
 	{
 		"id": "REACTIVE_PLATING",
 		"title": "REACTIVE PLATING",
 		"desc": "Taking Damage Emits Stun EMP Shockwave",
-		"flavor": "Discharges stored kinetic shock into a retaliatory concussive burst."
+		"flavor": "Discharges stored kinetic shock into a retaliatory concussive burst.",
+		"rarity": "UNCOMMON"
 	},
 	{
 		"id": "PIERCING_BEAM",
 		"title": "PIERCING BEAM",
 		"desc": "Bolts Pierce Through 1 Hostile",
-		"flavor": "Accelerates plasma cores to relativistic penetrative speeds."
+		"flavor": "Accelerates plasma cores to relativistic penetrative speeds.",
+		"rarity": "UNCOMMON"
 	},
 	{
 		"id": "OVERDRIVE_PROTOCOL",
 		"title": "OVERDRIVE PROTOCOL",
 		"desc": "+50% DMG & +25% Fire Rate when at <= 2 HP",
-		"flavor": "Emergency governor override unlocks lethal emergency output."
+		"flavor": "Emergency governor override unlocks lethal emergency output.",
+		"rarity": "RARE"
 	}
 ]
 
@@ -216,6 +233,8 @@ const UPGRADE_STACK_CAPS := {
 	"OVERDRIVE_PROTOCOL": 1
 }
 
+const UPGRADE_RARITY_CHANCES := {"COMMON": 70, "UNCOMMON": 24, "RARE": 6}
+
 
 func start_new_run(p_seed: int = 0) -> void:
 	max_health = 5
@@ -225,6 +244,8 @@ func start_new_run(p_seed: int = 0) -> void:
 	current_wave = 1
 	waves_in_room = 1
 	score = 0
+	bits = 0
+	bits_updated.emit(bits)
 	run_time = 0.0
 	run_active = true
 	run_won = false
@@ -334,7 +355,6 @@ func get_random_upgrade_choices(count: int = 3) -> Array[Dictionary]:
 			continue
 		available.append(item)
 
-	available.shuffle()
 	if available.is_empty():
 		return [{
 			"id": "FIELD_REPAIR",
@@ -342,7 +362,34 @@ func get_random_upgrade_choices(count: int = 3) -> Array[Dictionary]:
 			"desc": "+1 HP",
 			"flavor": "Restore one integrity point when every subroutine is fully stacked."
 		}]
-	return available.slice(0, mini(count, available.size()))
+	var rng := RandomNumberGenerator.new()
+	var depth: int = progression.run_depth if progression else current_room_index + 1
+	rng.seed = int((current_seed ^ (depth * 104729) ^ (active_upgrade_ids.size() * 8191)) & 0x7FFFFFFF)
+	var choices: Array[Dictionary] = []
+	while choices.size() < mini(count, available.size()):
+		var rarity_roll := rng.randi_range(1, 100)
+		var wanted_rarity := "COMMON"
+		if rarity_roll > UPGRADE_RARITY_CHANCES.COMMON + UPGRADE_RARITY_CHANCES.UNCOMMON:
+			wanted_rarity = "RARE"
+		elif rarity_roll > UPGRADE_RARITY_CHANCES.COMMON:
+			wanted_rarity = "UNCOMMON"
+		var tier_items: Array[Dictionary] = []
+		for item in available:
+			if item.get("rarity", "COMMON") == wanted_rarity:
+				tier_items.append(item)
+		if tier_items.is_empty():
+			tier_items = available.duplicate()
+		var selected: Dictionary = tier_items[rng.randi_range(0, tier_items.size() - 1)]
+		choices.append(selected)
+		available.erase(selected)
+	return choices
+
+
+func get_upgrade_rarity(upgrade_id: String) -> String:
+	for item in UPGRADE_CATALOG:
+		if item.id == upgrade_id:
+			return item.get("rarity", "COMMON")
+	return "COMMON"
 
 
 func get_upgrade_stack_count(upgrade_id: String) -> int:
@@ -405,14 +452,34 @@ func apply_upgrade(upgrade_id: String) -> bool:
 	return true
 
 
-func on_enemy_eliminated() -> bool:
+func on_enemy_eliminated(bits_reward: int = 1) -> bool:
 	score += 1
+	add_bits(bits_reward)
 	if siphon_chance > 0.0 and randf() < siphon_chance:
 		if current_health < max_health:
 			current_health = mini(max_health, current_health + 1)
 			health_updated.emit(current_health, max_health)
 			return true
 	return false
+
+
+func add_score(amount: int) -> void:
+	score = maxi(0, score + amount)
+
+
+func add_bits(amount: int) -> void:
+	if amount <= 0:
+		return
+	bits += amount
+	bits_updated.emit(bits)
+
+
+func spend_bits(amount: int) -> bool:
+	if amount < 0 or bits < amount:
+		return false
+	bits -= amount
+	bits_updated.emit(bits)
+	return true
 
 
 func heal(amount: int) -> void:

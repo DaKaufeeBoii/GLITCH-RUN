@@ -4,6 +4,7 @@ extends CharacterBody2D
 
 signal defeated
 signal health_changed(curr: int, max_h: int)
+signal phase_two_entered
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/enemy_projectile.tscn")
 
@@ -20,6 +21,7 @@ var sweep_rotation_speed := 1.2
 var sweep_duration := 2.2
 var damage_flash := 0.0
 var phase_two_triggered := false
+var is_phase_two := false
 var laser_hit_player := false
 var laser_hit_cooldown := 0.0
 
@@ -88,8 +90,10 @@ func _physics_process(delta: float) -> void:
 					if pick == 0:
 						current_phase = AttackPhase.CHARGING_SWEEP
 						phase_timer = 0.9
-						if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
-							get_node("/root/AudioSynth").play("enemy_laser_charge", 0.05, -2.0)
+						if is_inside_tree():
+							var synth = get_node_or_null("/root/AudioSynth")
+							if synth:
+								synth.play("enemy_laser_charge", 0.05, -2.0)
 					else:
 						current_phase = AttackPhase.CHARGING_SALVO
 						phase_timer = 0.75
@@ -170,25 +174,44 @@ func _execute_salvo() -> void:
 		get_parent().add_child(proj)
 
 
-func take_damage(amount: int) -> void:
+func enter_phase_two() -> void:
+	is_phase_two = true
+	health = max_health
+	damage_flash = 0.35
+	sweep_rotation_speed *= 1.35
+	phase_timer = 0.40
+	current_phase = AttackPhase.IDLE
+
+	if is_inside_tree():
+		var synth = get_node_or_null("/root/AudioSynth")
+		if synth:
+			synth.play("mutation_alert", 0.15, 2.0)
+			synth.play("boss_alarm", 0.10, 3.0)
+
+	health_changed.emit(health, max_health)
+	phase_two_entered.emit()
+	queue_redraw()
+
+
+func take_damage(amount: int, _source: String = "plasma") -> void:
 	if defeated_already:
 		return
 	health = maxi(0, health - amount)
 	damage_flash = 0.12
 
-	if not phase_two_triggered and health <= int(max_health * 0.5):
-		phase_two_triggered = true
-		sweep_rotation_speed *= 1.2
-		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
-			get_node("/root/AudioSynth").play("mutation_alert", 0.08, 0.0)
-
-	health_changed.emit(health, max_health)
 	if health == 0:
-		defeated_already = true
-		if squad_coordinator:
-			squad_coordinator.release_attack_token(self)
-		defeated.emit()
-		queue_free()
+		if not is_phase_two:
+			enter_phase_two()
+			return
+		else:
+			defeated_already = true
+			if squad_coordinator:
+				squad_coordinator.release_attack_token(self)
+			defeated.emit()
+			queue_free()
+	else:
+		health_changed.emit(health, max_health)
+		queue_redraw()
 
 
 func _draw() -> void:

@@ -4,6 +4,7 @@ extends CharacterBody2D
 
 signal defeated
 signal health_changed(curr: int, max_h: int)
+signal phase_two_entered
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/enemy_projectile.tscn")
 
@@ -19,6 +20,7 @@ var warp_timer := 0.0
 var target_warp_pos := Vector2.ZERO
 var damage_flash := 0.0
 var phase_two_triggered := false
+var is_phase_two := false
 
 # Grid partition line parameters
 var grid_h_y: float = -1.0 # Horizontal partition line Y coordinate
@@ -168,8 +170,10 @@ func _prepare_grid() -> void:
 	else:
 		grid_h_y = 276.0
 		grid_v_x = 480.0
-	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
-		get_node("/root/AudioSynth").play("enemy_laser_charge", 0.06, -3.0)
+	if is_inside_tree():
+		var synth = get_node_or_null("/root/AudioSynth")
+		if synth:
+			synth.play("enemy_laser_charge", 0.06, -3.0)
 
 
 func _fire_spiral_darts() -> void:
@@ -185,24 +189,43 @@ func _fire_spiral_darts() -> void:
 		get_parent().add_child(proj)
 
 
-func take_damage(amount: int) -> void:
+func enter_phase_two() -> void:
+	is_phase_two = true
+	health = max_health
+	damage_flash = 0.35
+	phase_timer = 0.40
+	current_phase = AttackPhase.IDLE
+
+	if is_inside_tree():
+		var synth = get_node_or_null("/root/AudioSynth")
+		if synth:
+			synth.play("mutation_alert", 0.15, 2.0)
+			synth.play("boss_alarm", 0.10, 3.0)
+
+	health_changed.emit(health, max_health)
+	phase_two_entered.emit()
+	queue_redraw()
+
+
+func take_damage(amount: int, _source: String = "plasma") -> void:
 	if defeated_already:
 		return
 	health = maxi(0, health - amount)
 	damage_flash = 0.12
 
-	if not phase_two_triggered and health <= int(max_health * 0.5):
-		phase_two_triggered = true
-		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
-			get_node("/root/AudioSynth").play("mutation_alert", 0.08, 0.0)
-
-	health_changed.emit(health, max_health)
 	if health == 0:
-		defeated_already = true
-		if squad_coordinator:
-			squad_coordinator.release_attack_token(self)
-		defeated.emit()
-		queue_free()
+		if not is_phase_two:
+			enter_phase_two()
+			return
+		else:
+			defeated_already = true
+			if squad_coordinator:
+				squad_coordinator.release_attack_token(self)
+			defeated.emit()
+			queue_free()
+	else:
+		health_changed.emit(health, max_health)
+		queue_redraw()
 
 
 func _draw() -> void:

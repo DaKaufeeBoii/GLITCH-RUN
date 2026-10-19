@@ -8,10 +8,12 @@ signal restart_requested
 signal menu_requested
 signal quit_requested
 
+const SECTOR_MAP_SCRIPT := preload("res://scripts/sector_map.gd")
+
 var title_label: Label
 var stats_label: Label
 var minimap_box: PanelContainer
-var minimap_nodes_hbox: HBoxContainer
+var minimap_nodes_hbox: Control
 var minimap_branch_label: Label
 var upgrades_vbox: VBoxContainer
 
@@ -112,13 +114,13 @@ func _build_ui() -> void:
 	map_hdr.add_theme_color_override("font_color", Color("38bdf8"))
 	map_vbox.add_child(map_hdr)
 
-	minimap_nodes_hbox = HBoxContainer.new()
-	minimap_nodes_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	minimap_nodes_hbox.add_theme_constant_override("separation", 6)
+	minimap_nodes_hbox = Control.new()
+	minimap_nodes_hbox.set_script(SECTOR_MAP_SCRIPT)
+	minimap_nodes_hbox.custom_minimum_size = Vector2(480, 140)
 	map_vbox.add_child(minimap_nodes_hbox)
 
 	minimap_branch_label = Label.new()
-	minimap_branch_label.text = "S: Start  •  ⚔: Combat  •  $: Shop  •  G: Gift Cache  •  +: Recovery  •  ★: Elite  •  Ω: Boss"
+	minimap_branch_label.text = "Start [o]  •  Combat [•]  •  Recovery [+]  •  Shop [🛒]  •  Tech Cache [◆]  •  Overlord [Ω]"
 	minimap_branch_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	minimap_branch_label.add_theme_font_size_override("font_size", 10)
 	minimap_branch_label.add_theme_color_override("font_color", Color("64748b"))
@@ -236,101 +238,21 @@ func open_pause() -> void:
 	if rs:
 		var mins := int(rs.run_time / 60.0)
 		var secs := int(rs.run_time) % 60
-		stats_label.text = "SEC %d • ROOM %d/%d  •  ELIMS: %d  •  TIME: %02d:%02d" % [
+		var total_rooms: int = rs.progression.rooms_per_sector if rs.progression else rs.TOTAL_ROOMS
+		stats_label.text = "SEC %d • ROOM %d/%d • ELIMS: %d • BITS: %d • TIME: %02d:%02d" % [
 			rs.current_sector,
 			rs.current_room_index + 1,
-			rs.TOTAL_ROOMS,
+			total_rooms,
 			rs.score,
+			rs.bits,
 			mins,
 			secs
 		]
 
-		# Rebuild Sector Mini-Map
-		for child in minimap_nodes_hbox.get_children():
-			child.queue_free()
-
-		var total_rooms: int = rs.progression.rooms_per_sector if (rs and rs.progression) else rs.TOTAL_ROOMS
+		# Rebuild the generated route graph, including optional-room bypass links.
+		total_rooms = rs.progression.rooms_per_sector if (rs and rs.progression) else rs.TOTAL_ROOMS
 		var cur_room: int = rs.current_room_index
-
-		for i in range(total_rooms):
-			var r_type: String = "COMBAT"
-			if i == 0:
-				r_type = "START"
-			elif i == total_rooms - 1:
-				r_type = "BOSS"
-			elif i < rs.dungeon_layout_summary.size():
-				r_type = rs.dungeon_layout_summary[i].get("room_type", "COMBAT")
-			elif i == 2:
-				r_type = "RECOVERY"
-			elif i == 3:
-				r_type = "ELITE"
-
-			var icon := "⚔"
-			var accent_col := Color("38bdf8")
-			match r_type:
-				"START":
-					icon = "S"
-					accent_col = Color("94a3b8")
-				"SHOP":
-					icon = "$"
-					accent_col = Color("facc15")
-				"GIFT":
-					icon = "G"
-					accent_col = Color("c084fc")
-				"RECOVERY":
-					icon = "+"
-					accent_col = Color("22c55e")
-				"ELITE":
-					icon = "★"
-					accent_col = Color("f59e0b")
-				"BOSS":
-					icon = "Ω"
-					accent_col = Color("ec4899")
-				_:
-					icon = "⚔"
-					accent_col = Color("38bdf8")
-
-			var node_box := PanelContainer.new()
-			var n_style := StyleBoxFlat.new()
-			if i < cur_room:
-				n_style.bg_color = Color(0.08, 0.16, 0.08, 0.9)
-				n_style.border_color = Color("22c55e")
-			elif i == cur_room:
-				n_style.bg_color = Color(0.12, 0.22, 0.35, 0.95)
-				n_style.border_color = Color("38bdf8")
-			else:
-				n_style.bg_color = Color(0.04, 0.06, 0.10, 0.8)
-				n_style.border_color = Color("334155")
-
-			n_style.set_border_width_all(1)
-			n_style.set_corner_radius_all(4)
-			n_style.content_margin_left = 6
-			n_style.content_margin_top = 4
-			n_style.content_margin_right = 6
-			n_style.content_margin_bottom = 4
-			node_box.add_theme_stylebox_override("panel", n_style)
-
-			var n_lbl := Label.new()
-			if i < cur_room:
-				n_lbl.text = "%s ✓" % icon
-				n_lbl.add_theme_color_override("font_color", Color("4ade80"))
-			elif i == cur_room:
-				n_lbl.text = "▶ %s" % icon
-				n_lbl.add_theme_color_override("font_color", Color("38bdf8"))
-			else:
-				n_lbl.text = icon
-				n_lbl.add_theme_color_override("font_color", accent_col)
-
-			n_lbl.add_theme_font_size_override("font_size", 11)
-			node_box.add_child(n_lbl)
-			minimap_nodes_hbox.add_child(node_box)
-
-			if i < total_rooms - 1:
-				var arrow := Label.new()
-				arrow.text = "➔"
-				arrow.add_theme_font_size_override("font_size", 10)
-				arrow.add_theme_color_override("font_color", Color("475569"))
-				minimap_nodes_hbox.add_child(arrow)
+		minimap_nodes_hbox.call("configure_map", rs.dungeon_layout_summary, cur_room, total_rooms)
 
 		# Clear previous items
 		for i in range(1, upgrades_vbox.get_child_count()):

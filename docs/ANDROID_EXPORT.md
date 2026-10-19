@@ -10,7 +10,9 @@ This document details the configuration, SDK prerequisites, and export workflows
 - **Application Name:** `GLITCH//RUN`
 - **Target Platform:** Android (Sensor Landscape)
 - **Minimum SDK:** API Level 24 (Android 7.0 Nougat) — covers >97% of active Android devices
-- **Target SDK:** API Level 34 (Android 14)
+- **Target SDK:** API Level 36 (Android 16) — complies with Google Play requirements (API 36+ as of August 31, 2026)
+- **Version Code:** `2` (monotonically incrementing per upload)
+- **Version Name:** `1.1.0`
 - **Architectures:** `arm64-v8a` (Primary), `armeabi-v7a` (32-bit fallback)
 - **Engine Version:** Godot 4.7.2-stable (GL Compatibility renderer)
 - **Export Formats:**
@@ -38,9 +40,9 @@ This document details the configuration, SDK prerequisites, and export workflows
 To export on Android from Godot:
 1. **Java Development Kit:** OpenJDK 17 or Eclipse Temurin 17.
 2. **Android SDK:**
-   - Platform Tools (v34+)
-   - Build Tools (v34.0.0)
-   - Android SDK Platform 34
+   - Platform Tools (v36+)
+   - Build Tools (v36.0.0 or compatible)
+   - Android SDK Platform 36 (Android 16)
 3. **Godot Editor Settings Configuration:**
    - `export/android/java_sdk_path` -> Path to JDK 17 (e.g. `C:/Program Files/Eclipse Adoptium/jdk-17...`)
    - `export/android/android_sdk_path` -> Path to Android SDK (e.g. `C:/Users/<User>/AppData/Local/Android/Sdk`)
@@ -107,3 +109,22 @@ When validating release candidates on physical hardware, test against:
    - **Back Button Navigation:** Modal dismiss -> Pause menu -> Main menu confirmation.
    - **Save Migration & Corruption Recovery:** Malformed or truncated save files in `user://` gracefully reset to defaults with 0 crash reports.
    - **Thermal & Frame Rate:** 60 FPS sustained with bounded active particles and zero memory leaks over a 20-minute multi-sector run.
+
+---
+
+## 7. Google Play Store Closed Testing & Release Checklist
+
+For developer accounts created after November 2023, Google Play requires testing compliance before granting production access:
+
+### Closed Testing Prerequisites:
+1. **Tester Requirement:** At least **12 opted-in testers** must remain actively opted into your closed test.
+2. **Duration:** The closed test track must run continuously for at least **14 days**.
+3. **Engagement:** Testers should open and play the build across the testing period; collect feedback via Google Play Console feedback channel.
+
+### Play Console Submission Checklist:
+- [ ] **Target API 36:** `export_presets.cfg` configured with `gradle_build/target_sdk="36"`.
+- [ ] **Incremented Version Code:** `package/version_code` strictly greater than previous release (current: `2`).
+- [ ] **Signed Release App Bundle (`.aab`):** Signed with production release keystore via Play App Signing.
+- [ ] **Store Listing Copy:** Accurate descriptions and screenshots without misleading learning claims until verified.
+- [ ] **Privacy Policy:** Link to offline-first privacy declaration ([docs/PRIVACY.md](PRIVACY.md)).
+- [ ] **Data Safety Form:** Disclose that zero data is collected, zero network traffic is transmitted, and all saves reside on internal device storage.

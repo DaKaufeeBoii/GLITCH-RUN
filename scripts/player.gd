@@ -302,7 +302,7 @@ func _trigger_emp_shockwave() -> void:
 				if enemy.has_method("apply_debuff"):
 					enemy.apply_debuff("SHOCK", 1.0)
 				if enemy.has_method("take_damage"):
-					enemy.take_damage(1, "hazard")
+					enemy.take_damage(1)
 
 
 func _fire() -> void:

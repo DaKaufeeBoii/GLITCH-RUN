@@ -20,6 +20,7 @@ var target: Node2D
 var contact_cooldown := 0.0
 var defeated_already := false
 var damage_flash := 0.0
+var evolution_tier: int = 0
 
 # Ranged attack state (Tier 2 learned evolution)
 const TELEGRAPH_TIME := 0.65
@@ -133,21 +134,21 @@ func _physics_process(delta: float) -> void:
 	if dist > 36.0:
 		# Intelligent pathfinding around obstacles with topological A* fallback
 		var approach_dir := Vector2.ZERO
-		var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
-
-		if not los_blocked:
-			# Unobstructed line of sight: direct pursuit / flanking
-			approach_dir = to_target.normalized()
-			if (is_flanker or absf(flank_angle) > 0.01) and dist > 85.0:
-				approach_dir = to_target.rotated(flank_angle).normalized()
-			if not obstacle_rects.is_empty():
-				approach_dir = EnemySteering.avoid_obstacles(global_position, approach_dir, obstacle_rects, 40.0)
+		if nav_grid != null:
+			approach_dir = nav_grid.get_nav_direction(global_position, target.global_position)
+			var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
+			if not los_blocked and (is_flanker or absf(flank_angle) > 0.01) and dist > 85.0:
+				approach_dir = approach_dir.rotated(flank_angle).normalized()
 		else:
-			# Line of sight blocked by obstacle: use topological navigation grid
-			if nav_grid != null:
-				approach_dir = nav_grid.get_nav_direction(global_position, target.global_position)
+			var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
+			if not los_blocked:
+				approach_dir = to_target.normalized()
+				if (is_flanker or absf(flank_angle) > 0.01) and dist > 85.0:
+					approach_dir = to_target.rotated(flank_angle).normalized()
+				if not obstacle_rects.is_empty():
+					approach_dir = EnemySteering.avoid_obstacles(global_position, approach_dir, obstacle_rects, 45.0)
 			else:
-				approach_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 40.0)
+				approach_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 45.0)
 
 		# Swarm neighbor separation using shared SpatialIndex
 		var separation := Vector2.ZERO
@@ -174,6 +175,13 @@ func _physics_process(delta: float) -> void:
 	rotation = to_target.angle()
 	if is_inside_tree():
 		move_and_slide()
+		var col_count := get_slide_collision_count()
+		for i in range(col_count):
+			var col := get_slide_collision(i)
+			if col:
+				var n := col.get_normal()
+				if velocity.dot(n) < 0.0:
+					velocity = velocity.slide(n)
 	queue_redraw()
 
 
@@ -258,8 +266,8 @@ func _draw() -> void:
 	draw_circle(Vector2(3, 0), 2.5, Color("ffffff"))
 
 	# Health bar & Evolution Tier indicator
-	if max_health > 3:
-		var tier_pips := 1 if max_health <= 6 else 2
+	if evolution_tier > 0 or max_health > 3:
+		var tier_pips := evolution_tier if evolution_tier > 0 else (1 if max_health <= 6 else 2)
 		for p in range(tier_pips):
 			draw_circle(Vector2(-4.0 + float(p) * 8.0, -27), 2.2, Color("38bdf8"))
 		draw_rect(Rect2(-16, -22, 32, 4), Color("181a26"))

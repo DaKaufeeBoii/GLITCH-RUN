@@ -21,6 +21,7 @@ var telegraph_time := 0.0
 const TELEGRAPH_DURATION := 0.65
 var aimed_direction := Vector2.RIGHT
 var damage_flash := 0.0
+var evolution_tier: int = 0
 var recovery_time := 0.0
 
 # Tier 3 Charged Beam Attack
@@ -128,10 +129,11 @@ func _physics_process(delta: float) -> void:
 		var predicted_dir: Vector2 = (aim_pos - global_position).normalized()
 		aimed_direction = predicted_dir
 
+		var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
+
 		fire_timer -= delta
 		if fire_timer <= 0.0 and dist < 450.0:
 			# Check line of sight: do not shoot through blocking obstacle pillars
-			var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects)
 			var cur_time: float = Time.get_ticks_msec() / 1000.0
 			var token_granted: bool = (squad_coordinator == null or squad_coordinator.request_attack_token(self, cur_time))
 
@@ -147,7 +149,6 @@ func _physics_process(delta: float) -> void:
 				fire_timer = 0.4
 
 		# Kiting movement: maintain ideal distance & avoid obstacles
-		var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
 		var move_dir := Vector2.ZERO
 
 		if not los_blocked:
@@ -158,19 +159,26 @@ func _physics_process(delta: float) -> void:
 
 			move_dir = (kite_vel.normalized() + separation * 0.4).normalized()
 			if not obstacle_rects.is_empty():
-				move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 35.0)
+				move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 45.0)
 		else:
-			# If obstructed by obstacles, maneuver around obstacle to regain firing line
+			# If obstructed by obstacles, maneuver around obstacle using nav_grid to regain firing line
 			if nav_grid != null:
 				move_dir = nav_grid.get_nav_direction(global_position, target.global_position)
 			else:
-				move_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 35.0)
+				move_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 45.0)
 
 		var eff_speed: float = move_speed * (0.50 if debuff_slow_timer > 0.0 else 1.0)
 		velocity = move_dir * eff_speed
 
 	if is_inside_tree():
 		move_and_slide()
+		var col_count := get_slide_collision_count()
+		for i in range(col_count):
+			var col := get_slide_collision(i)
+			if col:
+				var n := col.get_normal()
+				if velocity.dot(n) < 0.0:
+					velocity = velocity.slide(n)
 	queue_redraw()
 
 
@@ -302,12 +310,8 @@ func _draw() -> void:
 		draw_line(Vector2(-12, 13), Vector2(6, 15), Color("38bdf8"), 2.0)
 
 	# Health bar & Evolution Tier indicator
-	if max_health > 3:
-		var tier_pips := 1
-		if max_health >= 12:
-			tier_pips = 3
-		elif max_health >= 6:
-			tier_pips = 2
+	if evolution_tier > 0 or max_health > 3:
+		var tier_pips := evolution_tier if evolution_tier > 0 else (3 if max_health >= 12 else (2 if max_health >= 6 else 1))
 		for p in range(tier_pips):
 			draw_circle(Vector2(-6.0 + float(p) * 6.0, -27), 2.0, Color("38bdf8"))
 		draw_rect(Rect2(-16, -22, 32, 4), Color("181a26"))

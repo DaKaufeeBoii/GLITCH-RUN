@@ -73,26 +73,8 @@ func _init(p_family: String = "CHASER", p_generation: int = 1) -> void:
 
 
 func get_max_health() -> int:
-	if family == "SHOOTER":
-		if tier == 0:
-			return 3
-		elif tier == 1:
-			return 3
-		elif tier == 2:
-			return 6
-		else:
-			return 12
-	elif family == "DASHER":
-		if tier == 0:
-			return 2
-		elif tier == 1:
-			return 2
-		elif tier == 2:
-			return 2
-		else:
-			return 6
-	elif family == "CHASER":
-		return base_max_health * int(pow(2, mini(tier, 2)))
+	## Each confirmed major species evolution doubles that species' maximum health.
+	## Invariant: max_health = base_health * 2^tier
 	return base_max_health * int(pow(2, tier))
 
 
@@ -275,9 +257,18 @@ func apply_to_enemy(enemy_node: Node2D) -> void:
 
 	# Apply tier health calculation
 	var calc_hp: int = get_max_health()
+	var rs = enemy_node.get_node_or_null("/root/RunState") if enemy_node.is_inside_tree() else null
+	var diff: String = rs.difficulty if (rs and "difficulty" in rs) else "NORMAL"
+	if diff == "HARD":
+		calc_hp += 1
+	elif diff == "HYPERGRID":
+		calc_hp += 2
+
 	if "max_health" in enemy_node:
 		enemy_node.max_health = calc_hp
 		enemy_node.health = calc_hp
+	if "evolution_tier" in enemy_node:
+		enemy_node.evolution_tier = tier
 
 	# 1. Chaser behavioral application
 	if family == "CHASER":

@@ -4,6 +4,7 @@ extends CharacterBody2D
 
 signal defeated
 signal health_changed(curr: int, max_h: int)
+signal phase_two_entered
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/enemy_projectile.tscn")
 
@@ -20,6 +21,7 @@ var dash_target_dir := Vector2.ZERO
 var dash_hit_player := false
 var damage_flash := 0.0
 var phase_two_triggered := false
+var is_phase_two := false
 
 var squad_coordinator: RefCounted = null
 var active_mutations: Array[Dictionary] = []
@@ -72,7 +74,7 @@ func apply_mutations(mutations: Array[Dictionary]) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	orbital_angle += delta * 2.2
+	orbital_angle += delta * (3.6 if is_phase_two else 2.2)
 	phase_timer -= delta
 	damage_flash = maxf(0.0, damage_flash - delta)
 
@@ -103,21 +105,29 @@ func _physics_process(delta: float) -> void:
 		AttackPhase.IDLE:
 			if dist > 140.0:
 				var approach_dir := Vector2.ZERO
-				var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
-				if not los_blocked:
-					approach_dir = to_target.normalized()
-					if not obstacle_rects.is_empty():
-						approach_dir = EnemySteering.avoid_obstacles(global_position, approach_dir, obstacle_rects, 50.0)
+				if nav_grid != null:
+					approach_dir = nav_grid.get_nav_direction(global_position, target.global_position)
 				else:
-					if nav_grid != null:
-						approach_dir = nav_grid.get_nav_direction(global_position, target.global_position)
+					var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
+					if not los_blocked:
+						approach_dir = to_target.normalized()
+						if not obstacle_rects.is_empty():
+							approach_dir = EnemySteering.avoid_obstacles(global_position, approach_dir, obstacle_rects, 50.0)
 					else:
 						approach_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 50.0)
-				velocity = approach_dir * 55.0
+				var eff_speed := 75.0 if is_phase_two else 55.0
+				velocity = approach_dir * eff_speed
 			else:
 				velocity = Vector2.ZERO
 			if is_inside_tree():
 				move_and_slide()
+				var col_count := get_slide_collision_count()
+				for i in range(col_count):
+					var col := get_slide_collision(i)
+					if col:
+						var n := col.get_normal()
+						if velocity.dot(n) < 0.0:
+							velocity = velocity.slide(n)
 
 			if phase_timer <= 0.0:
 				var cur_time: float = Time.get_ticks_msec() / 1000.0
@@ -126,26 +136,26 @@ func _physics_process(delta: float) -> void:
 					var pick := randi() % 2
 					if pick == 0:
 						current_phase = AttackPhase.CHARGING_BURST
-						phase_timer = 0.85
+						phase_timer = 0.50 if is_phase_two else 0.85
 					else:
 						current_phase = AttackPhase.CHARGING_DASH
-						phase_timer = 0.75
+						phase_timer = 0.45 if is_phase_two else 0.75
 						dash_target_dir = to_target.normalized()
 						dash_hit_player = false
 				else:
-					phase_timer = 0.35 # Stagger retry
+					phase_timer = 0.25 if is_phase_two else 0.35
 
 		AttackPhase.CHARGING_BURST:
 			velocity = Vector2.ZERO
 			if phase_timer <= 0.0:
 				_execute_burst()
 				current_phase = AttackPhase.RECOVER
-				phase_timer = post_burst_recovery
+				phase_timer = post_burst_recovery * (0.65 if is_phase_two else 1.0)
 
 		AttackPhase.CHARGING_DASH:
 			velocity = Vector2.ZERO
-			# Lock telegraph direction during the final 0.35s to guarantee readable dodge window
-			if phase_timer > 0.35:
+			var lock_threshold: float = 0.20 if is_phase_two else 0.35
+			if phase_timer > lock_threshold:
 				dash_target_dir = to_target.normalized()
 			if phase_timer <= 0.0:
 				current_phase = AttackPhase.DASHING
@@ -153,7 +163,7 @@ func _physics_process(delta: float) -> void:
 				dash_hit_player = false
 
 		AttackPhase.DASHING:
-			velocity = dash_target_dir * dash_speed
+			velocity = dash_target_dir * (dash_speed * (1.25 if is_phase_two else 1.0))
 			if is_inside_tree():
 				move_and_slide()
 			if not dash_hit_player and to_target.length() < 46.0 and target.has_method("take_damage"):
@@ -161,7 +171,7 @@ func _physics_process(delta: float) -> void:
 				dash_hit_player = true
 			if phase_timer <= 0.0:
 				current_phase = AttackPhase.RECOVER
-				phase_timer = 0.9
+				phase_timer = 0.55 if is_phase_two else 0.90
 
 		AttackPhase.RECOVER:
 			velocity = Vector2.ZERO
@@ -169,13 +179,13 @@ func _physics_process(delta: float) -> void:
 				squad_coordinator.release_attack_token(self)
 			if phase_timer <= 0.0:
 				current_phase = AttackPhase.IDLE
-				phase_timer = randf_range(1.4, 2.2)
+				phase_timer = randf_range(0.7, 1.2) if is_phase_two else randf_range(1.4, 2.2)
 
 	queue_redraw()
 
 
 func _execute_burst() -> void:
-	var count := burst_projectile_count
+	var count := burst_projectile_count + (4 if is_phase_two else 0)
 	var angle_step := TAU / float(count)
 	var base_angle := orbital_angle
 	for i in range(count):
@@ -184,8 +194,28 @@ func _execute_burst() -> void:
 		var proj = PROJECTILE_SCENE.instantiate()
 		proj.global_position = global_position + dir * 38.0
 		proj.direction = dir
-		proj.speed = 310.0
+		proj.speed = 350.0 if is_phase_two else 310.0
 		get_parent().add_child(proj)
+
+
+func enter_phase_two() -> void:
+	is_phase_two = true
+	health = max_health
+	damage_flash = 0.35
+	dash_speed *= 1.30
+	post_burst_recovery = maxf(0.40, post_burst_recovery * 0.60)
+	phase_timer = 0.40
+	current_phase = AttackPhase.IDLE
+
+	if is_inside_tree():
+		var synth = get_node_or_null("/root/AudioSynth")
+		if synth:
+			synth.play("mutation_alert", 0.15, 2.0)
+			synth.play("boss_alarm", 0.10, 3.0)
+
+	health_changed.emit(health, max_health)
+	phase_two_entered.emit()
+	queue_redraw()
 
 
 func take_damage(amount: int, _source: String = "plasma") -> void:
@@ -194,20 +224,18 @@ func take_damage(amount: int, _source: String = "plasma") -> void:
 	health = maxi(0, health - amount)
 	damage_flash = 0.12
 
-	# Phase 2 cue when boss health drops below 50%
-	if not phase_two_triggered and health <= int(max_health * 0.5):
-		phase_two_triggered = true
-		if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
-			get_node("/root/AudioSynth").play("mutation_alert", 0.08, 0.0)
-
-	health_changed.emit(health, max_health)
 	if health == 0:
-		defeated_already = true
-		if squad_coordinator:
-			squad_coordinator.release_attack_token(self)
-		defeated.emit()
-		queue_free()
+		if not is_phase_two:
+			enter_phase_two()
+			return
+		else:
+			defeated_already = true
+			if squad_coordinator:
+				squad_coordinator.release_attack_token(self)
+			defeated.emit()
+			queue_free()
 	else:
+		health_changed.emit(health, max_health)
 		queue_redraw()
 
 

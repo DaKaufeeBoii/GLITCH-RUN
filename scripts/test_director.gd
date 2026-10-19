@@ -86,9 +86,14 @@ static func run_all_tests() -> bool:
 	all_passed = test_navigation_grid_topological_pathfinding() and all_passed
 	all_passed = test_behavior_driven_learning_and_evidence_switch() and all_passed
 	all_passed = test_glitch_fx_and_low_health_vignette() and all_passed
+	all_passed = test_gift_rooms_reachable_across_layout_sizes() and all_passed
+	all_passed = test_wave_roster_diversity_and_history() and all_passed
+	all_passed = test_strict_health_doubling_invariant_all_species() and all_passed
+	all_passed = test_door_controlled_upgrades_and_all_rooms_spawn_enemies() and all_passed
+	all_passed = test_obstacle_avoidance_and_multi_phase_boss_progression() and all_passed
 
 	if all_passed:
-		print("--- ALL 48 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 53 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -518,12 +523,13 @@ static func test_procedural_dungeon_100_seeds() -> bool:
 			assert(room.is_validated, "Seed %d Room %d failed reachability validation!" % [s, room.index])
 			assert(room.bounds.has_point(room.player_spawn), "Player spawn outside bounds in seed %d" % s)
 			assert(room.bounds.has_point(room.exit_door), "Exit door outside bounds in seed %d" % s)
-			assert(room.enemy_spawns.size() >= 1, "Room must have at least 1 enemy spawn in seed %d" % s)
-
-			# Ensure minimum distance between player spawn and all enemy spawns
-			for espawn in room.enemy_spawns:
-				var dist: float = room.player_spawn.distance_to(espawn.pos)
-				assert(dist >= 195.0, "Player to enemy distance too close (%.1fpx) in seed %d room %d" % [dist, s, room.index])
+			if room.room_type != "START":
+				assert(room.enemy_spawns.size() >= 1, "Combat room must have at least 1 enemy spawn in seed %d" % s)
+				for espawn in room.enemy_spawns:
+					var dist: float = room.player_spawn.distance_to(espawn.pos)
+					assert(dist >= 195.0, "Player to enemy distance too close (%.1fpx) in seed %d room %d" % [dist, s, room.index])
+			else:
+				assert(room.enemy_spawns.is_empty(), "START room 0 staging dock must have no enemy spawns in seed %d" % s)
 
 	# Test Deterministic Reproducibility
 	# The exact same seed must produce the exact same obstacles and spawns
@@ -1281,7 +1287,7 @@ static func test_android_configuration_and_touch_targets() -> bool:
 	assert("permissions/internet=false" in content, "Internet permission must be explicitly false for offline safety")
 	assert("screen/orientation=1" in content, "Landscape orientation must be enforced in export preset")
 	assert("gradle_build/min_sdk=\"24\"" in content, "Min SDK must be 24 (Android 7.0)")
-	assert("gradle_build/target_sdk=\"34\"" in content, "Target SDK must be 34 (Android 14)")
+	assert("gradle_build/target_sdk=\"36\"" in content, "Target SDK must be 36 (Android 16)")
 
 	# Verify mobile virtual controls sizing exceeds 48dp
 	var ctrl = MOBILE_CONTROLS_SCRIPT.new()
@@ -1443,72 +1449,88 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 	assert(chaser_node.move_speed > 120.0, "Chaser Tier 2 must have Tier 1 speed buff preserved")
 	chaser_node.free()
 
-	# Now Dasher battles (Tier 1: Speed + Mines, Tier 2: Hyper Speed, Tier 3: Armor)
+	# Now Dasher battles with observed dash evasion evidence (Tier 1: Speed + Mines, Tier 2: Hyper Speed, Tier 3: Armor)
 	var dasher_g = evo_mgr.get_genome_for_spawn("DASHER")
+	var evade_profile := {
+		"mobility": 0.80,
+		"dashes_per_min": 6.0,
+		"ranged": 0.30,
+		"aggression": 0.30
+	}
 	for _i in range(2):
 		evo_mgr.register_spawned_combatant(dasher_g)
-		evo_mgr.process_encounter_end(1, 0, 10.0, {}, "DEFAULT")
-	assert(evo_mgr.get_species_tier("DASHER") == 1, "Dasher evolves to Tier 1 after 2 battles")
+		evo_mgr.process_encounter_end(1, 0, 10.0, evade_profile, "DEFAULT")
+	assert(evo_mgr.get_species_tier("DASHER") == 1, "Dasher evolves to Tier 1 after observed dash evasion")
+	assert(evo_mgr.get_species_health_multiplier("DASHER") == 2, "Dasher Tier 1 must have 2x health multiplier")
 	var dasher_node1 = DASHER_SCENE.instantiate()
 	dasher_g.apply_to_enemy(dasher_node1)
 	assert(dasher_node1.has_hazard_trail, "Dasher Tier 1 must drop hazard mines")
 	assert(dasher_node1.lunge_speed >= 650.0, "Dasher Tier 1 speed boosted to 650.0")
+	assert(dasher_node1.max_health == 4, "Dasher Tier 1 max health must be 4 (2x base 2)")
 	dasher_node1.free()
 
-	# Dasher Tier 2: 4 battles total
+	# Dasher Tier 2: Continued dash evasion (4 battles total)
 	for _i in range(2):
 		evo_mgr.register_spawned_combatant(dasher_g)
-		evo_mgr.process_encounter_end(1, 0, 10.0, {}, "DEFAULT")
-	assert(evo_mgr.get_species_tier("DASHER") == 2, "Dasher evolves to Tier 2 after 4 battles")
+		evo_mgr.process_encounter_end(1, 0, 10.0, evade_profile, "DEFAULT")
+	assert(evo_mgr.get_species_tier("DASHER") == 2, "Dasher evolves to Tier 2 after continued dash evasion")
+	assert(evo_mgr.get_species_health_multiplier("DASHER") == 4, "Dasher Tier 2 must have 4x health multiplier")
 	var dasher_node2 = DASHER_SCENE.instantiate()
 	dasher_g.apply_to_enemy(dasher_node2)
 	assert(dasher_node2.lunge_speed >= 800.0, "Dasher Tier 2 hyper speed >= 800 px/s")
+	assert(dasher_node2.max_health == 8, "Dasher Tier 2 max health must be 8 (4x base 2)")
 	dasher_node2.free()
 
-	# Dasher Tier 3: 6 battles total (Armor buff)
+	# Dasher Tier 3: Sustained dash evasion (6 battles total, Armor buff)
 	for _i in range(2):
 		evo_mgr.register_spawned_combatant(dasher_g)
-		evo_mgr.process_encounter_end(1, 0, 10.0, {}, "DEFAULT")
-	assert(evo_mgr.get_species_tier("DASHER") == 3, "Dasher evolves to Tier 3 after 6 battles")
-	assert(evo_mgr.get_species_health_multiplier("DASHER") == 3, "Dasher Tier 3 has 3x health multiplier")
+		evo_mgr.process_encounter_end(1, 0, 10.0, evade_profile, "DEFAULT")
+	assert(evo_mgr.get_species_tier("DASHER") == 3, "Dasher evolves to Tier 3 after sustained evasion")
+	assert(evo_mgr.get_species_health_multiplier("DASHER") == 8, "Dasher Tier 3 has 8x health multiplier")
 	var dasher_node3 = DASHER_SCENE.instantiate()
 	dasher_g.apply_to_enemy(dasher_node3)
-	assert(dasher_node3.max_health == 6, "Dasher Tier 3 max health must be 6")
+	assert(dasher_node3.max_health == 16, "Dasher Tier 3 max health must be 16 (8x base 2)")
 	dasher_node3.free()
 
-	# Now Shooter battles (Tier 1: Speed, Tier 2: Armor + Aim, Tier 3: 2-DMG Beam)
+	# Now Shooter battles with tactical behavior observations
 	var shooter_g = evo_mgr.get_genome_for_spawn("SHOOTER")
+	# Battle 1 & 2: Player rushing / high aggression -> Tier 1: Agile Strafe Speed Buff
+	var rush_profile := { "aggression": 0.85, "mobility": 0.35, "turret": 0.10 }
 	for _i in range(2):
 		evo_mgr.register_spawned_combatant(shooter_g)
-		evo_mgr.process_encounter_end(2, 0, 10.0, {}, "DEFAULT")
-	assert(evo_mgr.get_species_tier("SHOOTER") == 1, "Shooter Tier 1 after 2 battles")
+		evo_mgr.process_encounter_end(2, 0, 10.0, rush_profile, "DEFAULT")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 1, "Shooter Tier 1 after rushing observed")
+	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 2, "Shooter Tier 1 has 2x health (6 HP)")
 	var shooter_node1 = SHOOTER_SCENE.instantiate()
 	shooter_g.apply_to_enemy(shooter_node1)
 	assert(shooter_node1.move_speed >= 110.0, "Shooter Tier 1 has speed buff >= 110")
-	assert(shooter_node1.lead_prediction == 0.0, "Shooter Tier 1 still has bad aim")
+	assert(shooter_node1.max_health == 6, "Shooter Tier 1 max health must be 6 (2x base 3)")
+	assert(shooter_node1.lead_prediction == 0.0, "Shooter Tier 1 still has baseline aim")
 	shooter_node1.free()
 
-	# Shooter Tier 2: 4 battles total (Armor 6 HP + Pinpoint Lead Aim)
+	# Battle 3 & 4: Player mobile dodging at range -> Tier 2: Armor + Pinpoint Lead Aim
+	var mobile_profile := { "mobility": 0.85, "ranged": 0.70, "aggression": 0.30 }
 	for _i in range(2):
 		evo_mgr.register_spawned_combatant(shooter_g)
-		evo_mgr.process_encounter_end(2, 0, 10.0, {}, "DEFAULT")
-	assert(evo_mgr.get_species_tier("SHOOTER") == 2, "Shooter Tier 2 after 4 battles")
-	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 2, "Shooter Tier 2 has 2x health (6 HP)")
+		evo_mgr.process_encounter_end(2, 0, 10.0, mobile_profile, "DEFAULT")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 2, "Shooter Tier 2 after mobility observed")
+	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 4, "Shooter Tier 2 has 4x health (12 HP)")
 	var shooter_node2 = SHOOTER_SCENE.instantiate()
 	shooter_g.apply_to_enemy(shooter_node2)
-	assert(shooter_node2.max_health == 6, "Shooter Tier 2 max health must be 6")
+	assert(shooter_node2.max_health == 12, "Shooter Tier 2 max health must be 12 (4x base 3)")
 	assert(shooter_node2.lead_prediction == 1.0, "Shooter Tier 2 has pinpoint lead prediction 1.0")
 	shooter_node2.free()
 
-	# Shooter Tier 3: 6 battles total (2-Damage Beam + 12 HP)
+	# Battle 5 & 6: Player stationary / camping behind cover -> Tier 3: Charged Particle Beam + 24 HP
+	var camp_profile := { "turret": 0.85, "mobility": 0.10, "aggression": 0.20 }
 	for _i in range(2):
 		evo_mgr.register_spawned_combatant(shooter_g)
-		evo_mgr.process_encounter_end(2, 0, 10.0, {}, "DEFAULT")
-	assert(evo_mgr.get_species_tier("SHOOTER") == 3, "Shooter Tier 3 after 6 battles")
-	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 4, "Shooter Tier 3 has 4x health (12 HP)")
+		evo_mgr.process_encounter_end(2, 0, 10.0, camp_profile, "DEFAULT")
+	assert(evo_mgr.get_species_tier("SHOOTER") == 3, "Shooter Tier 3 after camping observed")
+	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 8, "Shooter Tier 3 has 8x health (24 HP)")
 	var shooter_node3 = SHOOTER_SCENE.instantiate()
 	shooter_g.apply_to_enemy(shooter_node3)
-	assert(shooter_node3.max_health == 12, "Shooter Tier 3 max health must be 12")
+	assert(shooter_node3.max_health == 24, "Shooter Tier 3 max health must be 24 (8x base 3)")
 	assert(shooter_node3.has_beam_attack, "Shooter Tier 3 has charged beam attack")
 	shooter_node3.free()
 
@@ -1737,4 +1759,239 @@ static func test_glitch_fx_and_low_health_vignette() -> bool:
 	synth.free()
 
 	print("  [PASS] Player Hurt Glitch Post-Processing & Low Health Danger Vignette Scenario")
+	return true
+
+
+static func test_gift_rooms_reachable_across_layout_sizes() -> bool:
+	var gen = DUNGEON_GEN_SCRIPT.new()
+	# Test layout sizes: 5, 6, 7, 8 rooms
+	for size in [5, 6, 7, 8]:
+		var gift_found := false
+		var shop_found := false
+		for s in range(2001, 2021):
+			var layout = gen.generate_dungeon(s, size)
+			assert(layout.rooms.size() == size, "Layout must generate exactly %d rooms" % size)
+			assert(layout.rooms[0].room_type == "START", "Room 0 must be START")
+			assert(layout.rooms[size - 1].room_type == "BOSS", "Final room must be BOSS")
+			for r in layout.rooms:
+				if r.room_type == "GIFT":
+					gift_found = true
+					assert(not r.gift_choices.is_empty(), "Gift room must offer subroutine rewards")
+				elif r.room_type == "SHOP":
+					shop_found = true
+		assert(gift_found, "Gift rooms must be generated and reachable in %d-room sector layout" % size)
+		assert(shop_found, "Shop rooms must be generated and reachable in %d-room sector layout" % size)
+
+	print("  [PASS] Sector Graph Layout Scaling & Guaranteed Gift Room Reachability Scenario")
+	return true
+
+
+static func test_wave_roster_diversity_and_history() -> bool:
+	var gen = DUNGEON_GEN_SCRIPT.new()
+	var layout = gen.generate_dungeon(12345, 6)
+	var combat_room = layout.get_room(1)
+	assert(combat_room != null, "Combat room 1 must exist")
+
+	var signatures: Array[String] = []
+	for w in range(1, 8):
+		var spawns = gen.generate_wave_spawns(combat_room, 12345, w, 4)
+		assert(not spawns.is_empty(), "Wave %d must produce enemy spawns" % w)
+		var types: Array[String] = []
+		for s in spawns:
+			types.append(s.type)
+		var sig = ",".join(types)
+		signatures.append(sig)
+
+	# Verify consecutive waves never duplicate the immediately prior roster
+	for i in range(1, signatures.size()):
+		assert(signatures[i] != signatures[i - 1], "Wave roster %d must not duplicate wave %d" % [i + 1, i])
+
+	print("  [PASS] Long-Run Enemy Wave Roster Variety & Anti-Repetition Scenario")
+	return true
+
+
+static func test_strict_health_doubling_invariant_all_species() -> bool:
+	# Test exact mathematical doubling: max_health = base_max_health * 2^tier
+	for family in ["CHASER", "DASHER", "SHOOTER"]:
+		var g = ENEMY_GENOME_SCRIPT.new(family, 1)
+		var base_hp: int = g.base_max_health
+		assert(base_hp > 0, "Base health must be positive")
+		assert(g.get_max_health() == base_hp, "Tier 0 health must equal base health")
+
+		for t in range(1, 4):
+			g.tier = t
+			var expected_hp: int = base_hp * int(pow(2, t))
+			assert(g.get_max_health() == expected_hp, "%s Tier %d max health must be %d" % [family, t, expected_hp])
+
+	print("  [PASS] Strict Major Species Evolution Health Doubling Invariant (2^tier) Scenario")
+	return true
+
+
+static func test_door_controlled_upgrades_and_all_rooms_spawn_enemies() -> bool:
+	var gen = DUNGEON_GEN_SCRIPT.new()
+
+	# 1. Test 100 seeds across different room counts (5, 6, 7, 8)
+	for room_count in [5, 6, 7, 8]:
+		for s in range(5001, 5026):
+			var layout = gen.generate_dungeon(s, room_count, 4)
+
+			# Verify every room before the boss chamber
+			for r_idx in range(room_count - 1):
+				var room = layout.get_room(r_idx)
+				assert(room != null, "Room %d must exist" % r_idx)
+				assert(room.exit_doors.size() >= 1 and room.exit_doors.size() <= 3,
+					"Room %d exit doors count (%d) must be in range 1-3" % [r_idx, room.exit_doors.size()])
+
+				# Verify each door contains valid upgrade metadata
+				var seen_upgrades: Array[String] = []
+				for door in room.exit_doors:
+					assert(door.has("upgrade_id") and not door.upgrade_id.is_empty(), "Door must specify an upgrade_id")
+					assert(door.has("upgrade_title") and not door.upgrade_title.is_empty(), "Door must specify an upgrade_title")
+					assert(door.has("upgrade_desc") and not door.upgrade_desc.is_empty(), "Door must specify an upgrade_desc")
+					assert(door.has("label") and not door.label.is_empty(), "Door must specify a readable label")
+					assert(not door.upgrade_id in seen_upgrades, "Room %d must offer distinct upgrade choices across doors" % r_idx)
+					seen_upgrades.append(door.upgrade_id)
+
+				# Verify every non-START room generates enemy wave combat spawns (never 0 enemies)
+				if r_idx > 0:
+					var spawns = gen.generate_wave_spawns(room, s, 1, 4)
+					assert(not spawns.is_empty(), "Room %d must spawn wave enemies" % r_idx)
+					assert(spawns.size() >= 2, "Room %d must spawn at least 2 hostiles" % r_idx)
+
+	# 2. Test RunState integration: picking a door applies its upgrade directly
+	var rs_script := load("res://scripts/run_state.gd")
+	var rs: Node = rs_script.new()
+	rs.start_new_run(8888)
+
+	var initial_fire_mult: float = rs.fire_interval_mult
+	var test_door := {
+		"upgrade_id": "OVERCLOCK",
+		"upgrade_title": "OVERCLOCK",
+		"upgrade_desc": "+35% Fire Rate",
+		"target_room": 1
+	}
+	rs.apply_upgrade(test_door.upgrade_id)
+	assert(rs.fire_interval_mult < initial_fire_mult, "Applying OVERCLOCK from door must decrease fire interval")
+	assert(rs.active_upgrade_ids.has("OVERCLOCK"), "Active upgrades must contain OVERCLOCK")
+
+	# Test RECOVERY door healing
+	rs.current_health = 2
+	var _heal_door := {
+		"upgrade_id": "RECOVERY",
+		"upgrade_title": "RECOVERY BAY",
+		"upgrade_desc": "+2 HP Repair Patch",
+		"target_room": 2
+	}
+	rs.heal(2)
+	assert(rs.current_health == 4, "Recovery door must restore 2 HP")
+
+	rs.free()
+	print("  [PASS] Door-Controlled Roguelike Upgrades (1-3 Doors) & Universal Room Wave Spawns Scenario")
+	return true
+
+
+static func test_obstacle_avoidance_and_multi_phase_boss_progression() -> bool:
+	# 1. Exact Slab Collision Avoidance: thin obstacle across 800px segment
+	var thin_obstacle: Array[Rect2] = [Rect2(450.0, 180.0, 30.0, 60.0)]
+	var blocked := ENEMY_STEERING_SCRIPT.is_line_blocked(Vector2(100.0, 200.0), Vector2(900.0, 200.0), thin_obstacle)
+	assert(blocked, "Exact slab intersection must detect thin obstacle across 800px span")
+
+	var clear := ENEMY_STEERING_SCRIPT.is_line_blocked(Vector2(100.0, 100.0), Vector2(900.0, 100.0), thin_obstacle)
+	assert(not clear, "Clear line of sight outside obstacle must return false")
+
+	# Deflection steering: heading into obstacle face must NOT push forward into obstacle
+	var agent_pos := Vector2(420.0, 200.0)
+	var desired_dir := Vector2.RIGHT # Points directly into obstacle's left face
+	var steered: Vector2 = ENEMY_STEERING_SCRIPT.avoid_obstacles(agent_pos, desired_dir, thin_obstacle, 45.0)
+	assert(steered.x <= 0.05, "Steered avoidance vector must not push forward into obstacle face")
+	assert(absf(steered.y) > 0.5, "Steered avoidance vector must develop strong lateral clearance")
+
+	# 2. Compact Room 0 Staging Dock
+	var gen = DUNGEON_GEN_SCRIPT.new()
+	var layout = gen.generate_dungeon(7777, 6, 4)
+	var room0 = layout.get_room(0)
+	assert(room0 != null and room0.room_type == "START", "Room 0 must be START room")
+	assert(room0.bounds.size.x <= 900.0 and room0.bounds.size.y <= 500.0, "Room 0 bounds must be compact staging dock")
+	var door_dict: Dictionary = room0.exit_doors[0]
+	var door_pos: Vector2 = door_dict["pos"]
+	var spawn_to_door: float = room0.player_spawn.distance_to(door_pos)
+	assert(spawn_to_door < 750.0, "Player spawn to door in Room 0 must be compact (was %.1f)" % spawn_to_door)
+
+	# Verify healing fountain obstacle collision
+	var game_scene := load("res://scenes/main.tscn")
+	var game_inst = game_scene.instantiate()
+	game_inst.dungeon_layout = layout
+	game_inst._load_room(0)
+	assert(game_inst.fountain_rect.size != Vector2.ZERO, "Fountain obstacle rect must be initialized in Room 0")
+	var has_fountain_col := false
+	for obs in game_inst.active_obstacles:
+		if obs.name == "FountainObstacle":
+			has_fountain_col = true
+			var col_shape: CollisionShape2D = obs.get_node("CollisionShape2D") if obs.has_node("CollisionShape2D") else obs.get_child(0)
+			assert(col_shape != null and col_shape.shape is CircleShape2D, "Fountain obstacle must have CircleShape2D")
+			assert((obs.collision_layer & 1) != 0, "Fountain obstacle must be on collision layer 1")
+			break
+	assert(has_fountain_col, "START room must create physical FountainObstacle collision body")
+	game_inst.free()
+
+	# 3. Dynamic Sector & Room Wave Range [3, 5]
+	var prog = RUN_PROGRESSION_SCRIPT.new(9999, "NORMAL")
+	var seen_waves: Dictionary = {}
+	for s_idx in range(3, 10):
+		prog.sector_index = s_idx
+		prog._init_sector_wave_schedule()
+		assert(prog.sector_total_waves >= 3 and prog.sector_total_waves <= 5,
+			"Sector %d wave schedule (%d) must be in range 3 to 5" % [s_idx, prog.sector_total_waves])
+		seen_waves[prog.sector_total_waves] = true
+	assert(seen_waves.size() >= 2, "Sector waves across sectors 3+ must vary procedurally, not stay fixed")
+
+	# Combat rooms wave calculation range
+	for d in [4, 8, 12, 16]:
+		prog.run_depth = d
+		var rw: int = prog.calculate_waves_for_current_room("COMBAT")
+		assert(rw >= 3 and rw <= 5, "Combat room waves at depth %d (%d) must be in range 3 to 5" % [d, rw])
+
+	# 4. Boss Multi-Phase Evolution & Overclocking
+	var boss_scene := load("res://scenes/enemies/boss.tscn")
+	var boss: CharacterBody2D = boss_scene.instantiate()
+	assert(not boss.is_phase_two, "Boss starts in Phase 1")
+	var max_hp: int = boss.max_health
+	var initial_dash_speed: float = boss.dash_speed
+
+	var phase_two_emitted := [false]
+	boss.phase_two_entered.connect(func(): phase_two_emitted[0] = true)
+	var defeated_emitted := [false]
+	boss.defeated.connect(func(): defeated_emitted[0] = true)
+
+	# Take full Phase 1 lethal damage
+	boss.take_damage(max_hp)
+	assert(boss.is_phase_two, "Depleting Phase 1 health must transition boss to Phase 2")
+	assert(phase_two_emitted[0], "Entering Phase 2 must emit phase_two_entered signal")
+	assert(boss.health == max_hp, "Entering Phase 2 must fully restore boss health to max")
+	assert(boss.dash_speed > initial_dash_speed, "Phase 2 boss must have increased dash speed")
+	assert(not defeated_emitted[0], "Boss must not emit defeated upon entering Phase 2")
+
+	# Take full Phase 2 lethal damage
+	boss.take_damage(max_hp)
+	assert(defeated_emitted[0], "Depleting Phase 2 health must emit defeated signal")
+	assert(boss.defeated_already, "Boss must be flagged defeated after Phase 2")
+
+	boss.free()
+
+	# Verify Boss Sentinel and Boss Architect take_damage signatures accept optional source tag
+	var sentinel_scene := load("res://scenes/enemies/boss_sentinel.tscn")
+	var sentinel: CharacterBody2D = sentinel_scene.instantiate()
+	var s_hp: int = sentinel.health
+	sentinel.take_damage(1, "hazard")
+	assert(sentinel.health == s_hp - 1, "Sentinel must take 1 damage with source tag")
+	sentinel.free()
+
+	var architect_scene := load("res://scenes/enemies/boss_architect.tscn")
+	var architect: CharacterBody2D = architect_scene.instantiate()
+	var a_hp: int = architect.health
+	architect.take_damage(1, "hazard")
+	assert(architect.health == a_hp - 1, "Architect must take 1 damage with source tag")
+	architect.free()
+
+	print("  [PASS] Obstacle Avoidance Exact Slab, Compact Room 0 Dock, 3-5 Wave Ranges & Multi-Phase Boss Scenario")
 	return true

@@ -21,6 +21,7 @@ var state_timer := 1.2
 var lunge_direction := Vector2.RIGHT
 var contact_dealt := false
 var damage_flash := 0.0
+var evolution_tier: int = 0
 var hazard_timer := 0.0
 
 const MAX_ACTIVE_HAZARDS := 4
@@ -93,22 +94,22 @@ func _physics_process(delta: float) -> void:
 
 	var to_target := target.global_position - global_position
 	state_timer -= delta
+	var los_blocked: bool = false
 
 	match state:
 		State.STALK:
 			rotation = to_target.angle()
+			los_blocked = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
 			var move_dir := Vector2.ZERO
-			var los_blocked: bool = EnemySteering.is_line_blocked(global_position, target.global_position, obstacle_rects) if not obstacle_rects.is_empty() else false
-
-			if not los_blocked:
-				move_dir = to_target.normalized()
-				if not obstacle_rects.is_empty():
-					move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 40.0)
+			if nav_grid != null:
+				move_dir = nav_grid.get_nav_direction(global_position, target.global_position)
 			else:
-				if nav_grid != null:
-					move_dir = nav_grid.get_nav_direction(global_position, target.global_position)
+				if not los_blocked:
+					move_dir = to_target.normalized()
+					if not obstacle_rects.is_empty():
+						move_dir = EnemySteering.avoid_obstacles(global_position, move_dir, obstacle_rects, 45.0)
 				else:
-					move_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 40.0)
+					move_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 45.0)
 
 			var separation: Vector2 = Vector2.ZERO
 			if spatial_index:
@@ -179,6 +180,13 @@ func _physics_process(delta: float) -> void:
 
 	if is_inside_tree():
 		move_and_slide()
+		var col_count := get_slide_collision_count()
+		for i in range(col_count):
+			var col := get_slide_collision(i)
+			if col:
+				var n := col.get_normal()
+				if velocity.dot(n) < 0.0:
+					velocity = velocity.slide(n)
 	queue_redraw()
 
 
@@ -259,12 +267,8 @@ func _draw() -> void:
 	draw_circle(Vector2(-4, 0), 3.0, Color("fdf2f8"))
 
 	# Health bar & Evolution Tier indicator
-	if max_health > 2:
-		var tier_pips := 1
-		if max_health >= 6:
-			tier_pips = 3
-		elif max_health >= 4:
-			tier_pips = 2
+	if evolution_tier > 0 or max_health > 2:
+		var tier_pips := evolution_tier if evolution_tier > 0 else (3 if max_health >= 6 else (2 if max_health >= 4 else 1))
 		for p in range(tier_pips):
 			draw_circle(Vector2(-6.0 + float(p) * 6.0, -26), 2.0, Color("38bdf8"))
 		draw_rect(Rect2(-16, -21, 32, 4), Color("181a26"))

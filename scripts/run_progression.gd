@@ -14,11 +14,13 @@ const DEFAULT_ROOMS_PER_SECTOR := 5
 const MIN_SECTOR_WAVES := 3
 const MAX_SECTOR_WAVES := 5
 const MAX_WAVES_PER_ROOM := 5
+const MAX_OPTIONAL_ROOMS_PER_SECTOR := 3
 
 var run_depth: int = 1 # Monotonically increasing room steps taken across entire run
 var sector_index: int = 1
 var room_index: int = 0 # 0 to rooms_per_sector - 1
 var rooms_per_sector: int = DEFAULT_ROOMS_PER_SECTOR
+var optional_rooms_per_sector: int = 0
 
 # Sector-level wave schedule (3–5 regular waves total per sector)
 var sector_total_waves: int = 3
@@ -51,19 +53,33 @@ func reset() -> void:
 
 func _init_sector_wave_schedule() -> void:
 	sector_waves_completed = 0
-	# Schedule exactly 3, 4, or 5 regular waves per sector based on difficulty and sector depth
+	# Schedule 3 to 5 regular waves per sector dynamically across the run (never fixed to 5)
 	match difficulty:
 		"EASY":
 			sector_total_waves = 3
 		"HARD", "HYPERGRID":
-			sector_total_waves = 4 if sector_index == 1 else 5
+			var s_rng := RandomNumberGenerator.new()
+			s_rng.seed = (get_current_sector_seed() ^ 0x66B21) & 0x7FFFFFFF
+			sector_total_waves = 4 if sector_index == 1 else s_rng.randi_range(4, 5)
 		_: # NORMAL
 			if sector_index == 1:
 				sector_total_waves = 3
 			elif sector_index == 2:
 				sector_total_waves = 4
 			else:
-				sector_total_waves = 5
+				var s_rng := RandomNumberGenerator.new()
+				s_rng.seed = (get_current_sector_seed() ^ 0x66B21) & 0x7FFFFFFF
+				sector_total_waves = s_rng.randi_range(MIN_SECTOR_WAVES, MAX_SECTOR_WAVES)
+
+	# Keep the opening floor readable and predictable. Later floors can roll zero
+	# perk rooms or a seeded mix of up to three service rooms.
+	if sector_index <= 1:
+		optional_rooms_per_sector = 0
+	else:
+		var layout_rng := RandomNumberGenerator.new()
+		layout_rng.seed = (get_current_sector_seed() ^ 0x4D4150) & 0x7FFFFFFF
+		optional_rooms_per_sector = layout_rng.randi_range(0, MAX_OPTIONAL_ROOMS_PER_SECTOR)
+	rooms_per_sector = 2 + sector_total_waves + optional_rooms_per_sector
 
 
 static func derive_sector_seed(base_seed: int, sector: int) -> int:
@@ -83,43 +99,58 @@ func is_sector_regular_waves_complete() -> bool:
 	return sector_waves_completed >= sector_total_waves
 
 
-func calculate_waves_for_current_room(_room_type: String = "") -> int:
+func calculate_waves_for_current_room(_room_type: String = "", one_encounter_per_room: bool = false) -> int:
 	## Calculates combat wave count for each chamber.
 	## Every chamber guarantees enemy combat engagements (never 0 waves).
-	match _room_type:
-		"START":
-			waves_in_room = 1
-		"BOSS":
-			waves_in_room = 1
-		"RECOVERY", "SHOP", "GIFT":
-			waves_in_room = 1
-		_: # COMBAT, ELITE
-			if difficulty == "EASY":
-				waves_in_room = 2
-			elif run_depth <= 3:
-				waves_in_room = 2
-			elif run_depth <= 7:
-				waves_in_room = 3
-			else:
-				waves_in_room = clampi(3 + int(float(run_depth) / 4.0), 3, MAX_WAVES_PER_ROOM)
+	## Combat & Elite rooms always have 3–5 waves procedurally (never 1 wave).
+	if one_encounter_per_room:
+		waves_in_room = 1
+	else:
+		match _room_type:
+			"START", "RECOVERY", "SHOP", "GIFT", "BOSS":
+				waves_in_room = 1
+			_: # COMBAT, ELITE
+				var r_rng := RandomNumberGenerator.new()
+				r_rng.seed = (get_current_sector_seed() + run_depth * 41) & 0x7FFFFFFF
+				if difficulty == "EASY":
+					waves_in_room = r_rng.randi_range(2, 3)
+				elif difficulty in ["HARD", "HYPERGRID"]:
+					waves_in_room = r_rng.randi_range(4, 5)
+				else:
+					# Procedurally vary in range 3 to 5 (never fixed to 5, never collapsed to 1)
+					waves_in_room = r_rng.randi_range(3, 5)
 
 	current_wave = 1
 	return waves_in_room
 
 
 func calculate_spawn_budget(wave: int) -> int:
-	var base_count := 3
+	## Swarm spawn budget scaling with difficulty:
+	## Challenging by default, with higher difficulty tiers escalating hostile numbers.
+	var base_count := 5
+	var min_budget := 4
+	var max_budget := 12
 	match difficulty:
 		"EASY":
-			base_count = 2
-		"HARD", "HYPERGRID":
-			base_count = 4
-		_:
 			base_count = 3
+			min_budget = 3
+			max_budget = 7
+		"HARD":
+			base_count = 7
+			min_budget = 6
+			max_budget = 14
+		"HYPERGRID":
+			base_count = 9
+			min_budget = 8
+			max_budget = 16
+		_: # NORMAL (Challenging default)
+			base_count = 5
+			min_budget = 4
+			max_budget = 12
 
-	var depth_bonus := clampi(int(float(run_depth) / 3.0), 0, 4)
-	var wave_bonus := clampi(wave - 1, 0, 2)
-	var total_budget: int = clampi(base_count + depth_bonus + wave_bonus, 2, 9)
+	var depth_bonus := clampi(int(float(run_depth) / 2.5), 0, 4)
+	var wave_bonus := clampi(wave - 1, 0, 3)
+	var total_budget: int = clampi(base_count + depth_bonus + wave_bonus, min_budget, max_budget)
 	return total_budget
 
 

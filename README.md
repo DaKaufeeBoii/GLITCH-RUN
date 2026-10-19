@@ -136,13 +136,13 @@ mkdir -p build/android
 
 ## 9. Deterministic Automated Testing
 
-Run the **45-scenario deterministic test suite** via headless Godot console:
+Run the **52-scenario deterministic test suite** via headless Godot console:
 
 ```powershell
 & "D:\GODOT\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe" --headless -s scripts/test_runner.gd
 ```
 
-### Complete 45-Scenario Test Suite:
+### Complete 52-Scenario Test Suite:
 1. `Insufficient Data Scenario`: Baseline deployment when combat telemetry $< 12\text{s}$.
 2. `High Mobility Scenario`: Predicts dash evasion and deploys lead-laser countermeasures.
 3. `Ranged Camping Scenario`: Deploys flanking pincer formations against snipers.
@@ -180,7 +180,7 @@ Run the **45-scenario deterministic test suite** via headless Godot console:
 35. `Boss History Run Persistence & Bounding`: Verifies run-level boss encounter history logging and caps.
 36. `Settings Persistence & Multi-Bus Audio Configuration`: Verifies Master/Music/SFX volumes and user://settings.json.
 37. `Touch Navigation, Modals & Confirmation Flows`: Verifies 48dp button sizing, difficulty cycler, and confirmation dialogs.
-38. `Android Export Preset Configuration & Touch Targets`: Validates package ID, orientation, SDK levels, and touch radii.
+38. `Android Export Preset Configuration & Touch Targets`: Validates package ID, orientation, SDK levels (API 36), and touch radii.
 39. `Save File Corruption & Offline Recovery`: Verifies clean recovery and fallback when JSON files are corrupted.
 40. `Android Back Key & Navigation Hierarchy`: Modal dismiss $\to$ pause $\to$ exit hierarchy validation.
 41. `Mobile Debris & Particle Bounding`: Verifies active particle limits (`MAX_ACTIVE_SHARDS <= 64`).
@@ -188,6 +188,13 @@ Run the **45-scenario deterministic test suite** via headless Godot console:
 43. `Generated Boss Chamber Encounter Composition`: Verifies exactly one boss spawn in the terminal room across 100 seeds.
 44. `Upgrade Stack Caps & Hard Stat Bounds`: Verifies capped damage/fire-rate stacks and removes maxed upgrades from the reward pool.
 45. `Splash First Screen & Tap-to-Menu Flow`: Verifies the splash prompt and startup scene configuration.
+46. `Topological A* Navigation Grid & Obstacle Routing`: 24px grid pathfinding around obstacles.
+47. `Behavior-Driven Enemy Learning, Strategy Switch & Isolation`: Dynamic adaptation to kiting, evasion, and rushing with strict species evidence isolation.
+48. `Player Hurt Glitch Post-Processing & Low Health Danger Vignette`: Visual feedback and critical danger indicators.
+49. `Sector Graph Layout Scaling & Guaranteed Gift Room Reachability`: Validates explorable shops, gift rooms, and route branches across all sector sizes.
+50. `Long-Run Enemy Wave Roster Variety & Anti-Repetition`: 12 tactical squad compositions avoiding repeating past rosters across sectors.
+51. `Strict Major Species Evolution Health Doubling Invariant (2^tier)`: Validates mathematical health doubling across all species and mutation tiers.
+52. `Door-Controlled Roguelike Upgrades (1-3 Doors) & Universal Room Wave Spawns`: Verifies 1–3 procedural upgrade doors per room and guarantees hostile enemy wave spawns across all chambers.
 
 ---
 

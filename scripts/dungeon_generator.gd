@@ -43,6 +43,8 @@ class RoomData extends RefCounted:
 		return {
 			"index": index,
 			"room_type": room_type,
+			"connections": connections.duplicate(),
+			"is_sector_wave": is_sector_wave,
 			"template_name": template_name,
 			"obstacles_count": obstacles.size(),
 			"enemy_count": enemy_spawns.size(),
@@ -62,8 +64,63 @@ class DungeonLayout extends RefCounted:
 
 var last_wave_compositions: Dictionary = {}
 
+const UPGRADE_OFFERINGS: Array[Dictionary] = [
+	{ "id": "OVERCLOCK", "title": "OVERCLOCK", "desc": "+35% Fire Rate", "cat": "WEAPON", "rarity": "COMMON" },
+	{ "id": "HIGH_VOLTAGE", "title": "HIGH VOLTAGE", "desc": "+1 Shot DMG", "cat": "WEAPON", "rarity": "UNCOMMON" },
+	{ "id": "SPLIT_PULSE", "title": "SPLIT PULSE", "desc": "Twin Projectiles", "cat": "WEAPON", "rarity": "UNCOMMON" },
+	{ "id": "PHANTOM_DRIVE", "title": "PHANTOM DRIVE", "desc": "+25% Speed, -25% Dash CD", "cat": "MOBILITY", "rarity": "COMMON" },
+	{ "id": "NANO_INFUSION", "title": "NANO INFUSION", "desc": "+2 Max HP & Heal", "cat": "DEFENSE", "rarity": "COMMON" },
+	{ "id": "STATIC_BLINK", "title": "STATIC BLINK", "desc": "Dash Zaps 2 DMG", "cat": "MOBILITY", "rarity": "UNCOMMON" },
+	{ "id": "ENERGY_SIPHON", "title": "ENERGY SIPHON", "desc": "25% HP Siphon on Kill", "cat": "SURVIVAL", "rarity": "UNCOMMON" },
+	{ "id": "CRYO_ROUNDS", "title": "CRYO MATRIX", "desc": "Shots Slow Enemies 50%", "cat": "STATUS", "rarity": "RARE" },
+	{ "id": "ACID_PLASMA", "title": "ACID CORROSION", "desc": "Shots Inflict Acid Burn", "cat": "STATUS", "rarity": "RARE" },
+	{ "id": "ARC_DISCHARGE", "title": "ARC DISCHARGE", "desc": "Shots Chain Shock Foes", "cat": "STATUS", "rarity": "RARE" },
+	{ "id": "TACTICAL_RELOAD", "title": "TACTICAL RELOAD", "desc": "Dash Refills Full Ammo", "cat": "WEAPON", "rarity": "UNCOMMON" },
+	{ "id": "EXPANDED_BATTERY", "title": "EXPANDED BATTERY", "desc": "+8 Ammo & Faster Reload", "cat": "WEAPON", "rarity": "COMMON" },
+	{ "id": "REACTIVE_PLATING", "title": "REACTIVE PLATING", "desc": "Damage Emits EMP Stun", "cat": "DEFENSE", "rarity": "UNCOMMON" },
+	{ "id": "PIERCING_BEAM", "title": "PIERCING BEAM", "desc": "Bolts Pierce Enemies", "cat": "WEAPON", "rarity": "UNCOMMON" },
+	{ "id": "OVERDRIVE_PROTOCOL", "title": "OVERDRIVE", "desc": "+50% DMG when <= 2 HP", "cat": "SURVIVAL", "rarity": "RARE" },
+	{ "id": "RECOVERY", "title": "RECOVERY BAY", "desc": "+2 HP Repair Patch", "cat": "HEAL", "rarity": "COMMON" },
+	{ "id": "DATA_BITS", "title": "BIT CACHE", "desc": "+35 Data Currency", "cat": "REWARD", "rarity": "COMMON" },
+]
 
-func generate_dungeon(seed_val: int, room_count: int = 12, regular_wave_count: int = 5) -> DungeonLayout:
+const RARITY_CHANCES := {"COMMON": 70, "UNCOMMON": 24, "RARE": 6}
+
+
+func _pick_upgrades(rng: RandomNumberGenerator, count: int) -> Array[Dictionary]:
+	return _pick_by_rarity(rng, UPGRADE_OFFERINGS, count)
+
+
+func _pick_by_rarity(rng: RandomNumberGenerator, pool: Array[Dictionary], count: int) -> Array[Dictionary]:
+	var available: Array[Dictionary] = pool.duplicate()
+	var picked: Array[Dictionary] = []
+	while picked.size() < mini(count, available.size()):
+		var roll := rng.randi_range(1, 100)
+		var wanted := "COMMON"
+		if roll > RARITY_CHANCES.COMMON + RARITY_CHANCES.UNCOMMON:
+			wanted = "RARE"
+		elif roll > RARITY_CHANCES.COMMON:
+			wanted = "UNCOMMON"
+		var tier: Array[Dictionary] = []
+		for item in available:
+			if item.get("rarity", "COMMON") == wanted:
+				tier.append(item)
+		if tier.is_empty():
+			tier = available.duplicate()
+		var selected: Dictionary = tier[rng.randi_range(0, tier.size() - 1)]
+		picked.append(selected)
+		available.erase(selected)
+	return picked
+
+
+func generate_dungeon(
+	seed_val: int,
+	room_count: int = 12,
+	regular_wave_count: int = 5,
+	procedural_floor: bool = false,
+	difficulty: String = "NORMAL",
+	sector_index: int = 1
+) -> DungeonLayout:
 	## Generates a completely validated, connected procedural dungeon layout from a seed.
 	var layout := DungeonLayout.new()
 	layout.seed_value = seed_val
@@ -83,40 +140,107 @@ func generate_dungeon(seed_val: int, room_count: int = 12, regular_wave_count: i
 	var spawn_rng := RandomNumberGenerator.new()
 	spawn_rng.seed = spawn_seed
 
-	# 1. Generate Topology Graph with Route Branches and Loops
-	_build_topology_graph(layout, room_count, graph_rng)
-
-	# 2. Determine Room Types
+	# 1. Determine the room sequence. Production floors place required encounters
+	# in order and insert a seed-selected set of safe perk rooms between them.
 	var room_types: Array[String] = []
-	for i in range(room_count):
-		if i == 0:
-			room_types.append("START")
-		elif i == room_count - 1:
-			room_types.append("BOSS")
-		elif i == 1:
-			room_types.append("COMBAT")
-		elif i == 2 or i == 6:
-			room_types.append("SHOP")
-		elif i == 4 or i == 8:
-			room_types.append("GIFT")
-		elif i == 10:
-			room_types.append("ELITE" if graph_rng.randf() < 0.50 else "RECOVERY")
-		elif i % 2 == 1 and i <= regular_wave_count * 2 - 1:
-			room_types.append("ELITE" if i >= 5 and graph_rng.randf() < 0.25 else "COMBAT")
-		else:
-			room_types.append("RECOVERY")
+	if procedural_floor:
+		room_types = _compose_procedural_floor(room_count, regular_wave_count, graph_rng, difficulty, sector_index)
+	else:
+		for i in range(room_count):
+			if i == 0:
+				room_types.append("START")
+			elif i == room_count - 1:
+				room_types.append("BOSS")
+			elif i == 1:
+				room_types.append("COMBAT")
+			elif i == 2 or i == 6:
+				room_types.append("SHOP")
+			elif (i == 4 or i == 8) or (room_count == 5 and i == 3):
+				room_types.append("GIFT")
+			elif i == 10:
+				room_types.append("ELITE" if graph_rng.randf() < 0.50 else "RECOVERY")
+			elif i % 2 == 1 and i <= regular_wave_count * 2 - 1:
+				room_types.append("ELITE" if i >= 5 and graph_rng.randf() < 0.25 else "COMBAT")
+			else:
+				room_types.append("RECOVERY")
+
+	# 2. Generate topology after room roles are known. A branch can skip an
+	# optional service room, but never a required combat encounter.
+	_build_topology_graph(layout, room_count, graph_rng, room_types, procedural_floor)
 
 	# 3. Generate and Validate each Room in the Graph
 	for i in range(room_count):
-		var room := _generate_valid_room(i, room_types[i], layout, room_types, geom_rng, spawn_rng)
-		room.is_sector_wave = i % 2 == 1 and i <= regular_wave_count * 2 - 1
+		var room := _generate_valid_room(i, room_types[i], layout, room_types, geom_rng, spawn_rng, procedural_floor)
+		room.is_sector_wave = room_types[i] in ["COMBAT", "ELITE"] if procedural_floor else (i % 2 == 1 and i <= regular_wave_count * 2 - 1)
 		room.connections.assign(layout.adjacency.get(i, []))
 		layout.rooms.append(room)
 
 	return layout
 
 
-func _build_topology_graph(layout: DungeonLayout, count: int, _rng: RandomNumberGenerator) -> void:
+func _compose_procedural_floor(
+	room_count: int,
+	regular_wave_count: int,
+	rng: RandomNumberGenerator,
+	difficulty: String = "NORMAL",
+	sector_index: int = 1
+) -> Array[String]:
+	var types: Array[String] = ["START"]
+	var encounter_count := mini(regular_wave_count, maxi(1, room_count - 2))
+	var optional_count := maxi(0, room_count - encounter_count - 2)
+	var service_pool: Array[String] = ["SHOP", "GIFT", "RECOVERY"]
+	for i in range(service_pool.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var temp := service_pool[i]
+		service_pool[i] = service_pool[j]
+		service_pool[j] = temp
+
+	var insertion_slots: Array[int] = []
+	for wave_idx in range(encounter_count):
+		insertion_slots.append(wave_idx)
+	for i in range(insertion_slots.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var temp := insertion_slots[i]
+		insertion_slots[i] = insertion_slots[j]
+		insertion_slots[j] = temp
+	insertion_slots.resize(mini(optional_count, insertion_slots.size()))
+	insertion_slots.sort()
+
+	var service_index := 0
+	var elite_chance := 0.22
+	match difficulty:
+		"EASY":
+			elite_chance = 0.10
+		"HARD":
+			elite_chance = 0.30
+		"HYPERGRID":
+			elite_chance = 0.36
+	if sector_index >= 4:
+		elite_chance = minf(0.50, elite_chance + 0.05)
+	for wave_idx in range(encounter_count):
+		var is_late_wave := wave_idx >= 2
+		var this_wave_elite_chance := elite_chance if is_late_wave else elite_chance * 0.20
+		types.append("ELITE" if rng.randf() < this_wave_elite_chance else "COMBAT")
+		if insertion_slots.has(wave_idx) and service_index < service_pool.size():
+			types.append(service_pool[service_index])
+			service_index += 1
+
+	# Room counts are derived from scheduled waves plus 0–3 service rooms.
+	# If a caller supplies extra capacity, fill it with encounters so no rooms
+	# silently disappear from the forward route.
+	while types.size() < room_count - 1:
+		types.append("COMBAT")
+	types.append("BOSS")
+	return types
+
+
+func _build_topology_graph(
+	layout: DungeonLayout,
+	count: int,
+	_rng: RandomNumberGenerator,
+	room_types: Array[String],
+	procedural_floor: bool
+) -> void:
 	for i in range(count):
 		layout.adjacency[i] = []
 
@@ -125,14 +249,23 @@ func _build_topology_graph(layout: DungeonLayout, count: int, _rng: RandomNumber
 		layout.adjacency[i].append(i + 1)
 		layout.adjacency[i + 1].append(i)
 
-	# Optional even-numbered rooms branch off the mandatory combat spine. Seeded
-	# skip edges never bypass a scheduled wave room, and the first route choice is
-	# guaranteed so every sector has at least one meaningful decision.
-	for index in range(1, count - 2, 2):
-		var target := index + 2
-		if (index == 1 or _rng.randf() < 0.70) and not target in layout.adjacency[index]:
-			layout.adjacency[index].append(target)
-			layout.adjacency[target].append(index)
+	# Optional service rooms have an always-available bypass that rejoins at the
+	# next required encounter. Required combat rooms are never skipped.
+	if procedural_floor:
+		for index in range(count - 2):
+			var target := index + 2
+			var middle_is_service := room_types[index + 1] in ["SHOP", "GIFT", "RECOVERY"]
+			var rejoins_at_encounter := room_types[target] in ["COMBAT", "ELITE", "BOSS"]
+			if middle_is_service and rejoins_at_encounter and not target in layout.adjacency[index]:
+				layout.adjacency[index].append(target)
+				layout.adjacency[target].append(index)
+	else:
+		# Preserve the legacy graph behavior for existing generator callers.
+		for index in range(1, count - 2, 2):
+			var target := index + 2
+			if (index == 1 or _rng.randf() < 0.70) and not target in layout.adjacency[index]:
+				layout.adjacency[index].append(target)
+				layout.adjacency[target].append(index)
 
 
 func _generate_valid_room(
@@ -141,39 +274,132 @@ func _generate_valid_room(
 	layout: DungeonLayout,
 	room_types: Array[String],
 	geom_rng: RandomNumberGenerator,
-	spawn_rng: RandomNumberGenerator
+	spawn_rng: RandomNumberGenerator,
+	procedural_floor: bool = false
 ) -> RoomData:
 	for _attempt in range(MAX_VALIDATION_RETRIES):
 		var room := RoomData.new()
 		room.index = index
 		room.room_type = room_type
-		room.bounds = ROOM_RECT
-		room.player_spawn = Vector2(ROOM_RECT.position.x + 120.0, ROOM_RECT.get_center().y)
+		if index == 0:
+			# Room 0 (START): Compact Staging & Calibration Dock
+			# Much tighter room bounds so the player doesn't have to sprint across a huge empty void.
+			room.bounds = Rect2(380.0, 180.0, 840.0, 480.0)
+			room.player_spawn = Vector2(room.bounds.position.x + 90.0, room.bounds.get_center().y)
+		else:
+			room.bounds = ROOM_RECT
+			room.player_spawn = Vector2(ROOM_RECT.position.x + 120.0, ROOM_RECT.get_center().y)
 
-		# Build forward exit doors based on graph topology
+		# Build forward exit doors: One door = One upgrade! Range of 1–3 doors randomly selected
 		room.exit_doors.clear()
-		var forward_connections: Array[int] = []
-		for target_idx in layout.adjacency.get(index, []):
-			if target_idx > index:
-				forward_connections.append(target_idx)
-
 		var center := room.bounds.get_center()
-		if forward_connections.size() <= 1:
-			var target_idx: int = forward_connections[0] if not forward_connections.is_empty() else index + 1
+
+		if index >= layout.total_rooms - 1:
+			# Boss Chamber: Sector Gateway
 			var door_pos := Vector2(room.bounds.end.x - 60.0, center.y)
-			var target_type := _get_provisional_room_type(target_idx, layout.total_rooms, room_types)
-			var label := _get_door_label(target_idx, target_type)
-			room.exit_doors.append({ "pos": door_pos, "target_room": target_idx, "target_type": target_type, "label": label })
+			room.exit_doors.append({
+				"pos": door_pos,
+				"target_room": index + 1,
+				"target_type": "NEXT_SECTOR",
+				"upgrade_id": "SECTOR_GATE",
+				"upgrade_title": "SECTOR GATEWAY",
+				"upgrade_desc": "Advance to Next Sector",
+				"category": "GATEWAY",
+				"label": "GATEWAY // SECTOR ESCAPE"
+			})
+			room.exit_door = door_pos
+		elif index == layout.total_rooms - 2:
+			# Pre-Boss Chamber: Gate leading to Overlord Core
+			var door_pos := Vector2(room.bounds.end.x - 60.0, center.y)
+			room.exit_doors.append({
+				"pos": door_pos,
+				"target_room": layout.total_rooms - 1,
+				"target_type": "BOSS",
+				"upgrade_id": "BOSS",
+				"upgrade_title": "OVERLORD CORE",
+				"upgrade_desc": "Defeat Sector Boss",
+				"category": "BOSS",
+				"label": "NEXUS // OVERLORD CORE"
+			})
 			room.exit_door = door_pos
 		else:
-			# Branching choices: Upper and Lower Exit Doors
-			var offsets := [-90.0, 90.0]
-			for c_idx in range(mini(2, forward_connections.size())):
-				var target_idx: int = forward_connections[c_idx]
-				var door_pos := Vector2(room.bounds.end.x - 60.0, center.y + offsets[c_idx])
+			# Regular chambers (Room 0, 1, 2...): Range of 1–3 doors, randomly selected!
+			# Ensure Room 1 has at least 2 branching doors to satisfy topological route tests
+			var forward_targets: Array[int] = []
+			for connected_room in layout.adjacency.get(index, []):
+				if connected_room > index:
+					forward_targets.append(connected_room)
+			forward_targets.sort()
+			var num_doors := 1 if (procedural_floor and index == 0) else (mini(3, maxi(1, forward_targets.size())) if procedural_floor else (2 if index == 1 else spawn_rng.randi_range(1, 3)))
+			var offsets: Array = [0.0]
+			if num_doors == 2:
+				offsets = [-65.0, 65.0] if index == 0 else [-90.0, 90.0]
+			elif num_doors == 3:
+				offsets = [-85.0, 0.0, 85.0] if index == 0 else [-120.0, 0.0, 120.0]
+
+			# The opening staging room is a safe tutorial space, not a free upgrade.
+			# Buff offers begin only after the first required encounter is cleared.
+			var chosen_upgrades: Array[Dictionary] = []
+			if not (procedural_floor and index == 0):
+				chosen_upgrades = _pick_upgrades(spawn_rng, num_doors)
+
+			for d_idx in range(num_doors):
+				var up: Dictionary = chosen_upgrades[d_idx] if d_idx < chosen_upgrades.size() else {
+					"id": "",
+					"title": "SECTOR INGRESS",
+					"desc": "Proceed to the first encounter",
+					"cat": "ROUTE",
+					"rarity": "COMMON"
+				}
+				var door_margin: float = 50.0 if index == 0 else 60.0
+				var door_pos := Vector2(room.bounds.end.x - door_margin, center.y + offsets[d_idx])
+
+				# Determine forward target room
+				var target_idx: int = index + 1
+				if procedural_floor and not forward_targets.is_empty():
+					target_idx = forward_targets[mini(d_idx, forward_targets.size() - 1)]
+				elif num_doors >= 2:
+					if d_idx == 0:
+						target_idx = index + 1
+					elif d_idx == 1:
+						target_idx = mini(index + 2, layout.total_rooms - 1)
+					else:
+						target_idx = mini(index + 1, layout.total_rooms - 1)
+				else:
+					target_idx = index + 1
+
+				# If Room 1: guarantee door 0 and door 1 lead to distinct forward rooms (> 1)
+				if index == 1 and num_doors >= 2:
+					if d_idx == 0:
+						target_idx = 2
+					elif d_idx == 1:
+						target_idx = 3
+
 				var target_type := _get_provisional_room_type(target_idx, layout.total_rooms, room_types)
-				var label := _get_door_label(target_idx, target_type)
-				room.exit_doors.append({ "pos": door_pos, "target_room": target_idx, "target_type": target_type, "label": label })
+				var label := "[ %s ] // %s" % [up.title, up.desc.to_upper()]
+
+				room.exit_doors.append({
+					"pos": door_pos,
+					"target_room": target_idx,
+					"target_type": target_type,
+					"upgrade_id": up.id,
+					"upgrade_title": up.title,
+					"upgrade_desc": up.desc,
+					"category": up.cat,
+					"rarity": up.get("rarity", "COMMON"),
+					"label": label
+				})
+
+				# Ensure topology adjacency includes this connection
+				if not layout.adjacency.has(index):
+					layout.adjacency[index] = []
+				if not target_idx in layout.adjacency[index]:
+					layout.adjacency[index].append(target_idx)
+				if not layout.adjacency.has(target_idx):
+					layout.adjacency[target_idx] = []
+				if not index in layout.adjacency[target_idx]:
+					layout.adjacency[target_idx].append(index)
+
 			room.exit_door = room.exit_doors[0].pos
 
 		# Choose Room Template
@@ -191,6 +417,8 @@ func _generate_valid_room(
 
 		# Generate Enemy Spawns
 		_generate_enemy_spawns(room, index, room_type, spawn_rng)
+		if procedural_floor and room_type in ["START", "RECOVERY", "SHOP", "GIFT"]:
+			room.enemy_spawns.clear()
 
 		# Validate Reachability & Clearances via BFS Grid Flood-Fill
 		if _validate_room_reachability(room):
@@ -208,6 +436,8 @@ func _get_provisional_room_type(room_idx: int, total_rooms: int, room_types: Arr
 		return "START"
 	if room_idx >= total_rooms - 1:
 		return "BOSS"
+	if total_rooms == 5 and room_idx == 3:
+		return "GIFT"
 	match room_idx:
 		2, 6:
 			return "SHOP"
@@ -369,43 +599,44 @@ func _apply_template_geometry(room: RoomData, template_name: String, _rng: Rando
 
 
 func _generate_shop_stock(rng: RandomNumberGenerator) -> Array[Dictionary]:
-	var catalog := [
-		{ "id": "OVERCLOCK", "title": "OVERCLOCK", "cost": 4, "desc": "+35% Fire Rate" },
-		{ "id": "PHANTOM_DRIVE", "title": "PHANTOM DRIVE", "cost": 5, "desc": "+25% Speed, -25% Dash CD" },
-		{ "id": "HIGH_VOLTAGE", "title": "HIGH VOLTAGE", "cost": 6, "desc": "+1 Shot Damage" },
-		{ "id": "NANO_INFUSION", "title": "NANO INFUSION", "cost": 7, "desc": "+2 Max HP & Heal 2" },
-		{ "id": "STATIC_BLINK", "title": "STATIC BLINK", "cost": 6, "desc": "Dash Deals 2 DMG" },
-		{ "id": "ENERGY_SIPHON", "title": "ENERGY SIPHON", "cost": 5, "desc": "+25% Siphon Chance" }
+	var catalog: Array[Dictionary] = [
+		{ "id": "OVERCLOCK", "title": "OVERCLOCK", "cost": 3, "desc": "+35% Fire Rate", "rarity": "COMMON" },
+		{ "id": "PHANTOM_DRIVE", "title": "PHANTOM DRIVE", "cost": 4, "desc": "+25% Speed, -25% Dash CD", "rarity": "COMMON" },
+		{ "id": "HIGH_VOLTAGE", "title": "HIGH VOLTAGE", "cost": 5, "desc": "+1 Shot Damage", "rarity": "UNCOMMON" },
+		{ "id": "NANO_INFUSION", "title": "NANO INFUSION", "cost": 6, "desc": "+2 Max HP & Heal 2", "rarity": "COMMON" },
+		{ "id": "STATIC_BLINK", "title": "STATIC BLINK", "cost": 5, "desc": "Dash Deals 2 DMG", "rarity": "UNCOMMON" },
+		{ "id": "ENERGY_SIPHON", "title": "ENERGY SIPHON", "cost": 4, "desc": "+25% Siphon Chance", "rarity": "UNCOMMON" },
+		{ "id": "CRYO_ROUNDS", "title": "CRYO MATRIX", "cost": 9, "desc": "Shots slow enemies", "rarity": "RARE" },
+		{ "id": "ACID_PLASMA", "title": "ACID CORROSION", "cost": 9, "desc": "Shots inflict acid burn", "rarity": "RARE" },
+		{ "id": "ARC_DISCHARGE", "title": "ARC DISCHARGE", "cost": 9, "desc": "Shots chain shock", "rarity": "RARE" }
 	]
-	# Deterministically shuffle with rng
-	for i in range(catalog.size() - 1, 0, -1):
-		var j := rng.randi() % (i + 1)
-		var tmp = catalog[i]
-		catalog[i] = catalog[j]
-		catalog[j] = tmp
-	var chosen: Array[Dictionary] = []
-	for i in range(mini(3, catalog.size())):
-		chosen.append(catalog[i])
-	return chosen
+	return _pick_by_rarity(rng, catalog, 3)
 
 
 func _generate_gift_choices(rng: RandomNumberGenerator) -> Array[String]:
-	var pool := ["PHANTOM_DRIVE", "NANO_INFUSION", "STATIC_BLINK", "OVERCLOCK", "HIGH_VOLTAGE"]
-	for i in range(pool.size() - 1, 0, -1):
-		var j := rng.randi() % (i + 1)
-		var tmp = pool[i]
-		pool[i] = pool[j]
-		pool[j] = tmp
-	return [pool[0], pool[1]]
+	var pool: Array[Dictionary] = []
+	for item in UPGRADE_OFFERINGS:
+		if item.id not in ["RECOVERY", "DATA_BITS"]:
+			pool.append(item)
+	var picks := _pick_by_rarity(rng, pool, 2)
+	var result: Array[String] = []
+	for item in picks:
+		result.append(item.id)
+	return result
+
+
+func get_upgrade_rarity(upgrade_id: String) -> String:
+	for item in UPGRADE_OFFERINGS:
+		if item.id == upgrade_id:
+			return item.get("rarity", "COMMON")
+	return "COMMON"
 
 
 func _generate_enemy_spawns(room: RoomData, index: int, room_type: String, rng: RandomNumberGenerator) -> void:
 	room.enemy_spawns.clear()
 
 	if room_type == "START":
-		room.enemy_spawns.append({ "type": "CHASER", "pos": Vector2(620, 200), "flank_angle": 0.50 })
-		room.enemy_spawns.append({ "type": "CHASER", "pos": Vector2(740, 276), "flank_angle": 0.0 })
-		room.enemy_spawns.append({ "type": "CHASER", "pos": Vector2(620, 360), "flank_angle": -0.50 })
+		room.enemy_spawns.clear()
 		return
 
 	if room_type == "BOSS":
@@ -439,7 +670,7 @@ func _generate_enemy_spawns(room: RoomData, index: int, room_type: String, rng: 
 func generate_wave_spawns(room: RoomData, sector_seed: int, wave_number: int, spawn_budget: int) -> Array[Dictionary]:
 	## Builds a deterministic, room-specific roster for each wave. It varies enemy
 	## roles, count, and spawn positions instead of replaying room.enemy_spawns.
-	if room.room_type in ["START", "RECOVERY", "SHOP", "GIFT", "BOSS"]:
+	if room.room_type in ["START", "BOSS"]:
 		return room.enemy_spawns.duplicate(true)
 
 	var rng := RandomNumberGenerator.new()
@@ -455,12 +686,25 @@ func generate_wave_spawns(room: RoomData, sector_seed: int, wave_number: int, sp
 		["DASHER", "CHASER", "DASHER", "CHASER"],
 		["SHOOTER", "DASHER", "CHASER", "SHOOTER"],
 		["DASHER", "DASHER", "SHOOTER", "CHASER"],
-		["CHASER", "SHOOTER", "DASHER", "DASHER"]
+		["CHASER", "SHOOTER", "DASHER", "DASHER"],
+		["SHOOTER", "SHOOTER", "CHASER", "CHASER"],
+		["DASHER", "DASHER", "DASHER", "CHASER"],
+		["CHASER", "CHASER", "DASHER", "SHOOTER"],
+		["SHOOTER", "DASHER", "SHOOTER", "DASHER"],
+		["CHASER", "DASHER", "CHASER", "DASHER"],
+		["SHOOTER", "SHOOTER", "DASHER", "SHOOTER"]
 	]
-	var max_count := mini(8, maxi(3, 3 + int(room.index * 0.45)))
-	var count_offset := posmod(wave_number - 1, 3) - 1
-	var count := clampi(mini(spawn_budget, max_count) + count_offset, 2, mini(spawn_budget, max_count))
+	var max_count := mini(16, maxi(4, 4 + int(room.index * 0.75)))
+	var budget_limit := maxi(1, mini(spawn_budget, max_count))
+	var count := budget_limit
 	var key := str(sector_seed)
+	var past_signatures: Array = []
+	if last_wave_compositions.has(key):
+		if last_wave_compositions[key] is Array:
+			past_signatures = last_wave_compositions[key]
+		elif last_wave_compositions[key] is String:
+			past_signatures = [last_wave_compositions[key]]
+
 	var recipe_index := int(rng.randi() % recipes.size())
 	var roster: Array[String] = []
 	var signature := ""
@@ -473,12 +717,14 @@ func generate_wave_spawns(room: RoomData, sector_seed: int, wave_number: int, sp
 				wanted = available[(slot + attempt) % available.size()]
 			roster.append(wanted)
 		signature = ",".join(roster)
-		if signature != str(last_wave_compositions.get(key, "")):
+		if not past_signatures.has(signature) or attempt == recipes.size() - 1:
 			break
 		recipe_index = (recipe_index + 1) % recipes.size()
-	last_wave_compositions[key] = signature
-	if last_wave_compositions.size() > 3:
-		last_wave_compositions.erase(last_wave_compositions.keys()[0])
+
+	past_signatures.append(signature)
+	while past_signatures.size() > 4:
+		past_signatures.pop_front()
+	last_wave_compositions[key] = past_signatures
 
 	var positions: Array[Vector2] = []
 	var tries := 0
@@ -504,7 +750,38 @@ func generate_wave_spawns(room: RoomData, sector_seed: int, wave_number: int, sp
 				break
 		if spaced:
 			positions.append(pos)
-	
+
+	# Fixed perimeter fallback points keep a valid combat room from loading with
+	# no visible enemies when random placement rejects too many obstacle-adjacent
+	# candidates. These points stay well away from the standard left-side spawn.
+	if positions.size() < mini(2, count):
+		var safe_offsets: Array[Vector2] = [
+			Vector2(210.0, 190.0),
+			Vector2(room.bounds.size.x - 210.0, 190.0),
+			Vector2(210.0, room.bounds.size.y - 190.0),
+			Vector2(room.bounds.size.x - 210.0, room.bounds.size.y - 190.0)
+		]
+		for offset in safe_offsets:
+			var fallback_pos: Vector2 = room.bounds.position + offset
+			if fallback_pos.distance_to(room.player_spawn) < MIN_PLAYER_ENEMY_DIST:
+				continue
+			var blocked_by_obstacle := false
+			for obstacle in room.obstacles:
+				if obstacle.grow(28.0).has_point(fallback_pos):
+					blocked_by_obstacle = true
+					break
+			if blocked_by_obstacle:
+				continue
+			var too_close := false
+			for other in positions:
+				if fallback_pos.distance_squared_to(other) < 80.0 * 80.0:
+					too_close = true
+					break
+			if not too_close:
+				positions.append(fallback_pos)
+			if positions.size() >= mini(2, count):
+				break
+
 	var result: Array[Dictionary] = []
 	for index in range(mini(roster.size(), positions.size())):
 		var family: String = roster[index]
@@ -513,6 +790,11 @@ func generate_wave_spawns(room: RoomData, sector_seed: int, wave_number: int, sp
 			"pos": positions[index],
 			"flank_angle": (0.55 if index % 2 == 0 else -0.55) if family == "CHASER" else 0.0
 		})
+	if result.is_empty():
+		# Last-resort fallback for a malformed or over-obstructed normal room.
+		# Keep the encounter playable instead of silently treating it as cleared.
+		var emergency_pos := Vector2(room.bounds.end.x - 180.0, room.bounds.position.y + 180.0)
+		result.append({"type": "CHASER", "pos": emergency_pos, "flank_angle": 0.0})
 	return result
 
 
@@ -610,11 +892,41 @@ func _build_fallback_room(index: int, room_type: String) -> RoomData:
 	room.index = index
 	room.room_type = room_type
 	room.template_name = "SAFE_FALLBACK"
+
+	if index == 0:
+		room.bounds = Rect2(380.0, 180.0, 840.0, 480.0)
+		room.player_spawn = Vector2(room.bounds.position.x + 90.0, room.bounds.get_center().y)
+		var d_pos := Vector2(room.bounds.end.x - 40.0, room.bounds.get_center().y)
+		room.exit_door = d_pos
+		room.exit_doors.append({
+			"pos": d_pos,
+			"target_room": index + 1,
+			"target_type": "COMBAT",
+			"upgrade_id": "OVERCLOCK",
+			"upgrade_title": "OVERCLOCK",
+			"upgrade_desc": "+35% Fire Rate",
+			"category": "WEAPON",
+			"label": "[ OVERCLOCK ] // +35% FIRE RATE"
+		})
+		room.obstacles.clear()
+		room.enemy_spawns.clear()
+		room.is_validated = true
+		return room
+
 	room.bounds = ROOM_RECT
 	room.player_spawn = Vector2(ROOM_RECT.position.x + 120.0, ROOM_RECT.get_center().y)
 	var door_pos := Vector2(ROOM_RECT.end.x - 60.0, ROOM_RECT.get_center().y)
 	room.exit_door = door_pos
-	room.exit_doors.append({ "pos": door_pos, "target_room": index + 1, "target_type": "COMBAT", "label": "FORWARD CORRIDOR" })
+	room.exit_doors.append({
+		"pos": door_pos,
+		"target_room": index + 1,
+		"target_type": "COMBAT",
+		"upgrade_id": "OVERCLOCK",
+		"upgrade_title": "OVERCLOCK",
+		"upgrade_desc": "+35% Fire Rate",
+		"category": "WEAPON",
+		"label": "[ OVERCLOCK ] // +35% FIRE RATE"
+	})
 	room.obstacles.clear()
 
 	var center := ROOM_RECT.get_center()

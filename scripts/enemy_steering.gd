@@ -81,29 +81,108 @@ static func get_nav_direction(
 		return avoid_obstacles(agent_pos, dir, obstacles, 45.0)
 
 
+static func segment_intersects_rect(p0: Vector2, p1: Vector2, rect: Rect2) -> bool:
+	## Exact slab intersection test between line segment and an axis-aligned bounding box.
+	if rect.has_point(p0) or rect.has_point(p1):
+		return true
+
+	var min_x := rect.position.x
+	var max_x := rect.end.x
+	var min_y := rect.position.y
+	var max_y := rect.end.y
+
+	var tmin := 0.0
+	var tmax := 1.0
+	var d := p1 - p0
+
+	# X slab
+	if absf(d.x) < 0.00001:
+		if p0.x < min_x or p0.x > max_x:
+			return false
+	else:
+		var t1 := (min_x - p0.x) / d.x
+		var t2 := (max_x - p0.x) / d.x
+		if t1 > t2:
+			var tmp := t1
+			t1 = t2
+			t2 = tmp
+		tmin = maxf(tmin, t1)
+		tmax = minf(tmax, t2)
+		if tmin > tmax:
+			return false
+
+	# Y slab
+	if absf(d.y) < 0.00001:
+		if p0.y < min_y or p0.y > max_y:
+			return false
+	else:
+		var t1 := (min_y - p0.y) / d.y
+		var t2 := (max_y - p0.y) / d.y
+		if t1 > t2:
+			var tmp := t1
+			t1 = t2
+			t2 = tmp
+		tmin = maxf(tmin, t1)
+		tmax = minf(tmax, t2)
+		if tmin > tmax:
+			return false
+
+	return tmin <= tmax and tmax >= 0.0 and tmin <= 1.0
+
+
 static func avoid_obstacles(
 	agent_pos: Vector2,
 	desired_dir: Vector2,
 	obstacles: Array[Rect2],
 	lookahead: float = 45.0
 ) -> Vector2:
-	## Deflects movement direction tangentially around obstacle rectangles.
-	if desired_dir.is_zero_approx():
-		return Vector2.ZERO
+	## Deflects movement direction tangentially around obstacle geometry with zero inward push.
+	if desired_dir.is_zero_approx() or obstacles.is_empty():
+		return desired_dir
 
-	var probe_point := agent_pos + desired_dir * lookahead
+	var probe_end := agent_pos + desired_dir * lookahead
+	var best_deflection := desired_dir
+	var closest_hit_dist := INF
+
 	for obs in obstacles:
-		if obs.grow(16.0).has_point(probe_point):
-			# Deflect around obstacle center
-			var obs_center := obs.get_center()
-			var away_from_obs := (agent_pos - obs_center).normalized()
-			# Tangent perpendicular to the obstacle normal
-			var tangent := away_from_obs.orthogonal()
-			if tangent.dot(desired_dir) < 0.0:
-				tangent = -tangent
-			return (desired_dir * 0.4 + tangent * 0.6).normalized()
+		var inflated := obs.grow(16.0)
+		var is_inside := inflated.has_point(agent_pos)
+		var hits_path := segment_intersects_rect(agent_pos, probe_end, inflated)
 
-	return desired_dir
+		if is_inside or hits_path:
+			var obs_center := obs.get_center()
+			# Surface projection on obstacle boundary
+			var clamped_x := clampf(agent_pos.x, obs.position.x, obs.end.x)
+			var clamped_y := clampf(agent_pos.y, obs.position.y, obs.end.y)
+			var closest_point := Vector2(clamped_x, clamped_y)
+			var away := agent_pos - closest_point
+			var dist := away.length()
+
+			var normal: Vector2
+			if dist > 0.001:
+				normal = away / dist
+			else:
+				var from_center := agent_pos - obs_center
+				normal = from_center.normalized() if not from_center.is_zero_approx() else -desired_dir
+
+			# When heading toward obstacle or touching boundary
+			var dot_prod := desired_dir.dot(normal)
+			if dot_prod < 0.2:
+				var tangent := desired_dir.slide(normal)
+				if tangent.length_squared() < 0.01:
+					tangent = normal.orthogonal()
+					if tangent.dot(desired_dir) < 0.0:
+						tangent = -tangent
+				else:
+					tangent = tangent.normalized()
+
+				# Strongly deflect along tangent while nudging along normal away from obstacle
+				var deflected := (tangent * 0.85 + normal * 0.35).normalized()
+				if dist < closest_hit_dist:
+					closest_hit_dist = dist
+					best_deflection = deflected
+
+	return best_deflection
 
 
 static func calculate_range_velocity(
@@ -132,15 +211,12 @@ static func calculate_range_velocity(
 		return strafe_dir * (speed * 0.7)
 
 
-static func is_line_blocked(from: Vector2, to: Vector2, obstacles: Array[Rect2]) -> bool:
-	## Checks whether line of sight between two points penetrates any obstacle geometry.
+static func is_line_blocked(from: Vector2, to: Vector2, obstacles: Array[Rect2], padding: float = 8.0) -> bool:
+	## Checks whether line of sight between two points penetrates any obstacle geometry using exact slab intersection.
 	if obstacles.is_empty():
 		return false
-	var steps := 8
-	var delta := (to - from) / float(steps)
-	for i in range(1, steps):
-		var pt := from + delta * float(i)
-		for obs in obstacles:
-			if obs.has_point(pt):
-				return true
+	for obs in obstacles:
+		var test_rect := obs if padding <= 0.0 else obs.grow(padding)
+		if segment_intersects_rect(from, to, test_rect):
+			return true
 	return false

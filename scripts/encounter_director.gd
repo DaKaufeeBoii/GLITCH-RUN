@@ -153,7 +153,8 @@ func record_encounter_result(
 	damage_taken: int,
 	combat_time: float,
 	player_profile: Dictionary,
-	chosen_tactic: String
+	chosen_tactic: String,
+	tracker: RefCounted = null
 ) -> Array[Dictionary]:
 	## Reports combat feedback to LearningPolicy, AdaptiveDirector, and EvolutionManager.
 	adaptive_director.record_tactic_result(chosen_tactic, damage_taken)
@@ -169,5 +170,6 @@ func record_encounter_result(
 		damage_taken,
 		combat_time,
 		player_profile,
-		chosen_tactic
+		chosen_tactic,
+		tracker
 	)

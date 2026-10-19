@@ -7,7 +7,7 @@
 **Export & Hardening Guide:** [docs/ANDROID_EXPORT.md](docs/ANDROID_EXPORT.md)  
 **Privacy Policy:** [docs/PRIVACY.md](docs/PRIVACY.md)  
 
-All 7 core milestones from `ANTIGRAVITY_IMPLEMENTATION_PLAN.md` have been executed, verified, and checked off with **45 deterministic test scenarios passing**.
+All 7 core milestones from `ANTIGRAVITY_IMPLEMENTATION_PLAN.md` have been executed, verified, and checked off with **51 deterministic test scenarios passing**.
 
 ---
 
@@ -118,17 +118,25 @@ plan.md
   - Bounded debris particles (`MAX_ACTIVE_SHARDS <= 64`) and guarded save file corruption recovery.
 
 - [x] **Milestone 7: Final Balance, Content & Documentation**
-  - Early-game onboarding: first room deploys baseline hostiles before mutations engage.
-  - Low-health mercy protocol: `STABILIZATION` widens telegraphs by +30% when HP $< 35\%$.
-  - Updated `README.md`, `plan.md`, `docs/ANDROID_EXPORT.md`, and `docs/PRIVACY.md`.
-  - All 45 automated deterministic test scenarios pass.
+  - Behavior-driven enemy learning: replaced fixed encounter counters with live contextual bandit adaptation and multi-encounter evidence tracking.
+  - Strict health doubling invariant: each confirmed major species evolution consistently doubles health (`base_health * 2^tier`).
+  - Procedural sector expansion & guaranteed gift caches: explorable shops, gift rooms, and route branches across all layout sizes without unreachable rooms.
+  - Reconciled wave schedule and 12 diverse squad compositions avoiding repeating past rosters.
+  - Updated Android export configuration to API 36 (Android 16), version code 2, version 1.1.0, and documented closed testing workflows.
+
+- [x] **Milestone 8: Roguelike Door-Controlled Upgrades & Universal Wave Combat**
+  - Upgrades controlled directly by door selection: each forward door awards an un-capped subroutine upgrade or resource upon entry.
+  - Procedural 1–3 door choices randomly selected per room with informative holographic floor badges.
+  - Universal wave combat: eliminated 0-enemy break rooms; every chamber after calibration spawns hostile waves.
+  - Direct touch and click navigation on unlocked doors alongside physical proximity entry.
+  - All 52 automated deterministic test scenarios pass.
 
 ---
 
 ## Verification
 
-Execute the full 45-scenario test suite via:
+Execute the full 52-scenario test suite via:
 ```powershell
 & "D:\GODOT\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe" --headless -s scripts/test_runner.gd
 ```
-Result: `--- ALL 45 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---` (Exit code 0).
+Result: `--- ALL 52 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---` (Exit code 0).
