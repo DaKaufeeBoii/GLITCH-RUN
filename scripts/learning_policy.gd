@@ -127,6 +127,8 @@ func _seed_domain_priors() -> void:
 		# RAPID_PURSUIT correlates with kiting (ranged) and mobility
 		b_vec[1][1] = 0.8
 		b_vec[1][2] = 1.2
+		# FLANKING_PINCER correlates with the player holding position / turret camping
+		b_vec[2][3] = 1.2
 		# CRIMSON_BLASTER correlates strongly with kiting
 		b_vec[3][2] = 1.5
 	elif family_id == "DASHER":

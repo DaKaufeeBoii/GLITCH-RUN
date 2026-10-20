@@ -312,6 +312,7 @@ func start_new_run(p_seed: int = 0) -> void:
 	progression.base_run_seed = current_seed
 	progression.difficulty = difficulty
 	progression.reset()
+	current_biome = progression.current_biome
 	current_sector = progression.sector_index
 	current_room_index = progression.room_index
 	current_wave = progression.current_wave
@@ -592,6 +593,7 @@ func advance_room(target_room: int = -1) -> Dictionary:
 	}
 	current_room_index = progression.room_index if progression else (target_room if target_room >= 0 else current_room_index + 1)
 	current_sector = progression.sector_index if progression else 1
+	current_biome = progression.current_biome if progression else current_biome
 	current_wave = 1
 	waves_in_room = progression.waves_in_room if progression else 1
 	room_advanced.emit(current_room_index, progression.rooms_per_sector if progression else TOTAL_ROOMS)

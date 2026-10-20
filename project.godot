@@ -31,10 +31,6 @@ window/size/viewport_height=540
 window/stretch/mode="canvas_items"
 window/handheld/orientation="landscape"
 
-[input_devices]
-
-pointing/emulate_touch_from_mouse=false
-
 [rendering]
 
 textures/canvas_textures/default_texture_filter=0

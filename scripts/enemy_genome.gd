@@ -243,6 +243,8 @@ func apply_named_mutation(mut_name: String) -> bool:
 			return true
 
 		"PINCER_WINGS":
+			# Chaser Tier 1 alternative: a flank-focused mutation for campers.
+			tier = maxi(tier, 1)
 			flanking_tendency = clampf(flanking_tendency + 0.55, MIN_FLANKING, MAX_FLANKING)
 			aggression = clampf(aggression * 0.90, MIN_AGGRESSION, MAX_AGGRESSION)
 			active_mutations.append(mut_name)

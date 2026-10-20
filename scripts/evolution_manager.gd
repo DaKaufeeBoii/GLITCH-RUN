@@ -31,6 +31,7 @@ var combatant_records: Dictionary = {}
 var decision_history: Array[Dictionary] = []
 var next_instance_id := 1
 var encounter_id := 0
+var last_mutation_selection: Dictionary = {}
 
 
 func _init() -> void:
@@ -54,6 +55,7 @@ func reset_run_learning() -> void:
 	decision_history.clear()
 	next_instance_id = 1
 	encounter_id = 0
+	last_mutation_selection.clear()
 
 	species_policies = {
 		"CHASER": LEARNING_POLICY_SCRIPT.new("CHASER"),
@@ -66,6 +68,7 @@ func reset_run_learning() -> void:
 			"encounters_fought": 0,
 			"combat_time": 0.0,
 			"kited_evidence": 0.0,
+			"camp_evidence": 0.0,
 			"damage_dealt": 0,
 			"tier": 0,
 			"history": []
@@ -155,7 +158,7 @@ func get_genome_for_spawn(family: String) -> RefCounted:
 
 	# Ensure confirmed major evolution mutations are present on spawned phenotype
 	if family == "CHASER":
-		if t >= 1 and not snapshot.active_mutations.has("RAPID_PURSUIT"):
+		if t >= 1 and not snapshot.active_mutations.has("RAPID_PURSUIT") and not snapshot.active_mutations.has("PINCER_WINGS"):
 			snapshot.apply_named_mutation("RAPID_PURSUIT")
 		if t >= 2 and not snapshot.active_mutations.has("CRIMSON_BLASTER"):
 			snapshot.apply_named_mutation("CRIMSON_BLASTER")
@@ -228,6 +231,99 @@ func _get_executable_actions(family: String, genome: RefCounted) -> Array[String
 			if genome.has_mutation("HEAVY_BEAM"):
 				actions.append("HEAVY_BEAM")
 	return actions
+
+
+func _select_chaser_first_evolution(evidence: Dictionary) -> String:
+	last_mutation_selection.erase("CHASER")
+	var eligible_mutations: Array[String] = []
+	var eligible_actions: Array[String] = []
+	if float(evidence.get("kited_evidence", 0.0)) >= 0.75:
+		eligible_mutations.append("RAPID_PURSUIT")
+		eligible_actions.append("RAPID_PURSUIT")
+	if float(evidence.get("camp_evidence", 0.0)) >= 0.75:
+		eligible_mutations.append("PINCER_WINGS")
+		eligible_actions.append("FLANKING_PINCER")
+	if eligible_mutations.is_empty():
+		return ""
+
+	var policy: RefCounted = species_policies.get("CHASER")
+	if policy == null:
+		last_mutation_selection["CHASER"] = {
+			"action_id": -1,
+			"action_name": "",
+			"eligible_mutations": eligible_mutations.duplicate(),
+			"context": [],
+			"reason": "Single eligible mutation; policy unavailable"
+		}
+		return eligible_mutations[0]
+	var context: Array[float] = [
+		1.0,
+		0.0,
+		clampf(float(evidence.get("kited_evidence", 0.0)) / 2.0, 0.0, 1.0),
+		clampf(float(evidence.get("camp_evidence", 0.0)) / 2.0, 0.0, 1.0),
+		0.0,
+		0.0
+	]
+	if eligible_mutations.size() == 1:
+		var only_action := eligible_actions[0]
+		last_mutation_selection["CHASER"] = {
+			"action_id": policy.action_names.find(only_action),
+			"action_name": only_action,
+			"eligible_mutations": eligible_mutations.duplicate(),
+			"context": context.duplicate(),
+			"reason": "Only eligible mutation matched accumulated behavior evidence"
+		}
+		return eligible_mutations[0]
+	var decision: Dictionary = policy.select_action(context, 5, 5, true, eligible_actions)
+	var selected_action := str(decision.get("action_name", ""))
+	var action_index := eligible_actions.find(selected_action)
+	if action_index < 0:
+		return ""
+	last_mutation_selection["CHASER"] = {
+		"action_id": int(decision.get("action_id", -1)),
+		"action_name": selected_action,
+		"eligible_mutations": eligible_mutations.duplicate(),
+		"context": context.duplicate(),
+		"reason": str(decision.get("reason", "Contextual policy selection"))
+	}
+	return eligible_mutations[action_index]
+
+
+func _apply_chaser_first_evolution(mutation: String, sector_index: int, kited_value: float, camp_value: float) -> Dictionary:
+	if mutation not in ["RAPID_PURSUIT", "PINCER_WINGS"]:
+		return {}
+	var ev: Dictionary = species_evidence["CHASER"]
+	var next_tier := 1
+	var applied := false
+	for candidate in active_genomes["CHASER"]:
+		if candidate.apply_named_mutation(mutation):
+			applied = true
+	for combatant in active_combatants:
+		if combatant.family == "CHASER":
+			combatant.apply_named_mutation(mutation)
+	if not applied:
+		return {}
+	ev["tier"] = next_tier
+	var is_pincer := mutation == "PINCER_WINGS"
+	var decision_record: Dictionary = last_mutation_selection.get("CHASER", {})
+	var record := {
+		"sector": sector_index + 1,
+		"family": "CHASER",
+		"tier": next_tier,
+		"mutation": mutation,
+		"health_mult": "2x (6 HP)",
+		"tradeoff": "Pincer flank pressure with reduced aggression" if is_pincer else "Pursuit speed +45% (135 px/s)",
+		"reason": "Contextual policy selected %s from eligible mutations after observed player behavior (kite %.0f%%, camp %.0f%%)." % [mutation, kited_value * 100.0, camp_value * 100.0],
+		"counter": "Break line of sight and change position to disrupt coordinated pursuit." if is_pincer else "Cut across the pursuit path and use arena obstacles to break the chase.",
+		"eligible_mutations": decision_record.get("eligible_mutations", [mutation]),
+		"policy_action_id": decision_record.get("action_id", -1),
+		"policy_action": decision_record.get("action_name", ""),
+		"policy_context": decision_record.get("context", []),
+		"selection_reason": decision_record.get("reason", "Only one species-compatible mutation met the evidence gate")
+	}
+	evolution_history.append(record)
+	ev.history.append(record)
+	return record
 
 
 func register_spawned_combatant(genome: RefCounted, enemy: Node2D = null) -> void:
@@ -337,7 +433,6 @@ func process_encounter_end(
 	for combatant in active_combatants:
 		var combatant_family := str(combatant.family)
 		if species_evidence.has(combatant_family):
-			active_families[combatant_family] = true
 			family_counts[combatant_family] = int(family_counts.get(combatant_family, 0)) + 1
 
 	# Aggregate each spawned snapshot back to its source population candidate.
@@ -363,6 +458,7 @@ func process_encounter_end(
 			continue
 		var candidate: RefCounted = _find_candidate(family, str(record.get("candidate_id", g.source_candidate_id)))
 		if candidate:
+			active_families[family] = true
 			candidate.combat_time_active += survival_seconds
 			candidate.damage_dealt_to_player += g.damage_dealt_to_player
 			candidate.damage_received += g.damage_received
@@ -423,6 +519,8 @@ func process_encounter_end(
 			var mob_val: float = float(fam_prof.get("mobility", 0.5))
 			var kited_val: float = maxf(ranged_val, float(fam_prof.get("kited_ratio", 0.0)))
 			var is_kited: bool = (kited_val >= 0.55 or mob_val >= 0.55)
+			var camp_val: float = float(fam_prof.get("turret", 0.0))
+			ev.camp_evidence = minf(3.0, float(ev.get("camp_evidence", 0.0)) + maxf(0.0, camp_val - 0.40)) if camp_val >= 0.45 else maxf(0.0, float(ev.get("camp_evidence", 0.0)) - 0.30)
 
 			if is_kited:
 				ev.kited_evidence += (kited_val - 0.40)
@@ -430,28 +528,11 @@ func process_encounter_end(
 				ev.kited_evidence = maxf(0.0, ev.kited_evidence - 0.30)
 
 			# Major Evolution Tier 0 -> Tier 1: Rapid Pursuit (requires sustained kiting evidence)
-			if ev.tier == 0 and ev.kited_evidence >= 0.75 and is_kited:
-				ev.tier = 1
-				for g in active_genomes["CHASER"]:
-					g.tier = 1
-					g.apply_named_mutation("RAPID_PURSUIT")
-				for g in active_combatants:
-					if g.family == "CHASER":
-						g.tier = 1
-						g.apply_named_mutation("RAPID_PURSUIT")
-				var record := {
-					"sector": sector_index + 1,
-					"family": "CHASER",
-					"tier": 1,
-					"mutation": "RAPID_PURSUIT",
-					"health_mult": "2x (6 HP)",
-					"tradeoff": "Pursuit speed +45% (135 px/s), max armor doubled to 6 HP",
-					"reason": "Chasers observed sustained long-range kiting (%.0f%% standoff). Policy deployed rapid pursuit." % (kited_val * 100.0),
-					"counter": "Cut back across pursuit trajectory; use arena obstacles to break line of chase."
-				}
-				evolution_history.append(record)
-				new_adaptations.append(record)
-				ev.history.append(record)
+			if ev.tier == 0 and (ev.kited_evidence >= 0.75 or ev.camp_evidence >= 0.75):
+				var selected_mutation := _select_chaser_first_evolution(ev)
+				var chaser_evolution := _apply_chaser_first_evolution(selected_mutation, sector_index, kited_val, camp_val)
+				if not chaser_evolution.is_empty():
+					new_adaptations.append(chaser_evolution)
 
 			# Major Evolution Tier 1 -> Tier 2: Crimson Blaster (continued kiting escapes pursuit)
 			elif ev.tier == 1 and ev.kited_evidence >= 1.60 and is_kited:

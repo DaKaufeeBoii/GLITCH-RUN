@@ -13,7 +13,7 @@ This document details the configuration, SDK prerequisites, and export workflows
 - **Target SDK:** API Level 36 (Android 16) — complies with Google Play requirements (API 36+ as of August 31, 2026)
 - **Version Code:** `2` (monotonically incrementing per upload)
 - **Version Name:** `1.1.0`
-- **Architectures:** `arm64-v8a` (Primary), `armeabi-v7a` (32-bit fallback)
+- **Architectures:** `arm64-v8a` only (the current export preset does not include a 32-bit `armeabi-v7a` build)
 - **Engine Version:** Godot 4.7.2-stable (GL Compatibility renderer)
 - **Export Formats:**
   - Debug / Sideloading: `.apk`

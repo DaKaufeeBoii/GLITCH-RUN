@@ -667,6 +667,16 @@ static func test_run_state_idempotent_finalization() -> bool:
 	assert(rs.best_sector == recorded_best_sector, "Duplicate finalization must not mutate best_sector")
 	assert(rs.best_score == recorded_best_score, "Duplicate finalization must not overwrite score")
 
+	# Progression and the public RunState mirror must stay synchronized across a biome wrap and restart.
+	rs.progression.sector_index = 3
+	rs.progression.room_index = rs.progression.rooms_per_sector - 1
+	var next_biome: Dictionary = rs.advance_room()
+	assert(next_biome.get("is_new_biome", false), "Advancing past the final sector must report a biome transition")
+	assert(rs.current_biome == 2, "RunState biome mirror must update when room traversal wraps the biome")
+	rs.current_biome = 5
+	rs.start_new_run(55556)
+	assert(rs.current_biome == 1 and rs.progression.current_biome == 1, "Restart must reset both progression and RunState biome to the first biome")
+
 	rs.free()
 	print("  [PASS] RunState Idempotent Finalization Scenario")
 	return true
@@ -1763,10 +1773,58 @@ static func test_ai_decision_outcome_attribution() -> bool:
 	assert(source.damage_dealt_to_player == 2, "Damage outcome must update only the source candidate")
 	assert(source.damage_received == 1 and source.evaluated_encounters == 1, "Candidate fitness must use measured damage and participation")
 	assert(evo.species_policies["CHASER"].action_counts[snapshot.policy_action_id] == 1, "Executed decision must train its own recorded action")
+	assert(evo.decision_history.size() == 1, "Executed decision must create one auditable outcome record")
+	assert(evo.decision_history[0].candidate_id == source_id, "Outcome record must preserve source candidate identity")
 
 	var generation_before: int = evo.generation
 	evo.process_encounter_end(1, 0, 20.0, {"active_families": ["DASHER"]}, "DEFAULT", null, 2, true)
 	assert(evo.generation == generation_before, "No-participation encounter must not breed or advance generation")
+	var evaluated_before: Array[int] = []
+	for candidate in evo.active_genomes["CHASER"]:
+		evaluated_before.append(candidate.evaluated_encounters)
+	var orphaned_snapshot: RefCounted = ENEMY_GENOME_SCRIPT.new("CHASER", 1)
+	orphaned_snapshot.instance_id = "orphaned-no-candidate"
+	evo.register_spawned_combatant(orphaned_snapshot)
+	evo.process_encounter_end(1, 0, 20.0, {"ranged": 0.95, "mobility": 0.95}, "DEFAULT", null, 2, true)
+	assert(evo.generation == generation_before, "Unattributed fallback snapshot must not advance the population generation")
+	for candidate_index in range(evo.active_genomes["CHASER"].size()):
+		assert(evo.active_genomes["CHASER"][candidate_index].evaluated_encounters == evaluated_before[candidate_index], "Unattributed combat must not fabricate candidate fitness evidence")
+
+	var failed_director = ENCOUNTER_DIR_SCRIPT.new()
+	var failed_policy = failed_director.learning_policy
+	var policy_counts_before: Array[int] = failed_policy.action_counts.duplicate()
+	failed_director.record_encounter_result(1, 5, 8.0, {"ranged": 0.9}, "COUNTER_RANGED", null, 2, false)
+	assert(failed_policy.action_counts == policy_counts_before, "Run failure must not receive success-only director policy credit")
+
+	var mutation_evo = EVOLUTION_MANAGER_SCRIPT.new()
+	var chaser_policy = mutation_evo.species_policies["CHASER"]
+	var combined_context: Array[float] = [1.0, 0.0, 0.5, 0.5, 0.0, 0.0]
+	var pincer_action: int = chaser_policy.action_names.find("FLANKING_PINCER")
+	var pursuit_action: int = chaser_policy.action_names.find("RAPID_PURSUIT")
+	for _i in range(20):
+		chaser_policy.update_policy_for_decision(pincer_action, combined_context, 1.0)
+		chaser_policy.update_policy_for_decision(pursuit_action, combined_context, -1.0)
+	var chosen_mutation: String = mutation_evo._select_chaser_first_evolution({"tier": 0, "kited_evidence": 1.0, "camp_evidence": 1.0})
+	assert(chosen_mutation == "PINCER_WINGS", "Measured policy outcomes must steer mutation choice among simultaneously eligible responses")
+	var mutation_record: Dictionary = mutation_evo._apply_chaser_first_evolution(chosen_mutation, 1, 0.5, 0.5)
+	assert(mutation_record.get("mutation", "") == "PINCER_WINGS", "Mutation record must expose policy-selected countermeasure")
+	var evolved_chaser: RefCounted = mutation_evo.get_genome_for_spawn("CHASER")
+	assert(evolved_chaser.has_mutation("PINCER_WINGS") and not evolved_chaser.has_mutation("RAPID_PURSUIT"), "Pincer evolution must persist without silently adding the alternate mutation")
+	assert(evolved_chaser.get_max_health() == 6, "Alternative first-tier mutation must preserve the health-doubling invariant")
+	evolved_chaser.policy_action_name = "FLANKING_PINCER"
+	var pincer_enemy: CharacterBody2D = CHASER_SCENE.instantiate()
+	evolved_chaser.apply_to_enemy(pincer_enemy)
+	assert(pincer_enemy.is_flanker and pincer_enemy.flank_angle > 0.0, "Selected Pincer evolution must produce an observable flank behavior")
+	pincer_enemy.free()
+
+	var camp_evo = EVOLUTION_MANAGER_SCRIPT.new()
+	for _encounter in range(2):
+		camp_evo.get_genome_for_spawn("CHASER")
+		camp_evo.process_encounter_end(0, 0, 10.0, {
+			"CHASER": {"ranged": 0.1, "mobility": 0.1, "turret": 0.95, "aggression": 0.4}
+		}, "DEFAULT", null, 2, true)
+	assert(camp_evo.get_species_tier("CHASER") == 1, "Repeated stationary camping evidence must unlock a first-tier Chaser response")
+	assert(camp_evo.evolution_history.back().mutation == "PINCER_WINGS", "Camping behavior must unlock the flank mutation rather than the kiting mutation")
 	enemy.free()
 	print("  [PASS] Per-Enemy Decision Execution, Outcome Attribution & Evidence-Gated Breeding")
 	return true
