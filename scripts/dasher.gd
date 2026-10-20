@@ -20,6 +20,7 @@ var state := State.STALK
 var state_timer := 1.2
 var lunge_direction := Vector2.RIGHT
 var contact_dealt := false
+var contact_cooldown := 0.0
 var damage_flash := 0.0
 var evolution_tier: int = 0
 var hazard_timer := 0.0
@@ -71,6 +72,7 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	damage_flash = maxf(0.0, damage_flash - delta)
+	contact_cooldown = maxf(0.0, contact_cooldown - delta)
 
 	# Debuff updates
 	if debuff_slow_timer > 0.0:
@@ -147,11 +149,7 @@ func _physics_process(delta: float) -> void:
 			velocity = lunge_direction * eff_lunge
 			rotation = lunge_direction.angle()
 			if not contact_dealt and to_target.length() < 32.0:
-				if target.has_method("take_damage"):
-					target.take_damage(1)
-					contact_dealt = true
-					if genome and "damage_dealt_to_player" in genome:
-						genome.damage_dealt_to_player += 1
+				_deal_contact_damage()
 
 			# Drop capped, spaced electric hazard nodes along the lunge path
 			if has_hazard_trail:
@@ -184,10 +182,24 @@ func _physics_process(delta: float) -> void:
 		for i in range(col_count):
 			var col := get_slide_collision(i)
 			if col:
+				if col.get_collider() == target:
+					_deal_contact_damage()
 				var n := col.get_normal()
 				if velocity.dot(n) < 0.0:
 					velocity = velocity.slide(n)
+	if is_instance_valid(target) and global_position.distance_to(target.global_position) <= 32.0:
+		_deal_contact_damage()
 	queue_redraw()
+
+
+func _deal_contact_damage() -> void:
+	if contact_cooldown > 0.0 or not is_instance_valid(target) or not target.has_method("take_damage"):
+		return
+	target.take_damage(1)
+	contact_cooldown = 0.9
+	contact_dealt = true
+	if genome and "damage_dealt_to_player" in genome:
+		genome.damage_dealt_to_player += 1
 
 
 func _clean_hazards() -> void:

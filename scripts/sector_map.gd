@@ -21,9 +21,14 @@ func configure_map(summaries: Array, current_index: int, total_rooms: int) -> vo
 	room_summaries.clear()
 	for entry in summaries:
 		if entry is Dictionary:
-			room_summaries.append(entry)
+			room_summaries.append(entry.duplicate(true))
 	active_room_index = clampi(current_index, 0, maxi(0, total_rooms - 1))
 	queue_redraw()
+
+
+func _is_hidden_secret(summary: Dictionary) -> bool:
+	var secret := bool(summary.get("is_secret", false)) or str(summary.get("room_type", "")) == "SECRET"
+	return secret and not bool(summary.get("is_revealed", false))
 
 
 func _room_position(index: int, room_type: String, spacing: float, start_x: float) -> Vector2:
@@ -152,7 +157,7 @@ func _draw() -> void:
 	# 2. Corridors connecting chambers
 	for i in range(total):
 		var s_from: Dictionary = room_summaries[i]
-		if s_from.get("is_secret", false) and not s_from.get("is_revealed", false):
+		if _is_hidden_secret(s_from):
 			continue
 		var conns: Array = s_from.get("connections", [])
 		for target in conns:
@@ -160,7 +165,7 @@ func _draw() -> void:
 			if target_index <= i or target_index >= total:
 				continue
 			var s_to: Dictionary = room_summaries[target_index]
-			if s_to.get("is_secret", false) and not s_to.get("is_revealed", false):
+			if _is_hidden_secret(s_to):
 				continue
 			var traversed := i < active_room_index
 			_draw_corridor(positions[i], positions[target_index], traversed)
@@ -172,9 +177,8 @@ func _draw() -> void:
 
 	for i in range(total):
 		var summary: Dictionary = room_summaries[i]
-		var is_secret: bool = summary.get("is_secret", false)
-		var is_revealed: bool = summary.get("is_revealed", false)
-		if is_secret and not is_revealed:
+		var is_secret: bool = bool(summary.get("is_secret", false)) or str(summary.get("room_type", "")) == "SECRET"
+		if _is_hidden_secret(summary):
 			continue
 
 		var r_type: String = summary.get("room_type", "COMBAT")

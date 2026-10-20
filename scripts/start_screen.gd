@@ -3,13 +3,16 @@ extends Control
 
 var prompt: Label
 var splash_stack: VBoxContainer
+var logo_visual: Control
 var transitioning := false
 var pulse_time := 0.0
+const GLITCH_OVERLAY := preload("res://scripts/menu_glitch_overlay.gd")
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_build_screen()
+	add_child(GLITCH_OVERLAY.new())
 	var audio: Node = get_node_or_null("/root/AudioSynth")
 	if audio:
 		audio.play_music("theme_loop")
@@ -20,16 +23,22 @@ func _process(delta: float) -> void:
 	if is_instance_valid(prompt):
 		prompt.modulate.a = 0.65 + (sin(pulse_time * 2.4) + 1.0) * 0.17
 	if is_instance_valid(splash_stack):
-		splash_stack.rotation = sin(pulse_time * 0.45) * 0.004
+		splash_stack.rotation = sin(pulse_time * 0.45) * 0.010
+	if is_instance_valid(logo_visual):
+		logo_visual.pivot_offset = logo_visual.size * 0.5
+		logo_visual.rotation = sin(pulse_time * 0.8) * 0.014
+		var logo_scale := 1.0 + sin(pulse_time * 1.6) * 0.012
+		logo_visual.scale = Vector2(logo_scale, logo_scale)
 
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch and event.pressed:
 		_open_menu()
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_open_menu()
-	elif event is InputEventKey and event.pressed and not event.echo:
-		_open_menu()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		get_tree().quit()
 
 
 func _build_screen() -> void:
@@ -71,6 +80,7 @@ func _build_screen() -> void:
 		logo_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		logo_rect.custom_minimum_size = Vector2(480, 110)
 		logo_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		logo_visual = logo_rect
 		stack.add_child(logo_rect)
 	else:
 		var title := Label.new()
@@ -79,6 +89,7 @@ func _build_screen() -> void:
 		title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		title.add_theme_font_size_override("font_size", 58)
 		title.add_theme_color_override("font_color", Color("38bdf8"))
+		logo_visual = title
 		stack.add_child(title)
 
 	var subtitle := Label.new()

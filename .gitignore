@@ -1,14 +1,38 @@
-# Godot generated/imported files
+# Godot editor/import cache (recreated by Godot)
 .godot/
-android/build/
-export.cfg
-export_presets.cfg
 
-# Editor and operating-system files
+# Android build and exported packages
+build/
+android/build/
+export_templates/
+*.apk
+*.aab
+*.idsig
+
+# Local test profile / editor-only configuration
+.local-test-profile/
+feature_profiles/
+script_templates/
+text_editor_themes/
+export.cfg
+
+# Local signing credentials and environment secrets
+*.keystore
+*.jks
+*.p12
+*.pfx
+.env
+.env.*
+!.env.example
+
+# Logs, crash dumps, temporary and backup files
+*.log
+*.crash
+*.dmp
+*.tmp
+*.bak
+
+# Operating system metadata
 .DS_Store
 Thumbs.db
-*.tmp
-
-*.uid
-.local-test-profile/
-ANTIGRAVITY_IMPLEMENTATION_PLAN.md
+Desktop.ini

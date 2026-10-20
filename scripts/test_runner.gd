@@ -2,7 +2,7 @@ extends SceneTree
 ## Headless CLI Test Runner for GLITCH//RUN test suite.
 ## Prepares user:// before persistence scenarios run.
 
-func _init() -> void:
+func _initialize() -> void:
 	call_deferred("_run_tests")
 
 

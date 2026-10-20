@@ -20,6 +20,9 @@ const DEBRIS_EMITTER_SCRIPT := preload("res://scripts/debris_emitter.gd")
 const PAUSE_MENU_SCRIPT := preload("res://scripts/pause_menu.gd")
 const MINIMAP_HUD_SCRIPT := preload("res://scripts/minimap_hud.gd")
 const DEBRIEF_TERMINAL_SCRIPT := preload("res://scripts/debrief_terminal.gd")
+const MENU_BACKDROP_SCRIPT := preload("res://scripts/menu_backdrop.gd")
+const MENU_SKIN := preload("res://scripts/menu_ui_skin.gd")
+const MENU_GLITCH_SCRIPT := preload("res://scripts/menu_glitch_overlay.gd")
 const SPATIAL_INDEX_SCRIPT := preload("res://scripts/spatial_index.gd")
 const SQUAD_COORDINATOR_SCRIPT := preload("res://scripts/squad_coordinator.gd")
 const BOSS_DIRECTOR_SCRIPT := preload("res://scripts/boss_director.gd")
@@ -116,6 +119,7 @@ var doors_unlocked := false
 var pause_menu: Control
 var minimap_hud: Control
 var debrief_terminal: Control
+var special_menu_glitch: CanvasLayer
 var shop_cooldown: float = 0.0
 var shop_zone_armed: bool = true
 var medbay_full_hp_cooldown: float = 0.0
@@ -184,12 +188,12 @@ func _ready() -> void:
 	run_over = false
 	room_cleared = false
 
-	# Generate deterministic procedural dungeon layout from run seed
+	# Generate a reproducible but floor-specific procedural dungeon layout.
 	var first_floor_rooms: int = rs.progression.rooms_per_sector if rs.progression else rs.TOTAL_ROOMS
 	var first_floor_waves: int = rs.progression.sector_total_waves if rs.progression else 3
 	var is_boss_fl: bool = rs.progression.is_boss_floor() if rs.progression else true
 	dungeon_layout = dungeon_generator.generate_dungeon(
-		rs.current_seed,
+		rs.progression.get_current_floor_seed() if rs.progression else rs.current_seed,
 		first_floor_rooms,
 		first_floor_waves,
 		true,
@@ -237,31 +241,16 @@ func _notification(what: int) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and event.keycode == KEY_F1:
-		toggle_debug_overlay()
-		return
-
-	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and (event.keycode == KEY_ESCAPE or event.keycode == KEY_P or event.keycode == KEY_BACK)):
-		if not run_over and is_instance_valid(upgrade_container) and not upgrade_container.visible:
-			if is_instance_valid(pause_menu):
-				if pause_menu.visible:
-					pause_menu._handle_back_request()
-				else:
-					pause_menu.open_pause()
-
-	# Direct touch or click selection on unlocked doors (single-room arena fallback only, when room is cleared)
+	# Direct touch selection on unlocked doors (single-room arena fallback only, when room is cleared)
 	var is_multi_room: bool = dungeon_layout != null and not dungeon_layout.corridors.is_empty()
 	if not is_multi_room and doors_unlocked and room_cleared and active_enemies.is_empty() and pending_spawn_telegraphs.is_empty() and not run_over and current_room_data and is_instance_valid(player):
 		var click_pos := Vector2.ZERO
-		var is_click := false
-		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-			is_click = true
-			click_pos = event.position
-		elif event is InputEventScreenTouch and event.pressed:
-			is_click = true
+		var is_touch := false
+		if event is InputEventScreenTouch and event.pressed:
+			is_touch = true
 			click_pos = event.position
 
-		if is_click and is_instance_valid(camera):
+		if is_touch and is_instance_valid(camera):
 			var world_click := camera.get_screen_center_position() - (get_viewport_rect().size * 0.5) + click_pos
 			for door in current_room_data.exit_doors:
 				if door.pos.distance_to(world_click) < 80.0:
@@ -1745,8 +1734,14 @@ func reveal_secret_room(room_idx: int) -> void:
 	active_secret_walls = remaining_walls
 
 	var rs = get_node_or_null("/root/RunState")
-	if rs and room_idx >= 0 and room_idx < rs.dungeon_layout_summary.size():
-		rs.dungeon_layout_summary[room_idx]["is_revealed"] = true
+	if rs:
+		# Find by the room's stable identity rather than assuming the summary's
+		# array position always matches its dungeon index.
+		for room_summary in rs.dungeon_layout_summary:
+			if int(room_summary.get("index", -1)) == room_idx:
+				room_summary["is_secret"] = true
+				room_summary["is_revealed"] = true
+				break
 
 	# Audio cue & screen shake
 	add_trauma(0.35)
@@ -1943,6 +1938,11 @@ func _create_player() -> void:
 func _on_player_ammo_changed(current: int, maximum: int, is_reloading: bool) -> void:
 	if not is_instance_valid(ammo_label):
 		return
+	var run_state = get_node_or_null("/root/RunState")
+	if run_state and run_state.selected_character_id == "BREACHER":
+		ammo_label.text = "ARC STRIKE // READY"
+		ammo_label.add_theme_color_override("font_color", Color("fb923c"))
+		return
 	if is_reloading:
 		ammo_label.text = "RELOAD..."
 		ammo_label.add_theme_color_override("font_color", Color("f59e0b"))
@@ -2074,7 +2074,7 @@ func _load_room(index: int) -> void:
 		squad_coordinator.reset()
 
 	var rs_node = get_node_or_null("/root/RunState") if is_inside_tree() else null
-	var sec_seed: int = rs_node.progression.get_current_sector_seed() if (rs_node and rs_node.progression) else (rs_node.current_seed if rs_node else 1337)
+	var sec_seed: int = rs_node.progression.get_current_floor_seed() if (rs_node and rs_node.progression) else (rs_node.current_seed if rs_node else 1337)
 	var room_count: int = rs_node.progression.rooms_per_sector if (rs_node and rs_node.progression) else 12
 
 	if not dungeon_layout or dungeon_layout.rooms.is_empty():
@@ -2350,6 +2350,7 @@ func _show_shop_interface() -> void:
 		]
 		card.disabled = not can_afford or is_capped or is_purchased
 		card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		MENU_SKIN.style_button(card, _menu_rarity_color(rarity), true if is_purchased or is_capped else false)
 		card.pressed.connect(func():
 			if rs and rs.bits >= cost and not is_capped and not item.get("purchased", false):
 				rs.spend_bits(cost)
@@ -2364,10 +2365,13 @@ func _show_shop_interface() -> void:
 	var bypass_btn := Button.new()
 	bypass_btn.custom_minimum_size = Vector2(190, 200)
 	bypass_btn.text = "\n[ EXIT TERMINAL ]\n\nLeave kiosk.\n\nResume run."
+	MENU_SKIN.style_button(bypass_btn, Color("64748b"))
 	bypass_btn.pressed.connect(_close_shop_or_gift)
 	upgrade_cards_box.add_child(bypass_btn)
 
 	upgrade_container.visible = true
+	if is_instance_valid(special_menu_glitch):
+		special_menu_glitch.visible = true
 
 
 func _show_gift_interface() -> void:
@@ -2414,6 +2418,7 @@ func _show_gift_interface() -> void:
 		var stack_line := "RESOURCE CACHE" if item_id == "DATA_BITS" else ("FIELD REPAIR" if item_id == "FIELD_REPAIR" else "STACK %d / %d" % [stack_count, stack_cap])
 		card.text = "%s\n%s  •  %s\n%s\n\nTap to claim" % [title, rarity, stack_line, description]
 		card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		MENU_SKIN.style_button(card, _menu_rarity_color(rarity))
 		card.pressed.connect(func():
 			if not rs:
 				return
@@ -2430,6 +2435,8 @@ func _show_gift_interface() -> void:
 
 	upgrade_container.z_index = 100
 	upgrade_container.visible = true
+	if is_instance_valid(special_menu_glitch):
+		special_menu_glitch.visible = true
 
 
 func _make_gift_fallback(rs) -> Dictionary:
@@ -2450,6 +2457,8 @@ func _make_gift_fallback(rs) -> Dictionary:
 
 func _close_shop_or_gift() -> void:
 	upgrade_container.visible = false
+	if is_instance_valid(special_menu_glitch):
+		special_menu_glitch.visible = false
 	if current_room_data and current_room_data.room_type == "GIFT":
 		current_room_data.is_cleared = true
 	get_tree().paused = false
@@ -2516,7 +2525,7 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 		spawn_budget = maxi(3, spawn_budget)
 	if current_room_data.room_type == "ELITE":
 		spawn_budget = mini(9, spawn_budget + 2)
-	var sector_seed: int = rs_node.progression.get_current_sector_seed() if (rs_node and rs_node.progression) else 1337
+	var sector_seed: int = rs_node.progression.get_current_floor_seed() if (rs_node and rs_node.progression) else 1337
 	current_room_data.enemy_spawns = dungeon_generator.generate_wave_spawns(current_room_data, sector_seed, wave_num, spawn_budget)
 
 	var encounter: Dictionary = encounter_director.prepare_encounter(
@@ -3096,16 +3105,21 @@ func _show_upgrade_draft(
 			var stack_cap: int = rs.get_upgrade_stack_cap(item.id)
 			card.text = "\n[ %s ]\n%s • STACK %d / %d\n\n%s\n\n\"%s\"" % [item.title, rarity, stack_count, stack_cap, item.desc, item.flavor]
 		card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		MENU_SKIN.style_button(card, _menu_rarity_color(rarity))
 		card.pressed.connect(_on_upgrade_selected.bind(item.id))
 		upgrade_cards_box.add_child(card)
 
 	upgrade_container.visible = true
+	if is_instance_valid(special_menu_glitch):
+		special_menu_glitch.visible = true
 
 
 func _on_upgrade_selected(upgrade_id: String) -> void:
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("ui_click", 0.0, 0.0)
 	upgrade_container.visible = false
+	if is_instance_valid(special_menu_glitch):
+		special_menu_glitch.visible = false
 	get_tree().paused = false
 	if touch_controls:
 		touch_controls.enabled = true
@@ -3123,6 +3137,16 @@ func _on_upgrade_selected(upgrade_id: String) -> void:
 		_unlock_exit_doors()
 	else:
 		_show_director_banner("SUBROUTINE INSTALLED // [ %s ]" % upgrade_id, "Warp portal active. Step through to proceed to the next floor.")
+
+
+func _menu_rarity_color(rarity: String) -> Color:
+	match rarity.to_upper():
+		"RARE":
+			return Color("c084fc")
+		"UNCOMMON":
+			return Color("22c55e")
+		_:
+			return Color("38bdf8")
 
 
 func _unlock_exit_doors() -> void:
@@ -3260,6 +3284,10 @@ func _create_ui() -> void:
 	ui_layer.layer = 20
 	ui_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(ui_layer)
+	special_menu_glitch = MENU_GLITCH_SCRIPT.new()
+	special_menu_glitch.layer = 30
+	special_menu_glitch.visible = false
+	add_child(special_menu_glitch)
 
 	# Full and Empty Heart textures from assets/ui/hearts.png
 	if hearts_tex:
@@ -3366,21 +3394,6 @@ func _create_ui() -> void:
 	sector_label.add_theme_font_size_override("font_size", 11)
 	sector_pill.add_child(sector_label)
 
-	var dbg_btn := Button.new()
-	dbg_btn.custom_minimum_size = Vector2(46, 38)
-	dbg_btn.text = "DBG"
-	var dbg_btn_style := StyleBoxFlat.new()
-	dbg_btn_style.bg_color = Color(0.06, 0.08, 0.18, 0.95)
-	dbg_btn_style.border_color = Color("c084fc")
-	dbg_btn_style.set_border_width_all(1)
-	dbg_btn_style.set_corner_radius_all(7)
-	dbg_btn.add_theme_stylebox_override("normal", dbg_btn_style)
-	dbg_btn.add_theme_stylebox_override("hover", dbg_btn_style)
-	dbg_btn.add_theme_stylebox_override("pressed", dbg_btn_style)
-	dbg_btn.add_theme_color_override("font_color", Color("c084fc"))
-	dbg_btn.pressed.connect(toggle_debug_overlay)
-	top_row.add_child(dbg_btn)
-
 	var pause_btn := Button.new()
 	pause_btn.custom_minimum_size = Vector2(48, 38)
 	pause_btn.text = "Ⅱ"
@@ -3469,17 +3482,16 @@ func _create_ui() -> void:
 	dbg_btns_hbox.add_child(next_seed_btn)
 
 	var close_dbg_btn := Button.new()
-	close_dbg_btn.text = "Close (F1)"
+	close_dbg_btn.text = "CLOSE"
 	close_dbg_btn.pressed.connect(toggle_debug_overlay)
 	dbg_btns_hbox.add_child(close_dbg_btn)
 
 	hint_label = Label.new()
 	hint_label.position = Vector2(24, 46)
-	hint_label.text = "WASD/Move   •   Aim + Fire   •   Shift/Space Dash (I-Frames)   •   ESC/P/|| Pause"
+	hint_label.text = "MOVE  •  AIM + FIRE  •  DASH  •  RELOAD  •  TAP Ⅱ TO PAUSE"
 	hint_label.add_theme_color_override("font_color", Color("64748b"))
 	hint_label.add_theme_font_size_override("font_size", 11)
-	if OS.has_feature("mobile") or DisplayServer.is_touchscreen_available():
-		hint_label.visible = false
+	hint_label.visible = false
 	ui_layer.add_child(hint_label)
 
 	# Boss Health Bar (Bottom Center - Zero HUD Collisions)
@@ -3565,9 +3577,8 @@ func _create_ui() -> void:
 	upgrade_container.visible = false
 	ui_layer.add_child(upgrade_container)
 
-	var draft_bg := ColorRect.new()
-	draft_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	draft_bg.color = Color(0.02, 0.04, 0.09, 0.88)
+	var draft_bg := MENU_BACKDROP_SCRIPT.new()
+	draft_bg.accent = Color("c084fc")
 	upgrade_container.add_child(draft_bg)
 
 	var draft_center := CenterContainer.new()

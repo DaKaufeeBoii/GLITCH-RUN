@@ -140,8 +140,6 @@ func _is_reload_button(point: Vector2) -> bool:
 
 
 func _draw() -> void:
-	if not OS.has_feature("mobile") and not DisplayServer.is_touchscreen_available() and not ProjectSettings.get_setting("input_devices/pointing/emulate_touch_from_mouse", false):
-		return
 	# Movement virtual joystick (left)
 	var move_center := move_origin if move_finger != -1 else Vector2(120.0, size.y - 110.0)
 	draw_circle(move_center, JOYSTICK_RADIUS, Color(0.15, 0.28, 0.45, 0.24))

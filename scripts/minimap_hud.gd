@@ -23,7 +23,7 @@ func _ready() -> void:
 
 
 func _on_gui_input(event: InputEvent) -> void:
-	if (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT) or (event is InputEventScreenTouch and event.pressed):
+	if event is InputEventScreenTouch and event.pressed:
 		minimap_tapped.emit()
 		accept_event()
 
@@ -32,10 +32,19 @@ func update_map(summaries: Array, current_index: int, player: Node2D = null) -> 
 	room_summaries.clear()
 	for entry in summaries:
 		if entry is Dictionary:
-			room_summaries.append(entry)
+			# Keep a local snapshot: callers may mutate the run summary while a
+			# room is being revealed or a floor is being regenerated.
+			room_summaries.append(entry.duplicate(true))
 	active_room_index = current_index
 	player_ref = player
 	queue_redraw()
+
+
+func _is_hidden_secret(summary: Dictionary) -> bool:
+	# Treat the SECRET archetype as authoritative too. This fails closed if a
+	# legacy/partial summary was serialized without the explicit boolean flag.
+	var secret := bool(summary.get("is_secret", false)) or str(summary.get("room_type", "")) == "SECRET"
+	return secret and not bool(summary.get("is_revealed", false))
 
 
 func _room_position(index: int, total: int) -> Vector2:
@@ -103,7 +112,7 @@ func _draw() -> void:
 	# 2. Corridors
 	for i in range(total):
 		var s_from: Dictionary = room_summaries[i]
-		if s_from.get("is_secret", false) and not s_from.get("is_revealed", false):
+		if _is_hidden_secret(s_from):
 			continue
 		var conns: Array = s_from.get("connections", [])
 		for target in conns:
@@ -111,7 +120,7 @@ func _draw() -> void:
 			if target_index <= i or target_index >= total:
 				continue
 			var s_to: Dictionary = room_summaries[target_index]
-			if s_to.get("is_secret", false) and not s_to.get("is_revealed", false):
+			if _is_hidden_secret(s_to):
 				continue
 			var traversed := (i <= active_room_index and target_index <= active_room_index)
 			var line_col := Color(0.0, 0.94, 1.0, 0.75) if traversed else Color(0.18, 0.28, 0.42, 0.50)
@@ -123,9 +132,8 @@ func _draw() -> void:
 
 	for i in range(total):
 		var summary: Dictionary = room_summaries[i]
-		var is_secret: bool = summary.get("is_secret", false)
-		var is_revealed: bool = summary.get("is_revealed", false)
-		if is_secret and not is_revealed:
+		var is_secret: bool = bool(summary.get("is_secret", false)) or str(summary.get("room_type", "")) == "SECRET"
+		if _is_hidden_secret(summary):
 			continue
 
 		var r_type: String = summary.get("room_type", "COMBAT")

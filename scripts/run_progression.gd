@@ -100,6 +100,12 @@ func get_current_sector_seed() -> int:
 	return derive_sector_seed(base_run_seed, sector_index)
 
 
+func get_current_floor_seed() -> int:
+	## Keep floors reproducible while ensuring each floor in one sector has a distinct map.
+	var floor_seed := ((get_current_sector_seed() * 1103515245) ^ (current_floor * 0x45D9F3B) ^ 0x27D4EB2D) & 0x7FFFFFFF
+	return floor_seed if floor_seed != 0 else 1337
+
+
 func update_sector_floors(play_time_seconds: float = -1.0) -> int:
 	## Enforces an odd number of floors (3, 5, or 7) based on play time in the current seed.
 	if play_time_seconds >= 0.0:

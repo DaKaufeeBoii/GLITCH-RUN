@@ -23,21 +23,29 @@ var archetype_description := ""
 var player_radar_vals: Array[float] = [0.5, 0.5, 0.5, 0.5]
 var director_radar_vals: Array[float] = [0.5, 0.5, 0.5, 0.5]
 
+const MENU_BACKDROP_SCRIPT := preload("res://scripts/menu_backdrop.gd")
+const MENU_SKIN := preload("res://scripts/menu_ui_skin.gd")
+const MENU_GLITCH_SCRIPT := preload("res://scripts/menu_glitch_overlay.gd")
+var menu_glitch: CanvasLayer
+
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	visible = false
 	_build_ui()
+	menu_glitch = MENU_GLITCH_SCRIPT.new()
+	menu_glitch.layer = 30
+	menu_glitch.visible = false
+	add_child(menu_glitch)
 
 
 func _build_ui() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	visible = false
 
-	# Dark glassmorphic cyber backdrop
-	var bg := ColorRect.new()
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.color = Color(0.012, 0.02, 0.045, 0.94)
+	# Animated blueprint backdrop; main title screen remains unchanged.
+	var bg := MENU_BACKDROP_SCRIPT.new()
+	bg.accent = Color("f43f5e")
 	add_child(bg)
 
 	var main_vbox := VBoxContainer.new()
@@ -123,14 +131,11 @@ func _build_ui() -> void:
 	right_header.add_theme_color_override("font_color", Color("f43f5e"))
 	right_vbox.add_child(right_header)
 
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	right_vbox.add_child(scroll)
-
 	tactics_vbox = VBoxContainer.new()
 	tactics_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tactics_vbox.add_theme_constant_override("separation", 8)
-	scroll.add_child(tactics_vbox)
+	tactics_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tactics_vbox.add_theme_constant_override("separation", 5)
+	right_vbox.add_child(tactics_vbox)
 
 	# Footer Buttons
 	var footer_hbox := HBoxContainer.new()
@@ -155,6 +160,9 @@ func _build_ui() -> void:
 	restart_btn.custom_minimum_size = Vector2(180, 48)
 	restart_btn.pressed.connect(_on_restart_pressed)
 	footer_hbox.add_child(restart_btn)
+	MENU_SKIN.style_button(menu_btn, Color("64748b"))
+	MENU_SKIN.style_button(replay_btn, Color("c084fc"))
+	MENU_SKIN.style_button(restart_btn, Color("38bdf8"))
 
 
 func setup_debrief(
@@ -195,152 +203,35 @@ func setup_debrief(
 	# Analyze Archetype & Radar values
 	_classify_archetype(metrics)
 
-	# Populate Director Mutation Log & Evolution Lineage
+	# Show a compact, fixed-height recent summary. This screen never scrolls.
 	for child in tactics_vbox.get_children():
 		child.queue_free()
 
-	if tactics_history.is_empty() and evolution_history.is_empty():
+	if tactics_history.is_empty() and evolution_history.is_empty() and (not rs or rs.boss_encounter_history.is_empty()):
 		var empty_lbl := Label.new()
 		empty_lbl.text = "Director remained in baseline calibration state."
 		empty_lbl.add_theme_color_override("font_color", Color("64748b"))
 		tactics_vbox.add_child(empty_lbl)
 	else:
-		# 1. Tactical Decisions
-		for entry in tactics_history:
-			var card := PanelContainer.new()
-			var style := StyleBoxFlat.new()
-			style.bg_color = Color(0.08, 0.04, 0.07, 0.75)
-			style.border_color = Color("f43f5e")
-			style.set_border_width_all(1)
-			style.set_corner_radius_all(3)
-			style.content_margin_left = 10
-			style.content_margin_top = 6
-			style.content_margin_right = 10
-			style.content_margin_bottom = 6
-			card.add_theme_stylebox_override("panel", style)
-			tactics_vbox.add_child(card)
-
-			var card_vbox := VBoxContainer.new()
-			card_vbox.add_theme_constant_override("separation", 2)
-			card.add_child(card_vbox)
-
-			var header := Label.new()
-			header.text = "SECTOR %d: %s" % [entry.get("sector", 1), entry.get("tactic", "COUNTER")]
-			header.add_theme_font_size_override("font_size", 12)
-			header.add_theme_color_override("font_color", Color("fda4af"))
-			card_vbox.add_child(header)
-
-			var reason := Label.new()
-			reason.text = "Trigger: %s" % entry.get("reason", "Combat telemetry shift")
-			reason.add_theme_font_size_override("font_size", 10)
-			reason.add_theme_color_override("font_color", Color("94a3b8"))
-			card_vbox.add_child(reason)
-
-			var muts := Label.new()
-			muts.text = "Mutations: %s" % entry.get("mutations", "Evolved aggressive swarm tactics")
-			muts.add_theme_font_size_override("font_size", 11)
-			muts.add_theme_color_override("font_color", Color("38bdf8"))
-			card_vbox.add_child(muts)
-
-		# 2. Enemy Genome Evolution Lineage
-		if not evolution_history.is_empty():
-			var evo_header := Label.new()
-			evo_header.text = "ENEMY EVOLUTION LINEAGE (LAYERS B & C)"
-			evo_header.add_theme_font_size_override("font_size", 12)
-			evo_header.add_theme_color_override("font_color", Color("a855f7"))
-			tactics_vbox.add_child(evo_header)
-
-			for evo in evolution_history:
-				var evo_card := PanelContainer.new()
-				var evo_style := StyleBoxFlat.new()
-				evo_style.bg_color = Color(0.06, 0.03, 0.10, 0.85)
-				evo_style.border_color = Color("c084fc")
-				evo_style.set_border_width_all(1)
-				evo_style.set_corner_radius_all(3)
-				evo_style.content_margin_left = 10
-				evo_style.content_margin_top = 4
-				evo_style.content_margin_right = 10
-				evo_style.content_margin_bottom = 4
-				evo_card.add_theme_stylebox_override("panel", evo_style)
-				tactics_vbox.add_child(evo_card)
-
-				var ev_vbox := VBoxContainer.new()
-				ev_vbox.add_theme_constant_override("separation", 2)
-				evo_card.add_child(ev_vbox)
-
-				var ev_title := Label.new()
-				var tier_str: String = " [TIER %d | %s]" % [evo.get("tier", 1), evo.get("health_mult", "2x HP")] if evo.has("tier") else ""
-				ev_title.text = "SECTOR %d: %s%s -> %s" % [evo.get("sector", 1), evo.get("family", "ENEMY"), tier_str, evo.get("mutation", "MUTATION")]
-				ev_title.add_theme_font_size_override("font_size", 11)
-				ev_title.add_theme_color_override("font_color", Color("e9d5ff"))
-				ev_vbox.add_child(ev_title)
-
-				var ev_reason := Label.new()
-				ev_reason.text = "Evidence: %s" % evo.get("reason", "Observation")
-				ev_reason.add_theme_font_size_override("font_size", 10)
-				ev_reason.add_theme_color_override("font_color", Color("cbd5e1"))
-				ev_reason.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				ev_vbox.add_child(ev_reason)
-
-				if evo.has("tradeoff"):
-					var ev_tradeoff := Label.new()
-					ev_tradeoff.text = "Adaptation: %s" % evo.get("tradeoff", "")
-					ev_tradeoff.add_theme_font_size_override("font_size", 10)
-					ev_tradeoff.add_theme_color_override("font_color", Color("f472b6"))
-					ev_tradeoff.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-					ev_vbox.add_child(ev_tradeoff)
-
-				if evo.has("counter"):
-					var ev_counter := Label.new()
-					ev_counter.text = "Counterplay: %s" % evo.get("counter", "")
-					ev_counter.add_theme_font_size_override("font_size", 10)
-					ev_counter.add_theme_color_override("font_color", Color("38bdf8"))
-					ev_counter.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-					ev_vbox.add_child(ev_counter)
-
-
-		# 3. Boss Encounters & Returning Mutations
+		var summary_lines: Array[Dictionary] = []
+		for entry in tactics_history.slice(maxi(0, tactics_history.size() - 2)):
+			summary_lines.append({"text": "SEC %d // %s — %s" % [entry.get("sector", 1), entry.get("tactic", "COUNTER"), entry.get("mutations", "Director response")], "color": Color("fda4af")})
+		for evo in evolution_history.slice(maxi(0, evolution_history.size() - 3)):
+			summary_lines.append({"text": "SEC %d // %s evolved: %s (T%d)" % [evo.get("sector", 1), evo.get("family", "ENEMY"), evo.get("mutation", "MUTATION"), evo.get("tier", 1)], "color": Color("c4b5fd")})
 		if rs and not rs.boss_encounter_history.is_empty():
-			var boss_header := Label.new()
-			boss_header.text = "BOSS ENCOUNTERS & RETURNING MUTATIONS"
-			boss_header.add_theme_font_size_override("font_size", 12)
-			boss_header.add_theme_color_override("font_color", Color("f43f5e"))
-			tactics_vbox.add_child(boss_header)
-
-			for b_rec in rs.boss_encounter_history:
-				var b_card := PanelContainer.new()
-				var b_style := StyleBoxFlat.new()
-				b_style.bg_color = Color(0.12, 0.03, 0.05, 0.85)
-				b_style.border_color = Color("fb7185")
-				b_style.set_border_width_all(1)
-				b_style.set_corner_radius_all(3)
-				b_style.content_margin_left = 10
-				b_style.content_margin_top = 4
-				b_style.content_margin_right = 10
-				b_style.content_margin_bottom = 4
-				b_card.add_theme_stylebox_override("panel", b_style)
-				tactics_vbox.add_child(b_card)
-
-				var b_vbox := VBoxContainer.new()
-				b_vbox.add_theme_constant_override("separation", 2)
-				b_card.add_child(b_vbox)
-
-				var b_title := Label.new()
-				var muts: Array = b_rec.get("mutations", [])
-				var mut_desc: String = muts[0].get("name", "BASELINE") if not muts.is_empty() else "BASELINE CALIBRATION"
-				b_title.text = "SEC %d (DEPTH %d): %s // %s [%s]" % [
-					b_rec.get("sector", 1),
-					b_rec.get("depth", 1),
-					b_rec.get("boss_id", "BOSS").to_upper().replace("_", " "),
-					b_rec.get("outcome", "VICTORY"),
-					mut_desc
-				]
-				b_title.add_theme_font_size_override("font_size", 11)
-				b_title.add_theme_color_override("font_color", Color("fecdd3"))
-				b_vbox.add_child(b_title)
+			for boss in rs.boss_encounter_history.slice(maxi(0, rs.boss_encounter_history.size() - 2)):
+				summary_lines.append({"text": "BOSS SEC %d // %s — %s" % [boss.get("sector", 1), str(boss.get("boss_id", "BOSS")).to_upper().replace("_", " "), boss.get("outcome", "VICTORY")], "color": Color("fecdd3")})
+		for line_data in summary_lines:
+			var line := Label.new()
+			line.text = str(line_data.text)
+			line.clip_text = true
+			line.add_theme_font_size_override("font_size", 10)
+			line.add_theme_color_override("font_color", line_data.color)
+			tactics_vbox.add_child(line)
 
 	radar_node.queue_redraw()
 	visible = true
+	menu_glitch.visible = true
 
 
 func _classify_archetype(m: Dictionary) -> void:
@@ -443,6 +334,7 @@ func _draw_radar_chart() -> void:
 
 func _on_restart_pressed() -> void:
 	visible = false
+	menu_glitch.visible = false
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("ui_click", 0.0, 0.0)
 	restart_requested.emit()
@@ -450,6 +342,7 @@ func _on_restart_pressed() -> void:
 
 func _on_replay_seed_pressed() -> void:
 	visible = false
+	menu_glitch.visible = false
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("ui_click", 0.0, 0.0)
 	var rs = get_node_or_null("/root/RunState")
@@ -459,6 +352,7 @@ func _on_replay_seed_pressed() -> void:
 
 func _on_menu_pressed() -> void:
 	visible = false
+	menu_glitch.visible = false
 	if Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth"):
 		get_node("/root/AudioSynth").play("ui_click", 0.0, 0.0)
 	menu_requested.emit()

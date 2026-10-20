@@ -9,13 +9,16 @@ signal menu_requested
 signal quit_requested
 
 const SECTOR_MAP_SCRIPT := preload("res://scripts/sector_map.gd")
+const MENU_BACKDROP_SCRIPT := preload("res://scripts/menu_backdrop.gd")
+const MENU_SKIN := preload("res://scripts/menu_ui_skin.gd")
+const MENU_GLITCH_SCRIPT := preload("res://scripts/menu_glitch_overlay.gd")
 
 var title_label: Label
 var stats_label: Label
 var minimap_box: PanelContainer
 var minimap_nodes_hbox: Control
 var minimap_branch_label: Label
-var upgrades_vbox: VBoxContainer
+var upgrades_vbox: HFlowContainer
 
 var settings_panel: Control
 var how_to_play_panel: Control
@@ -23,21 +26,14 @@ var confirm_panel: Control
 var confirm_msg_label: Label
 var confirm_callback: Callable
 var quit_btn: Button
+var menu_glitch: CanvasLayer
+var action_buttons: VBoxContainer
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	visible = false
 	_build_ui()
-
-
-func _unhandled_input(event: InputEvent) -> void:
-	if not visible:
-		return
-	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and (event.keycode == KEY_ESCAPE or event.keycode == KEY_P or event.keycode == KEY_BACK)):
-		_handle_back_request()
-		if is_inside_tree():
-			get_viewport().set_input_as_handled()
 
 
 func _handle_back_request() -> void:
@@ -55,11 +51,9 @@ func _build_ui() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
-	# Translucent backdrop
-	var bg := ColorRect.new()
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.color = Color(0.015, 0.025, 0.05, 0.94)
-	bg.mouse_filter = Control.MOUSE_FILTER_STOP
+	# Animated blueprint treatment sits below all menu content.
+	var bg := MENU_BACKDROP_SCRIPT.new()
+	bg.accent = Color("38bdf8")
 	add_child(bg)
 
 	var margin := MarginContainer.new()
@@ -78,6 +72,7 @@ func _build_ui() -> void:
 	# Top Bar: Title & Stats
 	var top_bar := HBoxContainer.new()
 	top_bar.alignment = BoxContainer.ALIGNMENT_BEGIN
+	top_bar.custom_minimum_size.y = 34
 	root_vbox.add_child(top_bar)
 
 	title_label = Label.new()
@@ -159,7 +154,9 @@ func _build_ui() -> void:
 	style.content_margin_right = 10
 	style.content_margin_bottom = 6
 	upg_box.add_theme_stylebox_override("panel", style)
-	upg_box.custom_minimum_size = Vector2(0, 130)
+	# Keep the footer panel compact so its theme padding cannot push the final
+	# pixels below the viewport on the 960x540 game canvas.
+	upg_box.custom_minimum_size = Vector2(0, 94)
 	left_vbox.add_child(upg_box)
 
 	var upg_inner := VBoxContainer.new()
@@ -172,22 +169,19 @@ func _build_ui() -> void:
 	upg_header.add_theme_color_override("font_color", Color("38bdf8"))
 	upg_inner.add_child(upg_header)
 
-	var upg_scroll := ScrollContainer.new()
-	upg_scroll.custom_minimum_size = Vector2(0, 85)
-	upg_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	upg_inner.add_child(upg_scroll)
-
-	upgrades_vbox = VBoxContainer.new()
-	upgrades_vbox.add_theme_constant_override("separation", 2)
+	upgrades_vbox = HFlowContainer.new()
+	upgrades_vbox.add_theme_constant_override("h_separation", 8)
+	upgrades_vbox.add_theme_constant_override("v_separation", 4)
 	upgrades_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	upg_scroll.add_child(upgrades_vbox)
+	upgrades_vbox.size_flags_vertical = Control.SIZE_FILL
+	upg_inner.add_child(upgrades_vbox)
 
 	# RIGHT COLUMN: Action Buttons
-	var btn_vbox := VBoxContainer.new()
-	btn_vbox.custom_minimum_size = Vector2(280, 0)
-	btn_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	btn_vbox.add_theme_constant_override("separation", 8)
-	body_hbox.add_child(btn_vbox)
+	action_buttons = VBoxContainer.new()
+	action_buttons.custom_minimum_size = Vector2(280, 0)
+	action_buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	action_buttons.add_theme_constant_override("separation", 8)
+	body_hbox.add_child(action_buttons)
 
 	var resume_btn := Button.new()
 	resume_btn.text = "RESUME SIMULATION"
@@ -200,7 +194,7 @@ func _build_ui() -> void:
 	resume_btn.add_theme_stylebox_override("normal", resume_style)
 	resume_btn.add_theme_color_override("font_color", Color("38bdf8"))
 	resume_btn.pressed.connect(close_pause)
-	btn_vbox.add_child(resume_btn)
+	action_buttons.add_child(resume_btn)
 
 	var htp_btn := Button.new()
 	htp_btn.text = "HOW TO PLAY"
@@ -209,7 +203,7 @@ func _build_ui() -> void:
 		_play_click()
 		how_to_play_panel.visible = true
 	)
-	btn_vbox.add_child(htp_btn)
+	action_buttons.add_child(htp_btn)
 
 	var settings_btn := Button.new()
 	settings_btn.text = "SETTINGS"
@@ -218,7 +212,7 @@ func _build_ui() -> void:
 		_play_click()
 		settings_panel.visible = true
 	)
-	btn_vbox.add_child(settings_btn)
+	action_buttons.add_child(settings_btn)
 
 	var restart_btn := Button.new()
 	restart_btn.text = "RESTART RUN"
@@ -230,7 +224,7 @@ func _build_ui() -> void:
 			Callable(self, "_confirm_restart")
 		)
 	)
-	btn_vbox.add_child(restart_btn)
+	action_buttons.add_child(restart_btn)
 
 	var menu_btn := Button.new()
 	menu_btn.text = "ABORT TO MAIN MENU"
@@ -242,7 +236,7 @@ func _build_ui() -> void:
 			Callable(self, "_confirm_menu")
 		)
 	)
-	btn_vbox.add_child(menu_btn)
+	action_buttons.add_child(menu_btn)
 
 	quit_btn = Button.new()
 	quit_btn.text = "QUIT SESSION"
@@ -261,12 +255,25 @@ func _build_ui() -> void:
 			Callable(self, "_confirm_quit")
 		)
 	)
-	btn_vbox.add_child(quit_btn)
+	action_buttons.add_child(quit_btn)
 
 	# Build child modals
 	_build_confirm_modal()
 	_build_how_to_play_modal()
 	_build_settings_modal()
+	_style_menu_buttons(self)
+	menu_glitch = MENU_GLITCH_SCRIPT.new()
+	menu_glitch.layer = 30
+	menu_glitch.visible = false
+	add_child(menu_glitch)
+
+
+func _style_menu_buttons(node: Node) -> void:
+	for child in node.get_children():
+		if child is Button:
+			var danger := str(child.text).contains("ABORT") or str(child.text).contains("QUIT") or str(child.text).contains("RESTART") or str(child.text).contains("CONFIRM")
+			MENU_SKIN.style_button(child, Color("fb7185") if danger else Color("38bdf8"), danger)
+		_style_menu_buttons(child)
 
 
 func get_quit_button() -> Button:
@@ -303,8 +310,9 @@ func open_pause() -> void:
 		minimap_nodes_hbox.call("configure_map", rs.dungeon_layout_summary, cur_room, total_rooms)
 
 		# Clear previous items
-		for i in range(1, upgrades_vbox.get_child_count()):
-			upgrades_vbox.get_child(i).queue_free()
+		for child in upgrades_vbox.get_children():
+			upgrades_vbox.remove_child(child)
+			child.queue_free()
 
 		if rs.active_upgrade_ids.is_empty():
 			var empty_lbl := Label.new()
@@ -313,15 +321,22 @@ func open_pause() -> void:
 			empty_lbl.add_theme_color_override("font_color", Color("64748b"))
 			upgrades_vbox.add_child(empty_lbl)
 		else:
+			var upgrade_counts: Dictionary = {}
 			for upg_id in rs.active_upgrade_ids:
+				upgrade_counts[upg_id] = int(upgrade_counts.get(upg_id, 0)) + 1
+			for upg_id in upgrade_counts:
 				var lbl := Label.new()
-				lbl.text = "• %s" % upg_id
-				lbl.add_theme_font_size_override("font_size", 12)
+				var count: int = int(upgrade_counts[upg_id])
+				lbl.text = "%s ×%d" % [upg_id, count] if count > 1 else str(upg_id)
+				lbl.add_theme_font_size_override("font_size", 10)
 				lbl.add_theme_color_override("font_color", Color("cbd5e1"))
 				upgrades_vbox.add_child(lbl)
 
 	get_tree().paused = true
 	visible = true
+	if is_instance_valid(menu_glitch):
+		menu_glitch.visible = true
+	_animate_pause_controls()
 	var p = get_parent()
 	if p:
 		var game_node = p.get_parent()
@@ -337,6 +352,8 @@ func close_pause() -> void:
 	if is_inside_tree():
 		get_tree().paused = false
 	visible = false
+	if is_instance_valid(menu_glitch):
+		menu_glitch.visible = false
 	var p = get_parent()
 	if p:
 		var game_node = p.get_parent()
@@ -345,6 +362,18 @@ func close_pause() -> void:
 			game_node.touch_controls.enabled = true
 	_play_click()
 	resume_requested.emit()
+
+
+func _animate_pause_controls() -> void:
+	if not is_instance_valid(action_buttons):
+		return
+	for index in range(action_buttons.get_child_count()):
+		var button := action_buttons.get_child(index) as Control
+		button.modulate.a = 0.0
+		var tween := create_tween()
+		tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+		tween.tween_interval(float(index) * 0.035)
+		tween.tween_property(button, "modulate:a", 1.0, 0.12).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
 
 func _show_confirmation(title: String, message: String, callback: Callable) -> void:
@@ -359,6 +388,8 @@ func _confirm_restart() -> void:
 	if is_inside_tree():
 		get_tree().paused = false
 	visible = false
+	if is_instance_valid(menu_glitch):
+		menu_glitch.visible = false
 	var p = get_parent()
 	if p:
 		var game_node = p.get_parent()
@@ -370,6 +401,8 @@ func _confirm_restart() -> void:
 
 func _confirm_menu() -> void:
 	confirm_panel.visible = false
+	if is_instance_valid(menu_glitch):
+		menu_glitch.visible = false
 	if is_inside_tree():
 		get_tree().paused = false
 	visible = false
@@ -497,8 +530,8 @@ func _build_how_to_play_modal() -> void:
 	vbox.add_child(hdr)
 
 	var guides := [
-		["NAVIGATION", "Left virtual stick or WASD to move. Tap DASH to dodge through incoming fire."],
-		["AIMING", "Right virtual stick or Mouse cursor aims and fires twin plasma bolts."],
+		["NAVIGATION", "Drag the left virtual stick to move. Tap DASH to dodge through incoming fire."],
+		["AIMING", "Drag the right virtual stick to aim and fire twin plasma bolts."],
 		["MUTATION COUNTERS", "Enemies adapt to your style: Chasers flank kiters; Shooters lead sprinters; Dashers drop hazard trails."],
 		["TELEGRAPHS", "Hostile attacks lock direction during the telegraph window. Watch the ray and cut back!"]
 	]

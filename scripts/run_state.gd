@@ -3,6 +3,7 @@ extends Node
 
 signal health_updated(current: int, maximum: int)
 signal bits_updated(total_bits: int)
+signal archive_bits_updated(total_bits: int)
 signal room_advanced(new_room_index: int, total_rooms: int)
 signal upgrade_applied(upgrade_id: String)
 signal run_completed(won: bool)
@@ -21,6 +22,9 @@ var current_wave := 1
 var waves_in_room := 1
 var score := 0
 var bits := 0
+var archive_bits := 0
+var selected_character_id := "OPERATIVE"
+var unlocked_character_ids: Array[String] = ["OPERATIVE"]
 var run_active := false
 var run_won := false
 var is_finalized := false
@@ -60,6 +64,36 @@ var dungeon_layout_summary: Array[Dictionary] = []
 var boss_encounter_history: Array[Dictionary] = []
 var current_seed := 1337
 
+const CHARACTER_CATALOG := {
+	"OPERATIVE": {
+		"title": "OPERATIVE",
+		"role": "BALANCED RUNNER",
+		"price": 0,
+		"max_health": 5,
+		"move_speed_mult": 1.0,
+		"fire_interval_mult": 1.0,
+		"desc": "Balanced movement, health, and twin-rail fire. The reliable starting build."
+	},
+	"BREACHER": {
+		"title": "BREACHER",
+		"role": "MELEE SPECIALIST",
+		"price": 2500,
+		"max_health": 6,
+		"move_speed_mult": 1.08,
+		"fire_interval_mult": 1.0,
+		"desc": "Six integrity. Close-range arc strikes deal 2 base damage and ignore ammo."
+	},
+	"LONGSHOT": {
+		"title": "LONGSHOT",
+		"role": "SNIPER",
+		"price": 5000,
+		"max_health": 4,
+		"move_speed_mult": 1.0,
+		"fire_interval_mult": 1.55,
+		"desc": "Four integrity. Shots hit harder and travel faster, with a slower firing cycle."
+	}
+}
+
 
 func _ready() -> void:
 	progression = RUN_PROGRESSION_SCRIPT.new(current_seed, difficulty)
@@ -91,6 +125,16 @@ func load_persistent_data() -> void:
 	best_score = maxi(0, int(d.get("best_score", 0)))
 	best_time = maxf(0.0, float(d.get("best_time", 0.0)))
 	difficulty = d.get("difficulty", "NORMAL")
+	archive_bits = maxi(0, int(d.get("archive_bits", 0)))
+	unlocked_character_ids = ["OPERATIVE"]
+	for raw_id in d.get("unlocked_characters", ["OPERATIVE"]):
+		var character_id := str(raw_id)
+		if CHARACTER_CATALOG.has(character_id) and character_id not in unlocked_character_ids:
+			unlocked_character_ids.append(character_id)
+	selected_character_id = str(d.get("selected_character", "OPERATIVE"))
+	if selected_character_id not in unlocked_character_ids:
+		selected_character_id = "OPERATIVE"
+	archive_bits_updated.emit(archive_bits)
 
 
 func save_persistent_data() -> void:
@@ -98,12 +142,15 @@ func save_persistent_data() -> void:
 	if not file:
 		return
 	var d := {
-		"version": 2,
+		"version": 3,
 		"best_depth": best_depth,
 		"best_sector": best_sector,
 		"best_score": best_score,
 		"best_time": best_time,
-		"difficulty": difficulty
+		"difficulty": difficulty,
+		"archive_bits": archive_bits,
+		"unlocked_characters": unlocked_character_ids,
+		"selected_character": selected_character_id
 	}
 	file.store_string(JSON.stringify(d, "\t"))
 	file.close()
@@ -238,7 +285,8 @@ const UPGRADE_RARITY_CHANCES := {"COMMON": 70, "UNCOMMON": 24, "RARE": 6}
 
 
 func start_new_run(p_seed: int = 0) -> void:
-	max_health = 5
+	var character_profile: Dictionary = get_selected_character_profile()
+	max_health = int(character_profile.get("max_health", 5))
 	current_health = max_health
 	current_sector = 1
 	current_room_index = 0
@@ -269,8 +317,8 @@ func start_new_run(p_seed: int = 0) -> void:
 	current_wave = progression.current_wave
 	waves_in_room = progression.waves_in_room
 
-	move_speed_mult = 1.0
-	fire_interval_mult = 1.0
+	move_speed_mult = float(character_profile.get("move_speed_mult", 1.0))
+	fire_interval_mult = float(character_profile.get("fire_interval_mult", 1.0))
 	damage_bonus = 0
 	projectile_count = 1
 	dash_cooldown_mult = 1.0
@@ -346,7 +394,44 @@ func finalize_run_stats(won: bool) -> void:
 		best_score = score
 	if won and (best_time == 0.0 or run_time < best_time):
 		best_time = run_time
+	# Only unspent run currency is banked. Shop purchases cannot also fund unlocks.
+	archive_bits += bits
+	archive_bits_updated.emit(archive_bits)
 	save_persistent_data()
+
+
+func get_character_catalog() -> Dictionary:
+	return CHARACTER_CATALOG.duplicate(true)
+
+
+func get_selected_character_profile() -> Dictionary:
+	return CHARACTER_CATALOG.get(selected_character_id, CHARACTER_CATALOG["OPERATIVE"]).duplicate(true)
+
+
+func is_character_unlocked(character_id: String) -> bool:
+	return character_id in unlocked_character_ids
+
+
+func purchase_character(character_id: String) -> bool:
+	if not CHARACTER_CATALOG.has(character_id) or is_character_unlocked(character_id):
+		return false
+	var price: int = int(CHARACTER_CATALOG[character_id].get("price", 0))
+	if archive_bits < price:
+		return false
+	archive_bits -= price
+	unlocked_character_ids.append(character_id)
+	selected_character_id = character_id
+	archive_bits_updated.emit(archive_bits)
+	save_persistent_data()
+	return true
+
+
+func select_character(character_id: String) -> bool:
+	if not is_character_unlocked(character_id):
+		return false
+	selected_character_id = character_id
+	save_persistent_data()
+	return true
 
 
 func get_random_upgrade_choices(count: int = 3) -> Array[Dictionary]:

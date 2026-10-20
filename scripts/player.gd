@@ -47,6 +47,7 @@ var debuff_burn_tick := 0.0
 var ghost_spawn_timer := 0.0
 var visual_clock := 0.0
 var muzzle_flash_timer := 0.0
+var melee_flash_timer := 0.0
 var has_aegis_shield := false
 var has_speed_overdrive := false
 
@@ -116,8 +117,10 @@ func _on_runstate_health_updated(curr: int, max_h: int) -> void:
 func _physics_process(delta: float) -> void:
 	if dead:
 		return
+	var rs = get_node_or_null("/root/RunState")
 	visual_clock += delta
 	muzzle_flash_timer = maxf(0.0, muzzle_flash_timer - delta)
+	melee_flash_timer = maxf(0.0, melee_flash_timer - delta)
 
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
 	damage_cooldown = maxf(0.0, damage_cooldown - delta)
@@ -145,19 +148,12 @@ func _physics_process(delta: float) -> void:
 				get_node("/root/AudioSynth").play("powerup_pickup", 0.05, 5.0)
 
 	var move_mult := 1.0
-	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		move_mult = rs.move_speed_mult
 	if debuff_slow_timer > 0.0:
 		move_mult *= 0.55
 
-	var keyboard_move := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
-	keyboard_move += Vector2(
-		float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)),
-		float(Input.is_key_pressed(KEY_S)) - float(Input.is_key_pressed(KEY_W))
-	)
-	keyboard_move = keyboard_move.limit_length(1.0)
-	var move_input := (keyboard_move + touch_move).limit_length(1.0)
+	var move_input := touch_move.limit_length(1.0)
 	current_move_direction = move_input
 
 	if dash_time > 0.0:
@@ -175,10 +171,6 @@ func _physics_process(delta: float) -> void:
 		velocity = move_input * (MOVE_SPEED * move_mult)
 		if not touch_aim.is_zero_approx():
 			aim_direction = touch_aim.normalized()
-		else:
-			var mouse_direction := get_global_mouse_position() - global_position
-			if not mouse_direction.is_zero_approx():
-				aim_direction = mouse_direction.normalized()
 
 	rotation = aim_direction.angle()
 	move_and_slide()
@@ -190,14 +182,7 @@ func _physics_process(delta: float) -> void:
 				collider.take_damage(1, "dash")
 	queue_redraw()
 
-	if (Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_SPACE)) and dash_cooldown <= 0.0:
-		try_dash()
-
-	# Manual reload input (R key)
-	if Input.is_key_pressed(KEY_R) and not is_reloading and current_ammo < get_max_ammo():
-		start_reload()
-
-	var firing := touch_fire or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_key_pressed(KEY_J) or Input.is_key_pressed(KEY_K)
+	var firing := touch_fire
 	is_firing = firing
 	if firing and fire_cooldown <= 0.0:
 		_fire()
@@ -243,12 +228,12 @@ func set_touch_fire(value: bool) -> void:
 func try_dash() -> void:
 	if dead or dash_cooldown > 0.0:
 		return
+	var rs = get_node_or_null("/root/RunState") if is_inside_tree() else null
 	if not current_move_direction.is_zero_approx():
 		aim_direction = current_move_direction.normalized()
 	dash_time = DASH_DURATION
 	ghost_spawn_timer = 0.0
 	var cd_mult := 1.0
-	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		cd_mult = rs.dash_cooldown_mult
 		# Tactical Reload upgrade perk: instant full reload on dash
@@ -329,6 +314,10 @@ func _trigger_emp_shockwave() -> void:
 
 
 func _fire() -> void:
+	var rs = get_node_or_null("/root/RunState")
+	if rs and rs.selected_character_id == "BREACHER":
+		_perform_melee_strike(rs)
+		return
 	if is_reloading:
 		return
 	if current_ammo <= 0:
@@ -340,7 +329,6 @@ func _fire() -> void:
 	var interval_mult := 1.0
 	var extra_dmg := 0
 	var count := 1
-	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		interval_mult = rs.fire_interval_mult
 		extra_dmg = rs.damage_bonus
@@ -376,11 +364,14 @@ func _spawn_bullet(dir: Vector2, extra_dmg: int) -> void:
 	# Spawn clear of player collision shape (radius 13 + bullet 5 = 18; using 24.0)
 	projectile.global_position = global_position + shoot_dir * 24.0
 	projectile.direction = shoot_dir
-	projectile.damage = 1 + extra_dmg
+	var rs = get_node_or_null("/root/RunState")
+	var is_sniper: bool = rs != null and rs.selected_character_id == "LONGSHOT"
+	projectile.damage = (2 if is_sniper else 1) + extra_dmg
+	if is_sniper:
+		projectile.speed = 850.0
 	projectile.set("player_source", self)
 
 	# Pass elemental debuffs and piercing traits from active upgrades
-	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		if bool(rs.get("has_cryo_rounds")):
 			projectile.set("debuff_type", "CRYO")
@@ -395,15 +386,48 @@ func _spawn_bullet(dir: Vector2, extra_dmg: int) -> void:
 	shot_fired.emit()
 
 
+func _perform_melee_strike(rs) -> void:
+	if is_reloading:
+		return
+	var extra_damage: int = int(rs.damage_bonus)
+	fire_cooldown = 0.56 * float(rs.fire_interval_mult)
+	melee_flash_timer = 0.20
+	var hit_count := 0
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if not is_instance_valid(enemy):
+			continue
+		var offset: Vector2 = enemy.global_position - global_position
+		if offset.length() <= 78.0 and aim_direction.dot(offset.normalized()) >= 0.38:
+			if enemy.has_method("take_damage"):
+				enemy.take_damage(2 + extra_damage)
+				hit_count += 1
+				if "velocity" in enemy:
+					enemy.velocity += offset.normalized() * 95.0
+	if hit_count > 0 and (Engine.has_singleton("AudioSynth") or get_node_or_null("/root/AudioSynth")):
+		get_node("/root/AudioSynth").play("hit_impact", 0.04, 1.0)
+	queue_redraw()
+
+
 func _draw() -> void:
 	# Subtle engine glow and idle core pulse make the operative feel powered-on.
 	var engine_pulse := 0.65 + (sin(visual_clock * 8.0) + 1.0) * 0.16
 	draw_circle(Vector2(-11, 0), 5.0 + engine_pulse, Color(0.05, 0.82, 1.0, 0.10 + engine_pulse * 0.07))
 	draw_circle(Vector2(-11, 0), 2.0 + engine_pulse * 0.45, Color(0.18, 0.88, 1.0, 0.5))
+	var selected_character := "OPERATIVE"
+	var character_state = get_node_or_null("/root/RunState")
+	if character_state:
+		selected_character = character_state.selected_character_id
+	if selected_character == "BREACHER" and melee_flash_timer > 0.0:
+		var slash_alpha := melee_flash_timer / 0.20
+		draw_arc(Vector2(27, 0), 34.0, -0.78, 0.78, 20, Color(1.0, 0.42, 0.28, slash_alpha), 5.0)
+		draw_arc(Vector2(27, 0), 42.0, -0.68, 0.68, 20, Color(1.0, 0.78, 0.42, slash_alpha * 0.8), 2.0)
 	if muzzle_flash_timer > 0.0:
 		var flash_alpha := muzzle_flash_timer / 0.075
 		draw_circle(Vector2(19, 0), 5.0 + 5.0 * flash_alpha, Color(0.55, 0.92, 1.0, 0.3 * flash_alpha))
 		draw_line(Vector2(15, 0), Vector2(25 + 5 * flash_alpha, 0), Color(1, 1, 1, flash_alpha), 2.0)
+	if selected_character == "LONGSHOT":
+		draw_line(Vector2(10, 0), Vector2(27, 0), Color("fbbf24"), 2.2)
+		draw_circle(Vector2(27, 0), 2.3, Color("fff7cc"))
 
 	var body_color := Color("38bdf8") # Sleek cyber cyan
 	if dash_time > 0.0:

@@ -4,6 +4,9 @@ extends Control
 ## persistent settings modal, tactical manual (How to Play), threat archive, and exit handling.
 
 const DIRECTOR_TESTS_SCRIPT := preload("res://scripts/test_director.gd")
+const GLITCH_OVERLAY := preload("res://scripts/menu_glitch_overlay.gd")
+const MENU_BACKDROP_SCRIPT := preload("res://scripts/menu_backdrop.gd")
+const MENU_SKIN := preload("res://scripts/menu_ui_skin.gd")
 
 var archive_panel: Control
 var settings_panel: Control
@@ -11,6 +14,8 @@ var how_to_play_panel: Control
 var records_label: Label
 var difficulty_btn: Button
 var menu_transitioning := false
+var logo_visual: Control
+var logo_motion_time := 0.0
 
 const DIFFICULTIES := ["NORMAL", "HARD", "HYPERGRID"]
 var difficulty_index := 0
@@ -27,6 +32,15 @@ func _ready() -> void:
 
 	_sync_difficulty_from_state()
 	_build_ui()
+	add_child(GLITCH_OVERLAY.new())
+
+
+func _process(delta: float) -> void:
+	logo_motion_time += delta
+	if is_instance_valid(logo_visual):
+		logo_visual.pivot_offset = logo_visual.size * 0.5
+		logo_visual.rotation = sin(logo_motion_time * 0.7) * 0.014
+		logo_visual.modulate.a = 0.92 + (sin(logo_motion_time * 1.9) + 1.0) * 0.04
 
 
 func _sync_difficulty_from_state() -> void:
@@ -43,13 +57,6 @@ func _sync_difficulty_from_state() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
 		_handle_back_request()
-
-
-func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and (event.keycode == KEY_ESCAPE or event.keycode == KEY_BACK)):
-		_handle_back_request()
-		if is_inside_tree():
-			get_viewport().set_input_as_handled()
 
 
 func _handle_back_request() -> void:
@@ -112,6 +119,7 @@ func _build_ui() -> void:
 		logo_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
 		logo_rect.custom_minimum_size = Vector2(340, 75)
 		logo_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		logo_visual = logo_rect
 		title_vbox.add_child(logo_rect)
 	else:
 		var title_lbl := Label.new()
@@ -145,7 +153,7 @@ func _build_ui() -> void:
 	main_row.add_child(btn_vbox)
 
 	var play_btn := Button.new()
-	play_btn.text = "INITIALIZE SIMULATION"
+	play_btn.text = "ENTER OPERATIVE BAY"
 	play_btn.custom_minimum_size = Vector2(280, 48)
 	play_btn.pressed.connect(_on_play_pressed)
 	btn_vbox.add_child(play_btn)
@@ -245,9 +253,6 @@ func _on_play_pressed() -> void:
 		return
 	menu_transitioning = true
 	_play_click()
-	var rs: Node = get_node_or_null("/root/RunState") if is_inside_tree() else null
-	if rs:
-		rs.start_new_run()
 	if is_inside_tree():
 		var cover := ColorRect.new()
 		cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -263,7 +268,7 @@ func _on_play_pressed() -> void:
 		tween.set_ease(Tween.EASE_IN_OUT)
 		tween.tween_property(cover, "modulate:a", 1.0, 0.24)
 		await tween.finished
-		get_tree().change_scene_to_file("res://scenes/main.tscn")
+		get_tree().change_scene_to_file("res://scenes/ui/lobby.tscn")
 
 
 func _on_quit_pressed() -> void:
@@ -286,9 +291,8 @@ func _build_how_to_play_modal() -> void:
 	how_to_play_panel.visible = false
 	add_child(how_to_play_panel)
 
-	var modal_bg := ColorRect.new()
-	modal_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	modal_bg.color = Color(0.012, 0.02, 0.045, 0.95)
+	var modal_bg := MENU_BACKDROP_SCRIPT.new()
+	modal_bg.accent = Color("38bdf8")
 	how_to_play_panel.add_child(modal_bg)
 
 	var center := CenterContainer.new()
@@ -320,8 +324,8 @@ func _build_how_to_play_modal() -> void:
 	vbox.add_child(hdr)
 
 	var guides := [
-		["MOVEMENT & EVASION", "Left virtual stick or WASD to navigate. Tap DASH button or Spacebar to trigger an invulnerable phase dash through incoming fire."],
-		["AIM & WEAPONS", "Right virtual stick or Mouse cursor aims and automatically discharges twin plasma bolts."],
+		["MOVEMENT & EVASION", "Drag the left virtual stick to move. Tap DASH to phase through incoming fire."],
+		["AIM & WEAPONS", "Drag the right virtual stick to aim and automatically fire twin plasma bolts."],
 		["ADAPTIVE ENEMY AI", "Hostiles track your movement, range, and fire rate. If you kite, Chasers flank. If you dash rapidly, Shooters lead aim. If you camp, Dashers drop hazards."],
 		["TELEGRAPH DODGING", "Lethal attacks project glowing telegraph guide lines that lock direction before firing. Watch the lock window and cut back to dodge."],
 		["SUBROUTINES & ROUTE DOORS", "Clear waves to draft passive upgrades. Approach glowing holographic sector portals to select your destination chamber."]
@@ -353,6 +357,7 @@ func _build_how_to_play_modal() -> void:
 		_play_click()
 		how_to_play_panel.visible = false
 	)
+	MENU_SKIN.style_button(close_btn)
 	vbox.add_child(close_btn)
 
 
@@ -362,9 +367,8 @@ func _build_settings_modal() -> void:
 	settings_panel.visible = false
 	add_child(settings_panel)
 
-	var modal_bg := ColorRect.new()
-	modal_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	modal_bg.color = Color(0.012, 0.02, 0.045, 0.95)
+	var modal_bg := MENU_BACKDROP_SCRIPT.new()
+	modal_bg.accent = Color("22c55e")
 	settings_panel.add_child(modal_bg)
 
 	var center := CenterContainer.new()
@@ -503,6 +507,7 @@ func _build_settings_modal() -> void:
 			sm.save_settings()
 		settings_panel.visible = false
 	)
+	MENU_SKIN.style_button(close_btn, Color("22c55e"))
 	vbox.add_child(close_btn)
 
 
@@ -512,9 +517,8 @@ func _build_archive_modal() -> void:
 	archive_panel.visible = false
 	add_child(archive_panel)
 
-	var modal_bg := ColorRect.new()
-	modal_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	modal_bg.color = Color(0.012, 0.02, 0.045, 0.95)
+	var modal_bg := MENU_BACKDROP_SCRIPT.new()
+	modal_bg.accent = Color("c084fc")
 	archive_panel.add_child(modal_bg)
 
 	var center := CenterContainer.new()
@@ -588,4 +592,5 @@ func _build_archive_modal() -> void:
 		_play_click()
 		archive_panel.visible = false
 	)
+	MENU_SKIN.style_button(close_btn, Color("c084fc"))
 	modal_vbox.add_child(close_btn)
