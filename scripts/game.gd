@@ -394,7 +394,8 @@ func _process(delta: float) -> void:
 
 	# Track player combat behavior for adaptive director
 	if not get_tree().paused and is_instance_valid(player) and tracker:
-		tracker.update(delta, player.global_position, player.velocity, active_enemies, player.is_firing, rs.run_time)
+		var enemy_learning_active: bool = encounter_director != null and encounter_director.run_evolution_unlocked
+		tracker.update(delta, player.global_position, player.velocity, active_enemies, player.is_firing, rs.run_time, enemy_learning_active)
 	if is_instance_valid(camera) and is_instance_valid(player):
 		camera.position = player.position
 
@@ -759,6 +760,7 @@ func _proceed_through_exit_portal() -> void:
 		get_node("/root/AudioSynth").play("powerup_pickup", 0.05, 3.0)
 
 	var nav: Dictionary = rs.advance_floor()
+	_apply_evolution_sector_unlock(nav)
 	if nav.get("is_new_biome", false):
 		var next_b: int = rs.progression.current_biome
 		var b_info: Dictionary = BIOME_DATA_SCRIPT.get_biome(next_b)
@@ -2520,6 +2522,10 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 	var p_hp: int = player.health if is_instance_valid(player) else 5
 	var p_max: int = player.max_health if is_instance_valid(player) else 5
 	var p_rating: float = RunProgression.compute_performance_rating(p_hp, p_max, profile) if (rs_node and rs_node.progression) else 1.0
+	# Keep the entire opening sector at its authored baseline; performance-based
+	# spawn pressure begins only after the explicit evolution unlock.
+	if not encounter_director.run_evolution_unlocked:
+		p_rating = 1.0
 	var spawn_budget: int = rs_node.progression.calculate_spawn_budget(wave_num, p_rating) if (rs_node and rs_node.progression) else current_room_data.enemy_spawns.size()
 	if current_room_data.room_type in ["COMBAT", "ELITE"]:
 		spawn_budget = maxi(3, spawn_budget)
@@ -2548,7 +2554,7 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 	if rs_node and wave_num == 1:
 		var cur_b: int = rs_node.progression.current_biome if (rs_node and rs_node.progression) else (rs_node.current_biome if rs_node else 1)
 		var active_muts: Array[String] = []
-		if cur_b > 1 and encounter_director and encounter_director.evolution_manager:
+		if encounter_director and encounter_director.run_evolution_unlocked and encounter_director.evolution_manager:
 			active_muts = encounter_director.evolution_manager.get_active_mutations_summary()
 		var mut_desc := ", ".join(active_muts) if not active_muts.is_empty() else "Standard swarm baseline"
 		rs_node.record_tactic(rs_node.current_room_index + 1, encounter.tactic, encounter.banner_sub, mut_desc)
@@ -2841,7 +2847,11 @@ func _spawn_phase_two_reinforcements(boss_pos: Vector2) -> void:
 			m_pos.y = clampf(m_pos.y, current_room_data.bounds.position.y + 80.0, current_room_data.bounds.end.y - 80.0)
 		var m_scene: PackedScene = minion_types[i]
 		var m_fam: String = minion_fams[i]
-		var flank: float = 0.4 if i == 0 else 0.0
+		var adaptations_unlocked: bool = encounter_director != null and encounter_director.run_evolution_unlocked
+		var flank: float = (0.4 if i == 0 else 0.0) if adaptations_unlocked else 0.0
+		var reinforcement_speed: float = 1.15 if adaptations_unlocked else 1.0
+		var reinforcement_telegraph: float = 0.85 if adaptations_unlocked else 1.0
+		var reinforcement_lead: float = 0.5 if adaptations_unlocked else 0.0
 		var col: Color = Color("f43f5e") if m_fam == "CHASER" else Color("a855f7")
 		_schedule_spawn_telegraph(
 			m_pos,
@@ -2850,12 +2860,12 @@ func _spawn_phase_two_reinforcements(boss_pos: Vector2) -> void:
 			32.0,
 			col,
 			func():
-				var enemy = _spawn_enemy(m_scene, m_pos, 1.15, 0.85, flank, 0.5)
+				var enemy = _spawn_enemy(m_scene, m_pos, reinforcement_speed, reinforcement_telegraph, flank, reinforcement_lead)
 				if enemy and encounter_director and encounter_director.evolution_manager:
 					var g = encounter_director.evolution_manager.get_genome_for_spawn(m_fam)
 					if g:
 						g.apply_to_enemy(enemy)
-						_apply_encounter_modifiers(enemy, 1.15, 0.85, flank, 0.5, false)
+						_apply_encounter_modifiers(enemy, reinforcement_speed, reinforcement_telegraph, flank, reinforcement_lead, false)
 						encounter_director.evolution_manager.register_spawned_combatant(g, enemy)
 		)
 
@@ -3246,6 +3256,7 @@ func _enter_door(door: Dictionary) -> void:
 
 	var target_room: int = door.get("target_room", rs.current_room_index + 1)
 	var nav: Dictionary = rs.advance_room(target_room)
+	_apply_evolution_sector_unlock(nav)
 	if nav.get("is_new_sector", false):
 		dungeon_layout = null
 		_load_room(0)
@@ -3280,16 +3291,33 @@ func _on_player_died() -> void:
 	_show_end_screen(false)
 
 
+func _apply_evolution_sector_unlock(nav: Dictionary) -> void:
+	if not bool(nav.get("is_new_sector", false)) or not is_instance_valid(encounter_director):
+		return
+	var rs = get_node_or_null("/root/RunState")
+	var sector_index := int(rs.progression.sector_index) if rs and rs.progression else 1
+	if sector_index > 1:
+		encounter_director.unlock_after_first_sector()
+
+
 func _show_end_screen(won: bool) -> void:
 	run_over = true
 	get_tree().paused = true
 	if touch_controls:
 		touch_controls.enabled = false
 	var rs = get_node("/root/RunState")
+	if encounter_director and encounter_director.evolution_manager:
+		rs.set_evolution_log(encounter_director.evolution_manager.evolution_history)
 	rs.finalize_run_stats(won)
 
 	var metrics: Dictionary = tracker.get_combat_metrics() if tracker else {}
 	debrief_terminal.setup_debrief(won, metrics, rs.tactics_log, rs.evolution_log, rs.current_seed)
+	# Learning is run-scoped: preserve the debrief snapshot, then purge learned
+	# candidates and unlock state so no evolution survives into another run.
+	if encounter_director:
+		encounter_director.reset_run_learning()
+	if tracker:
+		tracker.reset()
 
 
 func _restart_run() -> void:
@@ -3735,6 +3763,10 @@ func toggle_debug_overlay() -> void:
 
 func _restart_run_with_seed(seed_val: int) -> void:
 	get_tree().paused = false
+	if encounter_director:
+		encounter_director.reset_run_learning()
+	if tracker:
+		tracker.reset()
 	var rs = get_node_or_null("/root/RunState")
 	if rs:
 		rs.current_seed = seed_val

@@ -14,12 +14,16 @@ var evolution_manager: RefCounted
 
 var use_learning_policy := true
 var current_biome: int = 1
+var run_evolution_unlocked := false
 
 
 func _init() -> void:
 	adaptive_director = ADAPTIVE_DIRECTOR_SCRIPT.new()
 	learning_policy = LEARNING_POLICY_SCRIPT.new()
 	evolution_manager = EVOLUTION_MANAGER_SCRIPT.new()
+	# Live gameplay must never infer the unlock from biome defaults or stale state.
+	evolution_manager.strict_sector_lock = true
+	evolution_manager.current_biome = 1
 
 	# Try to load pre-trained offline weights if available
 	learning_policy.load_from_json_file()
@@ -34,6 +38,15 @@ func reset_run_learning() -> void:
 	learning_policy.reset()
 	learning_policy.load_from_json_file()
 	evolution_manager.reset_run_learning()
+	evolution_manager.current_biome = 1
+	run_evolution_unlocked = false
+	current_biome = 1
+
+
+func unlock_after_first_sector() -> void:
+	## Runtime learning begins only when sector one has been fully cleared.
+	run_evolution_unlocked = true
+	evolution_manager.unlock_after_first_sector()
 
 
 func prepare_encounter(
@@ -60,7 +73,7 @@ func prepare_encounter(
 	var hazard_trail := false
 
 	# 1. Decide Tactic via LearningPolicy or AdaptiveDirector
-	if room_idx == 0 or not player_profile.get("has_data", false):
+	if not run_evolution_unlocked or room_idx == 0 or not player_profile.get("has_data", false):
 		chosen_tactic = "DEFAULT"
 		banner_title = "STANDARD DEPLOYMENT"
 		banner_sub = "Observing combat subroutines..."
@@ -110,7 +123,7 @@ func prepare_encounter(
 		hazard_trail = dir_decision.get("has_hazard_trail", false)
 
 	# 2. Environmental Interplay: Modify response based on Room Geometry
-	if flanking_lanes >= 3 and not pincer_active and player_profile.get("ranged", 0.5) > 0.45:
+	if run_evolution_unlocked and flanking_lanes >= 3 and not pincer_active and player_profile.get("ranged", 0.5) > 0.45:
 		# Multiple approach routes available in geometry: encourage flankers
 		pincer_active = true
 
@@ -125,9 +138,6 @@ func prepare_encounter(
 		var genome: RefCounted = null
 		if family in ["CHASER", "SHOOTER", "DASHER"]:
 			genome = evolution_manager.get_genome_for_spawn(family)
-			# Apply active tactical positioning mutations
-			if pincer_active and family == "CHASER" and current_biome > 1:
-				genome.apply_named_mutation("PINCER_WINGS")
 
 		final_spawn_list.append({
 			"type": espawn.type,
@@ -163,6 +173,16 @@ func record_encounter_result(
 	if biome_index > 0:
 		current_biome = biome_index
 
+	# No enemy experience, policy updates, or evolution before the first sector is
+	# complete. Legacy simulations that explicitly jump to a later biome retain
+	# their old behavior; the live game uses the explicit sector unlock.
+	if not run_evolution_unlocked:
+		if evolution_manager:
+			evolution_manager.active_combatants.clear()
+			evolution_manager.combatant_records.clear()
+			evolution_manager.deployed_actions.clear()
+		return []
+
 	if encounter_completed:
 		adaptive_director.record_tactic_result(chosen_tactic, damage_taken)
 
@@ -171,10 +191,6 @@ func record_encounter_result(
 		if encounter_completed and act_id >= 0:
 			var reward: float = learning_policy.compute_reward(damage_taken, combat_time, player_profile, act_id)
 			learning_policy.update_policy(reward)
-
-	# Evolution mechanics do not begin until a player has completed the first biome (current_biome > 1)
-	if current_biome <= 1:
-		return []
 
 	if is_instance_valid(evolution_manager):
 		evolution_manager.current_biome = current_biome

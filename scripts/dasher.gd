@@ -22,7 +22,7 @@ var lunge_direction := Vector2.RIGHT
 var contact_dealt := false
 var contact_cooldown := 0.0
 var damage_flash := 0.0
-var evolution_tier: int = 0
+var evolution_tier: int = 1
 var hazard_timer := 0.0
 
 const MAX_ACTIVE_HAZARDS := 4
@@ -271,7 +271,7 @@ func _draw() -> void:
 	]), body_color.lightened(0.4), 1.5)
 
 	# Evolved Armored Reinforcements (Tier 3)
-	if max_health >= 4:
+	if evolution_tier > 1:
 		draw_line(Vector2(-12, -14), Vector2(16, 0), Color("38bdf8"), 2.2)
 		draw_line(Vector2(-12, 14), Vector2(16, 0), Color("38bdf8"), 2.2)
 		draw_line(Vector2(-6, -8), Vector2(6, 0), Color("a855f7"), 1.8)
@@ -281,8 +281,8 @@ func _draw() -> void:
 	draw_circle(Vector2(-4, 0), 3.0, Color("fdf2f8"))
 
 	# Health bar & Evolution Tier indicator
-	if evolution_tier > 0 or max_health > 2:
-		var tier_pips := evolution_tier if evolution_tier > 0 else (3 if max_health >= 6 else (2 if max_health >= 4 else 1))
+	if evolution_tier > 1:
+		var tier_pips := evolution_tier - 1
 		for p in range(tier_pips):
 			draw_circle(Vector2(-6.0 + float(p) * 6.0, -26), 2.0, Color("38bdf8"))
 		draw_rect(Rect2(-16, -21, 32, 4), Color("181a26"))

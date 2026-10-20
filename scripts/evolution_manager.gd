@@ -27,6 +27,9 @@ var species_evidence: Dictionary = {}
 var evolution_history: Array[Dictionary] = []
 var active_combatants: Array[RefCounted] = []
 var current_biome: int = 2
+var run_evolution_unlocked := false
+var per_enemy_evolution_mode := false
+var strict_sector_lock := false
 var combatant_records: Dictionary = {}
 var decision_history: Array[Dictionary] = []
 var next_instance_id := 1
@@ -56,6 +59,8 @@ func reset_run_learning() -> void:
 	next_instance_id = 1
 	encounter_id = 0
 	last_mutation_selection.clear()
+	run_evolution_unlocked = false
+	per_enemy_evolution_mode = false
 
 	species_policies = {
 		"CHASER": LEARNING_POLICY_SCRIPT.new("CHASER"),
@@ -95,6 +100,20 @@ func reset_run_learning() -> void:
 	_seed_initial_populations()
 
 
+func unlock_after_first_sector() -> void:
+	## Called only after the first complete sector has been cleared.
+	run_evolution_unlocked = true
+	per_enemy_evolution_mode = true
+
+
+func is_evolution_enabled() -> bool:
+	# Runtime managers always require the explicit first-sector unlock. Direct
+	# legacy/simulation callers retain the old biome-based pathway.
+	if strict_sector_lock:
+		return run_evolution_unlocked
+	return run_evolution_unlocked or current_biome > 1
+
+
 func _seed_initial_populations() -> void:
 	active_genomes["CHASER"].clear()
 	active_genomes["SHOOTER"].clear()
@@ -123,6 +142,18 @@ func _seed_initial_populations() -> void:
 func get_genome_for_spawn(family: String) -> RefCounted:
 	## Returns an independent phenotype snapshot for a spawned combatant.
 	## Prevents per-enemy runtime state from leaking across encounters.
+	# First-sector spawns are rebuilt from family defaults instead of copying a
+	# population candidate. This prevents stale traits, mutations, or tier data
+	# from leaking into the tutorial sector through any spawn route.
+	if not is_evolution_enabled():
+		var baseline: RefCounted = ENEMY_GENOME_SCRIPT.new(family, 1)
+		baseline.variant_name = "%s Base" % family.capitalize()
+		baseline.variant_id = "%s-base-v1" % family
+		baseline.candidate_id = ""
+		baseline.source_candidate_id = ""
+		baseline.instance_id = "%s-base-%06d" % [family, next_instance_id]
+		next_instance_id += 1
+		return baseline
 	if not active_genomes.has(family) or active_genomes[family].is_empty():
 		var fallback_g = ENEMY_GENOME_SCRIPT.new(family, generation)
 		fallback_g.variant_id = "%s-fallback-%04d" % [family, randi() % 10000]
@@ -132,7 +163,7 @@ func get_genome_for_spawn(family: String) -> RefCounted:
 	pool.sort_custom(func(a, b) -> bool:
 		return a.fitness_score > b.fitness_score
 	)
-	var parent: RefCounted = pool[0] if randf() < 0.70 else pool[randi() % pool.size()]
+	var parent: RefCounted = _select_unexposed_candidate(pool) if per_enemy_evolution_mode else (pool[0] if randf() < 0.70 else pool[randi() % pool.size()])
 
 	# Produce isolated snapshot with stable attribution ID
 	var snapshot: RefCounted = parent.duplicate_genome()
@@ -146,12 +177,10 @@ func get_genome_for_spawn(family: String) -> RefCounted:
 	snapshot.combat_time_active = 0.0
 	snapshot.fitness_score = 0.0
 	var t: int = get_species_tier(family)
-	snapshot.tier = t
-
-	if current_biome <= 1:
-		snapshot.tier = 0
-		snapshot.active_mutations.clear()
-		snapshot.variant_id = "%s-v0-%04d" % [family, randi() % 10000]
+	if not per_enemy_evolution_mode:
+		snapshot.tier = t
+	else:
+		snapshot.variant_id = "%s-v%d-%04d" % [family, snapshot.tier + 1, randi() % 10000]
 		_prepare_species_decision(family, snapshot)
 		register_spawned_combatant(snapshot)
 		return snapshot
@@ -183,7 +212,49 @@ func get_genome_for_spawn(family: String) -> RefCounted:
 	return snapshot
 
 
+func _select_unexposed_candidate(pool: Array) -> RefCounted:
+	## Spread same-room spawns across independent memory lineages before reusing one.
+	var already_deployed: Dictionary = {}
+	for combatant in active_combatants:
+		already_deployed[str(combatant.source_candidate_id)] = true
+	var available: Array[RefCounted] = []
+	for candidate in pool:
+		if not already_deployed.has(str(candidate.candidate_id)):
+			available.append(candidate)
+	if not available.is_empty():
+		return available[randi() % available.size()]
+	return pool[randi() % pool.size()]
+
+
 func _prepare_species_decision(family: String, snapshot: RefCounted) -> void:
+	if per_enemy_evolution_mode:
+		var memory: Dictionary = snapshot.individual_experience
+		var context: Array[float] = [
+			1.0,
+			clampf(float(memory.get("evasion", 0.0)) / 2.0, 0.0, 1.0),
+			clampf(float(memory.get("kiting", 0.0)) / 2.0, 0.0, 1.0),
+			clampf(float(memory.get("camping", 0.0)) / 2.0, 0.0, 1.0),
+			clampf(float(memory.get("rushing", 0.0)) / 2.0, 0.0, 1.0),
+			0.0
+		]
+		var action := "CONTACT_PURSUIT" if family == "CHASER" else ("DIRECT_LUNGE" if family == "DASHER" else "STANDARD_VOLLEY")
+		if family == "CHASER":
+			if snapshot.has_mutation("CRIMSON_BLASTER"): action = "CRIMSON_BLASTER"
+			elif snapshot.has_mutation("PINCER_WINGS"): action = "FLANKING_PINCER"
+			elif snapshot.has_mutation("RAPID_PURSUIT"): action = "RAPID_PURSUIT"
+		elif family == "DASHER":
+			if snapshot.has_mutation("REINFORCED_CHASSIS"): action = "REINFORCED_CHASSIS"
+			elif snapshot.has_mutation("OVERCLOCKED_THRUSTERS"): action = "OVERCLOCKED_THRUSTERS"
+			elif snapshot.has_mutation("ION_HAZARD_TRAIL"): action = "ION_HAZARD_TRAIL"
+		elif family == "SHOOTER":
+			if snapshot.has_mutation("HEAVY_BEAM"): action = "HEAVY_BEAM"
+			elif snapshot.has_mutation("PREDICTIVE_OPTICS"): action = "PREDICTIVE_OPTICS"
+			elif snapshot.has_mutation("AGILE_STRAFE"): action = "AGILE_STRAFE"
+		snapshot.policy_action_name = action
+		var policy: RefCounted = species_policies.get(family)
+		snapshot.policy_action_id = policy.action_names.find(action) if policy != null else -1
+		snapshot.policy_context = context
+		return
 	var policy: RefCounted = species_policies.get(family)
 	if policy == null:
 		return
@@ -392,15 +463,20 @@ func record_combatant_defeated(genome: RefCounted, enemy: Node2D = null) -> void
 
 
 func get_species_tier(family: String) -> int:
-	if current_biome <= 1:
+	if not is_evolution_enabled():
 		return 0
+	if per_enemy_evolution_mode:
+		var highest_tier := 0
+		for candidate in active_genomes.get(family, []):
+			highest_tier = maxi(highest_tier, int(candidate.tier))
+		return highest_tier
 	return int(species_evidence.get(family, {}).get("tier", 0))
 
 
 func get_species_health_multiplier(family: String) -> int:
 	## Health doubling invariant: every confirmed major evolution doubles max health.
 	## max_health = base_health * 2^tier
-	if current_biome <= 1:
+	if not is_evolution_enabled():
 		return 1
 	var t: int = get_species_tier(family)
 	return int(pow(2, t))
@@ -420,7 +496,7 @@ func process_encounter_end(
 	## A species evolves ONLY when its own observed battle data justifies adaptation.
 	if biome_index > 0:
 		current_biome = biome_index
-	if current_biome <= 1:
+	if not is_evolution_enabled():
 		active_combatants.clear()
 		combatant_records.clear()
 		deployed_actions.clear()
@@ -467,6 +543,12 @@ func process_encounter_end(
 			if not defeated:
 				candidate.encounters_survived += 1
 			candidate.calculate_fitness()
+			if per_enemy_evolution_mode and tracker and tracker.has_method("consume_enemy_experience"):
+				var personal_profile: Dictionary = tracker.consume_enemy_experience(str(g.instance_id))
+				if not personal_profile.is_empty():
+					var personal_evolution: Dictionary = _process_candidate_experience(candidate, personal_profile, sector_index)
+					if not personal_evolution.is_empty():
+						new_adaptations.append(personal_evolution)
 
 		var policy: RefCounted = species_policies.get(family)
 		var action_id := int(record.get("action_id", g.policy_action_id))
@@ -494,6 +576,14 @@ func process_encounter_end(
 			record["damage_dealt"] = g.damage_dealt_to_player
 			record["damage_received"] = g.damage_received
 			decision_history.append(record.duplicate(true))
+
+	# The live game uses independent per-candidate memories after sector 1. Do not
+	# run the legacy family-wide promotion or breeding path in that mode.
+	if per_enemy_evolution_mode:
+		active_combatants.clear()
+		combatant_records.clear()
+		deployed_actions.clear()
+		return new_adaptations
 
 	# 3. Process Species Evidence & Contextual Learning per active family
 	for family in ["CHASER", "DASHER", "SHOOTER"]:
@@ -743,6 +833,77 @@ func process_encounter_end(
 	return new_adaptations
 
 
+func _process_candidate_experience(candidate: RefCounted, observation: Dictionary, sector_index: int) -> Dictionary:
+	## Deterministic, authored evolution rules fed only by this candidate's own
+	## spawned enemy observations. One candidate can evolve while its siblings do not.
+	if float(observation.get("exposure_seconds", 0.0)) < 3.0:
+		return {}
+	var memory: Dictionary = candidate.individual_experience.duplicate(true)
+	memory["encounters"] = int(memory.get("encounters", 0)) + 1
+	memory["kiting"] = minf(4.0, float(memory.get("kiting", 0.0)) + maxf(0.0, float(observation.get("kiting_ratio", 0.0)) - 0.35))
+	memory["camping"] = minf(4.0, float(memory.get("camping", 0.0)) + maxf(0.0, float(observation.get("camping_ratio", 0.0)) - 0.30))
+	var dash_evidence := minf(0.6, float(observation.get("nearby_dashes", 0)) * 0.22)
+	memory["evasion"] = minf(4.0, float(memory.get("evasion", 0.0)) + maxf(0.0, float(observation.get("evasive_ratio", 0.0)) - 0.30) + dash_evidence)
+	memory["rushing"] = minf(4.0, float(memory.get("rushing", 0.0)) + maxf(0.0, float(observation.get("rushing_ratio", 0.0)) - 0.20))
+	candidate.individual_experience = memory
+
+	var mutation := ""
+	match str(candidate.family):
+		"CHASER":
+			if candidate.tier == 0:
+				if float(memory["camping"]) >= 0.65 and float(memory["camping"]) > float(memory["kiting"]):
+					mutation = "PINCER_WINGS"
+				elif float(memory["kiting"]) >= 0.75:
+					mutation = "RAPID_PURSUIT"
+			elif candidate.tier == 1 and float(memory["kiting"]) >= 1.45:
+				mutation = "CRIMSON_BLASTER"
+		"DASHER":
+			if candidate.tier == 0 and float(memory["evasion"]) >= 0.70:
+				mutation = "ION_HAZARD_TRAIL"
+			elif candidate.tier == 1 and float(memory["evasion"]) >= 1.45:
+				mutation = "OVERCLOCKED_THRUSTERS"
+			elif candidate.tier == 2 and float(memory["evasion"]) >= 2.10:
+				mutation = "REINFORCED_CHASSIS"
+		"SHOOTER":
+			if candidate.tier == 0 and float(memory["rushing"]) >= 0.65:
+				mutation = "AGILE_STRAFE"
+			elif candidate.tier == 1 and float(memory["evasion"]) >= 1.30:
+				mutation = "PREDICTIVE_OPTICS"
+			elif candidate.tier == 2 and float(memory["camping"]) >= 0.80:
+				mutation = "HEAVY_BEAM"
+	if mutation.is_empty() or not candidate.apply_named_mutation(mutation):
+		return {}
+	candidate.generation = generation
+	candidate.variant_id = "%s-v%d-%04d" % [candidate.family, candidate.tier + 1, randi() % 10000]
+	var health_multiplier := int(pow(2.0, candidate.tier))
+	var counterplay := "Change your spacing and movement rhythm; this individual adapted to the behavior it encountered."
+	match mutation:
+		"RAPID_PURSUIT": counterplay = "Use corners and obstacles to break pursuit lines."
+		"PINCER_WINGS": counterplay = "Keep moving; this Chaser learned to flank stationary targets."
+		"CRIMSON_BLASTER": counterplay = "Break line of sight and dash after its firing telegraph commits."
+		"ION_HAZARD_TRAIL": counterplay = "Avoid the route it just dashed through."
+		"OVERCLOCKED_THRUSTERS": counterplay = "Bait the lunge, then dodge after its telegraph."
+		"REINFORCED_CHASSIS": counterplay = "Use high burst damage or dash attacks against its armor."
+		"AGILE_STRAFE": counterplay = "Cut off its escape path with arena geometry."
+		"PREDICTIVE_OPTICS": counterplay = "Change direction during the aim telegraph."
+		"HEAVY_BEAM": counterplay = "Move laterally when the beam charge begins."
+	var record := {
+		"sector": sector_index + 1,
+		"family": str(candidate.family),
+		"candidate_id": str(candidate.candidate_id),
+		"variant_id": str(candidate.variant_id),
+		"tier": candidate.tier + 1,
+		"internal_evolution_count": candidate.tier,
+		"mutation": mutation,
+		"health_mult": "%dx" % health_multiplier,
+		"reason": "This individual accumulated encounter evidence: kite %.2f, camp %.2f, evade %.2f, rush %.2f across %d exposures." % [memory["kiting"], memory["camping"], memory["evasion"], memory["rushing"], memory["encounters"]],
+		"counter": counterplay,
+		"evidence": memory.duplicate(true)
+	}
+	evolution_history.append(record)
+	return record
+
+
 func _find_candidate(family: String, candidate_id: String) -> RefCounted:
 	if candidate_id.is_empty():
 		return null
@@ -812,7 +973,15 @@ func _evolve_family_pool(family: String, _sector_index: int) -> void:
 
 func get_active_mutations_summary() -> Array[String]:
 	var summary: Array[String] = []
-	if current_biome <= 1:
+	if not is_evolution_enabled():
+		return summary
+	if per_enemy_evolution_mode:
+		for family in ["CHASER", "DASHER", "SHOOTER"]:
+			for candidate in active_genomes.get(family, []):
+				if int(candidate.tier) <= 0:
+					continue
+				var mutations: Array[String] = candidate.active_mutations
+				summary.append("%s / %s [Tier %d | %dx HP]: %s" % [family, candidate.candidate_id, int(candidate.tier) + 1, int(pow(2, candidate.tier)), ", ".join(mutations)])
 		return summary
 	for family in ["CHASER", "DASHER", "SHOOTER"]:
 		var ev: Dictionary = species_evidence.get(family, {})

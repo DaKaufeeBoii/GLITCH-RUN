@@ -57,6 +57,10 @@ var family_kited_time: Dictionary = {
 	"BOSS": 0.0
 }
 
+# Per-spawn observations keyed by EnemyGenome.instance_id. These are consumed at
+# the encounter boundary and never shared between enemies or species.
+var enemy_experience: Dictionary = {}
+
 
 func reset() -> void:
 	total_combat_time = 0.0
@@ -79,6 +83,7 @@ func reset() -> void:
 	for f in family_combat_time.keys():
 		family_combat_time[f] = 0.0
 		family_kited_time[f] = 0.0
+	enemy_experience.clear()
 
 
 func record_dash(current_run_time: float) -> void:
@@ -130,7 +135,8 @@ func update(
 	player_vel: Vector2,
 	enemies: Array[Node2D],
 	firing: bool,
-	current_run_time: float
+	current_run_time: float,
+	track_enemy_experience: bool = true
 ) -> void:
 	if enemies.is_empty():
 		return
@@ -187,6 +193,8 @@ func update(
 					family_kited_time[fam] = 0.0
 				if d > 210.0:
 					family_kited_time[fam] += delta
+			if track_enemy_experience:
+				_track_enemy_experience(enemy, fam, d, delta, player_vel, firing, current_run_time)
 
 	for fam in active_families_this_frame:
 		family_combat_time[fam] += delta
@@ -204,6 +212,53 @@ func update(
 			mobile_firing_time += delta
 
 	_trim_timestamps(current_run_time)
+
+
+func _track_enemy_experience(enemy: Node2D, family: String, distance: float, delta: float, player_vel: Vector2, firing: bool, current_run_time: float) -> void:
+	var enemy_id := ""
+	if "genome" in enemy and enemy.genome != null:
+		enemy_id = str(enemy.genome.instance_id)
+	if enemy_id.is_empty():
+		enemy_id = str(enemy.get_instance_id())
+	var sample: Dictionary = enemy_experience.get(enemy_id, {
+		"family": family,
+		"exposure_seconds": 0.0,
+		"kiting_seconds": 0.0,
+		"camping_seconds": 0.0,
+		"evasive_seconds": 0.0,
+		"rushing_seconds": 0.0,
+		"nearby_dashes": 0
+	})
+	sample["exposure_seconds"] = float(sample.get("exposure_seconds", 0.0)) + delta
+	if distance >= 210.0:
+		sample["kiting_seconds"] = float(sample.get("kiting_seconds", 0.0)) + delta
+	if firing and player_vel.length() < 40.0:
+		sample["camping_seconds"] = float(sample.get("camping_seconds", 0.0)) + delta
+	if player_vel.length() >= 80.0:
+		sample["evasive_seconds"] = float(sample.get("evasive_seconds", 0.0)) + delta
+		if distance <= 150.0:
+			sample["rushing_seconds"] = float(sample.get("rushing_seconds", 0.0)) + delta
+	if distance <= 250.0 and not dash_timestamps.is_empty() and float(dash_timestamps.back()) >= current_run_time - maxf(delta * 1.25, 0.04):
+		sample["nearby_dashes"] = int(sample.get("nearby_dashes", 0)) + 1
+	sample["family"] = family
+	enemy_experience[enemy_id] = sample
+
+
+func consume_enemy_experience(enemy_id: String) -> Dictionary:
+	var sample: Dictionary = enemy_experience.get(enemy_id, {})
+	if sample.is_empty():
+		return {}
+	enemy_experience.erase(enemy_id)
+	var exposure := maxf(0.01, float(sample.get("exposure_seconds", 0.0)))
+	return {
+		"family": str(sample.get("family", "")),
+		"exposure_seconds": exposure,
+		"kiting_ratio": clampf(float(sample.get("kiting_seconds", 0.0)) / exposure, 0.0, 1.0),
+		"camping_ratio": clampf(float(sample.get("camping_seconds", 0.0)) / exposure, 0.0, 1.0),
+		"evasive_ratio": clampf(float(sample.get("evasive_seconds", 0.0)) / exposure, 0.0, 1.0),
+		"rushing_ratio": clampf(float(sample.get("rushing_seconds", 0.0)) / exposure, 0.0, 1.0),
+		"nearby_dashes": int(sample.get("nearby_dashes", 0))
+	}
 
 
 func _trim_timestamps(current_run_time: float) -> void:

@@ -112,24 +112,24 @@ plan.md
   - Safe backgrounding pause and one-click replay seed terminal.
 
 - [x] **Milestone 6: Android Hardening & Release Candidate**
-  - Configured `export_presets.cfg` for Android (API 24 to 34, landscape, zero internet permissions).
+  - Configured `export_presets.cfg` for Android (API 24 to 36, landscape, zero internet permissions; ARM64 only).
   - Built offline local QA crash logger (`crash_logger.gd`) with automatic 256KB rotation.
   - Implemented Android back button navigation hierarchy.
   - Bounded debris particles (`MAX_ACTIVE_SHARDS <= 64`) and guarded save file corruption recovery.
 
-- [x] **Milestone 7: Final Balance, Content & Documentation**
-  - Behavior-driven enemy learning: replaced fixed encounter counters with live contextual bandit adaptation and multi-encounter evidence tracking.
+- [~] **Milestone 7: Final Balance, Content & Documentation (partially complete)**
+  - Run-scoped, behavior-driven evidence and contextual selection are implemented for Chaser tier 1; later Chaser tiers and Dasher/Shooter evolutions still use explicit threshold-to-mutation branches. Runtime/trainer parity and learned selection across all promotion branches remain unfinished.
   - Strict health doubling invariant: each confirmed major species evolution consistently doubles health (`base_health * 2^tier`).
   - Procedural sector expansion & guaranteed gift caches: explorable shops, gift rooms, and route branches across all layout sizes without unreachable rooms.
   - Reconciled wave schedule and 12 diverse squad compositions avoiding repeating past rosters.
-  - Updated Android export configuration to API 36 (Android 16), version code 2, version 1.1.0, and documented closed testing workflows.
+  - Updated Android export configuration to API 36 (Android 16), version code 2, version 1.1.0, and documented closed testing workflows. APK/device verification remains pending Android SDK and export-template setup.
 
 - [x] **Milestone 8: Roguelike Door-Controlled Upgrades & Universal Wave Combat**
   - Upgrades controlled directly by door selection: each forward door awards an un-capped subroutine upgrade or resource upon entry.
   - Procedural 1–3 door choices randomly selected per room with informative holographic floor badges.
   - Universal wave combat: eliminated 0-enemy break rooms; every chamber after calibration spawns hostile waves.
   - Direct touch and click navigation on unlocked doors alongside physical proximity entry.
-  - All 52 automated deterministic test scenarios pass.
+  - All 58 automated deterministic test scenarios pass.
 
 ---
 
@@ -137,6 +137,6 @@ plan.md
 
 Execute the full 52-scenario test suite via:
 ```powershell
-& "D:\GODOT\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe" --headless -s scripts/test_runner.gd
+& "D:\GODOT\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe" --headless --path . --script res://scripts/test_runner.gd
 ```
-Result: `--- ALL 52 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---` (Exit code 0).
+Result: `--- ALL 58 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---` (Exit code 0).

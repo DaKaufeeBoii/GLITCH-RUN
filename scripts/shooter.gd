@@ -21,7 +21,7 @@ var telegraph_time := 0.0
 const TELEGRAPH_DURATION := 0.65
 var aimed_direction := Vector2.RIGHT
 var damage_flash := 0.0
-var evolution_tier: int = 0
+var evolution_tier: int = 1
 var recovery_time := 0.0
 
 # Tier 3 Charged Beam Attack
@@ -306,14 +306,14 @@ func _draw() -> void:
 		draw_line(Vector2(6, 13), Vector2(16, 0), Color("be123c"), 2.0)
 
 	# Evolved Armored Reinforcements (Tier 2 and Tier 3)
-	if max_health > 3:
+	if evolution_tier > 1:
 		# Draw top and bottom armored chassis plating
 		draw_line(Vector2(-12, -13), Vector2(6, -15), Color("38bdf8"), 2.0)
 		draw_line(Vector2(-12, 13), Vector2(6, 15), Color("38bdf8"), 2.0)
 
 	# Health bar & Evolution Tier indicator
-	if evolution_tier > 0 or max_health > 3:
-		var tier_pips := evolution_tier if evolution_tier > 0 else (3 if max_health >= 12 else (2 if max_health >= 6 else 1))
+	if evolution_tier > 1:
+		var tier_pips := evolution_tier - 1
 		for p in range(tier_pips):
 			draw_circle(Vector2(-6.0 + float(p) * 6.0, -27), 2.0, Color("38bdf8"))
 		draw_rect(Rect2(-16, -22, 32, 4), Color("181a26"))

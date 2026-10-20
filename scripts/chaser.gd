@@ -20,7 +20,7 @@ var target: Node2D
 var contact_cooldown := 0.0
 var defeated_already := false
 var damage_flash := 0.0
-var evolution_tier: int = 0
+var evolution_tier: int = 1
 
 # Ranged attack state (Tier 2 learned evolution)
 const TELEGRAPH_TIME := 0.65
@@ -268,8 +268,8 @@ func _draw() -> void:
 	draw_circle(Vector2(3, 0), 2.5, Color("ffffff"))
 
 	# Health bar & Evolution Tier indicator
-	if evolution_tier > 0 or max_health > 3:
-		var tier_pips := evolution_tier if evolution_tier > 0 else (1 if max_health <= 6 else 2)
+	if evolution_tier > 1:
+		var tier_pips := evolution_tier - 1
 		for p in range(tier_pips):
 			draw_circle(Vector2(-4.0 + float(p) * 8.0, -27), 2.2, Color("38bdf8"))
 		draw_rect(Rect2(-16, -22, 32, 4), Color("181a26"))

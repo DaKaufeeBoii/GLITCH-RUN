@@ -73,6 +73,14 @@ var damage_received: int = 0
 var player_dashes_forced: int = 0
 var combat_time_active: float = 0.0
 var fitness_score: float = 0.0
+# Experience belongs to this candidate lineage, so siblings can evolve differently.
+var individual_experience: Dictionary = {
+	"encounters": 0,
+	"kiting": 0.0,
+	"camping": 0.0,
+	"evasion": 0.0,
+	"rushing": 0.0
+}
 
 
 func _init(p_family: String = "CHASER", p_generation: int = 1) -> void:
@@ -160,6 +168,7 @@ func duplicate_genome() -> RefCounted:
 	copy.player_dashes_forced = player_dashes_forced
 	copy.combat_time_active = combat_time_active
 	copy.fitness_score = fitness_score
+	copy.individual_experience = individual_experience.duplicate(true)
 	return copy
 
 
@@ -288,7 +297,8 @@ func apply_to_enemy(enemy_node: Node2D) -> void:
 		enemy_node.max_health = calc_hp
 		enemy_node.health = calc_hp
 	if "evolution_tier" in enemy_node:
-		enemy_node.evolution_tier = tier
+		# Runtime display tiers start at 1; genome tier 0 means the baseline form.
+		enemy_node.evolution_tier = tier + 1
 
 	# 1. Chaser behavioral application
 	if family == "CHASER":

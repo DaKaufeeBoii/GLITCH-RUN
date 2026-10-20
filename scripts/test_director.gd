@@ -21,6 +21,7 @@ const PAUSE_MENU_SCRIPT := preload("res://scripts/pause_menu.gd")
 const CRASH_LOGGER_SCRIPT := preload("res://scripts/crash_logger.gd")
 const DEBRIS_EMITTER_SCRIPT := preload("res://scripts/debris_emitter.gd")
 const MOBILE_CONTROLS_SCRIPT := preload("res://scripts/mobile_controls.gd")
+const PLAYER_SCRIPT := preload("res://scripts/player.gd")
 const NAV_GRID_SCRIPT := preload("res://scripts/navigation_grid.gd")
 const CHASER_SCENE := preload("res://scenes/enemies/chaser.tscn")
 const DASHER_SCENE := preload("res://scenes/enemies/dasher.tscn")
@@ -81,6 +82,7 @@ static func run_all_tests() -> bool:
 	all_passed = test_settings_persistence_and_audio_buses() and all_passed
 	all_passed = test_menu_and_pause_modal_flows() and all_passed
 	all_passed = test_android_configuration_and_touch_targets() and all_passed
+	all_passed = test_player_facing_tracks_movement_joystick() and all_passed
 	all_passed = test_save_corruption_and_offline_recovery() and all_passed
 	all_passed = test_android_back_and_lifecycle_navigation() and all_passed
 	all_passed = test_debris_and_entity_bounding() and all_passed
@@ -98,9 +100,10 @@ static func run_all_tests() -> bool:
 	all_passed = test_non_combat_rooms_variety_and_traversal() and all_passed
 	all_passed = test_evolution_mechanics_biome_1_lock() and all_passed
 	all_passed = test_ai_decision_outcome_attribution() and all_passed
+	all_passed = test_sector_gated_individual_enemy_evolution_and_reset() and all_passed
 
 	if all_passed:
-		print("--- ALL 57 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
+		print("--- ALL 59 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
 	else:
 		push_error("Some director or evolved AI test scenarios failed!")
 	return all_passed
@@ -575,11 +578,16 @@ static func test_encounter_director_integration() -> bool:
 	assert(encounter.has("tactic"), "Encounter must have selected tactic")
 	assert(encounter.has("spawn_list"), "Encounter must have prepared spawn list")
 	assert(not encounter.spawn_list.is_empty(), "Spawn list must not be empty")
+	assert(encounter.tactic == "DEFAULT", "The first-sector director must not counter-adapt to player behavior")
+	assert(is_equal_approx(float(encounter.enemy_speed_mult), 1.0), "First-sector enemies must retain baseline speed")
+	assert(not encounter.hazard_trail and is_equal_approx(float(encounter.shooter_lead), 0.0), "First-sector enemies must not receive learned hazard or aim behaviors")
 
 	# Check that spawned enemies have genomes assigned
 	for espawn in encounter.spawn_list:
 		if espawn.type in ["CHASER", "SHOOTER", "DASHER"]:
 			assert(espawn.genome != null, "Enemy spawn must be equipped with an EnemyGenome")
+			assert(espawn.genome.tier == 0 and espawn.genome.active_mutations.is_empty(), "First-sector roster must contain only base genomes")
+			assert(is_equal_approx(float(espawn.flank_angle), 0.0), "First-sector spawns must not get learned flank positioning")
 
 	print("  [PASS] Encounter Director & Genome Pipeline Integration Scenario")
 	return true
@@ -1316,6 +1324,20 @@ static func test_android_configuration_and_touch_targets() -> bool:
 	ctrl.free()
 
 	print("  [PASS] Android Export Preset Configuration & Touch Targets Scenario")
+	return true
+
+
+static func test_player_facing_tracks_movement_joystick() -> bool:
+	var player = PLAYER_SCRIPT.new()
+	player.aim_direction = Vector2.RIGHT
+	player.set_touch_move(Vector2.UP)
+	assert(is_equal_approx(player.rotation, -PI * 0.5), "Player model must face up when the movement joystick points up")
+	assert(player.aim_direction == Vector2.RIGHT, "Movement facing must not override independent weapon aim direction")
+	player.set_touch_move(Vector2.ZERO)
+	player._update_visual_facing(Vector2.ZERO)
+	assert(is_equal_approx(player.rotation, 0.0), "Player model must return to its aim direction when movement joystick is released")
+	player.free()
+	print("  [PASS] Player Facing Follows Movement Joystick Without Changing Weapon Aim")
 	return true
 
 
@@ -2375,21 +2397,126 @@ static func test_evolution_mechanics_biome_1_lock() -> bool:
 	assert(evo_mgr.get_species_tier("CHASER") == 0, "Chasers must NOT advance tier in Biome 1")
 	assert(evo_mgr.get_species_health_multiplier("CHASER") == 1, "Chasers must NOT double health in Biome 1")
 
-	# Now player completes Biome 1 and enters Biome 2 (current_biome = 2)
+	# Changing biome metadata alone must not unlock a live run: sector completion
+	# is the authoritative lifecycle event.
 	director.current_biome = 2
 	evo_mgr.current_biome = 2
+	assert(not evo_mgr.is_evolution_enabled(), "Stale biome metadata must not enable first-sector evolution")
+	assert(director.record_encounter_result(1, 0, 15.0, kite_profile, "DEFAULT", null, 2).is_empty(), "No evolution should happen before explicit sector clear")
+	director.unlock_after_first_sector()
+	assert(evo_mgr.is_evolution_enabled() and evo_mgr.per_enemy_evolution_mode, "Clearing sector one explicitly enables per-enemy evolution")
+	var post_unlock_chaser: RefCounted = evo_mgr.get_genome_for_spawn("CHASER")
+	assert(post_unlock_chaser.tier == 0 and post_unlock_chaser.active_mutations.is_empty(), "Unlock enables learning but does not grant free mutations")
 
-	# Now encounters will observe evidence and evolve properly
-	var chaser_g = evo_mgr.get_genome_for_spawn("CHASER")
-	evo_mgr.register_spawned_combatant(chaser_g)
-	director.record_encounter_result(1, 0, 15.0, kite_profile, "DEFAULT", null, 2)
-	evo_mgr.register_spawned_combatant(chaser_g)
-	var biome2_adaptations = director.record_encounter_result(1, 0, 15.0, kite_profile, "DEFAULT", null, 2)
+	print("  [PASS] Strict First-Sector Evolution Lock & Explicit Unlock Scenario")
+	return true
 
-	assert(not biome2_adaptations.is_empty(), "Evolution mechanics must begin once Biome 1 is completed")
-	assert(evo_mgr.get_species_tier("CHASER") == 1, "Chaser can now evolve to Tier 1 in Biome 2")
-	assert(evo_mgr.get_species_health_multiplier("CHASER") == 2, "Chaser health multiplier doubles in Biome 2")
-	assert(not evo_mgr.evolution_history.is_empty(), "Evolution history records events in Biome 2")
 
-	print("  [PASS] Evolution Mechanics Biome 1 Lock & Biome 2 Activation Scenario")
+static func test_sector_gated_individual_enemy_evolution_and_reset() -> bool:
+	var director = ENCOUNTER_DIR_SCRIPT.new()
+	var manager = director.evolution_manager
+	director.current_biome = 1
+	assert(manager.strict_sector_lock, "Live encounter director must enforce a strict sector-based lock")
+	manager.current_biome = 2 # Simulate a stale legacy biome value leaking into the first floor.
+	var tracker = BEHAVIOR_TRACKER_SCRIPT.new()
+	assert(not director.run_evolution_unlocked, "Run evolution must begin locked")
+	assert(not manager.per_enemy_evolution_mode, "Per-enemy learning must begin locked")
+
+	# Baseline spawns remain tier one and are not registered for learning in sector one.
+	var locked_genome = manager.get_genome_for_spawn("CHASER")
+	assert(locked_genome.tier == 0 and locked_genome.active_mutations.is_empty(), "Sector-one enemies must stay baseline")
+	assert(manager.active_combatants.is_empty(), "Locked sector-one enemies must not enter the learning roster")
+	var locked_shooter: RefCounted = manager.get_genome_for_spawn("SHOOTER")
+	var locked_dasher: RefCounted = manager.get_genome_for_spawn("DASHER")
+	var base_chaser = CHASER_SCENE.instantiate()
+	var base_shooter = SHOOTER_SCENE.instantiate()
+	var base_dasher = DASHER_SCENE.instantiate()
+	locked_genome.apply_to_enemy(base_chaser)
+	locked_shooter.apply_to_enemy(base_shooter)
+	locked_dasher.apply_to_enemy(base_dasher)
+	assert(base_chaser.evolution_tier == 1 and base_chaser.max_health == 3 and not base_chaser.has_ranged_attack, "First-floor Chasers must spawn in contact-only base form")
+	assert(base_shooter.evolution_tier == 1 and base_shooter.max_health == 3 and not base_shooter.has_beam_attack, "First-floor Shooters must spawn in base form")
+	assert(base_dasher.evolution_tier == 1 and base_dasher.max_health == 2 and not base_dasher.has_hazard_trail, "First-floor Dashers must spawn without evolved trails")
+	base_chaser.free()
+	base_shooter.free()
+	base_dasher.free()
+
+	# Distinct enemy instances see different player behavior and keep separate evidence.
+	var kite_genome = ENEMY_GENOME_SCRIPT.new("CHASER", 1)
+	kite_genome.instance_id = "CHASER-test-kiter"
+	var rush_genome = ENEMY_GENOME_SCRIPT.new("DASHER", 1)
+	rush_genome.instance_id = "DASHER-test-rusher"
+	var kiter = CHASER_SCENE.instantiate()
+	kiter.set("genome", kite_genome)
+	kiter.position = Vector2(300.0, 0.0)
+	var rusher = DASHER_SCENE.instantiate()
+	rusher.set("genome", rush_genome)
+	rusher.position = Vector2(100.0, 0.0)
+	var tracked: Array[Node2D] = [kiter, rusher]
+	for _i in range(4):
+		tracker.update(1.0, Vector2.ZERO, Vector2.ZERO, tracked, true, float(_i), false)
+	assert(tracker.enemy_experience.is_empty(), "Enemy experience must remain paused while locked")
+	director.unlock_after_first_sector()
+	assert(manager.per_enemy_evolution_mode, "Completing sector one must enable per-enemy evolution")
+	var same_room_enemy_a: RefCounted = manager.get_genome_for_spawn("CHASER")
+	var same_room_enemy_b: RefCounted = manager.get_genome_for_spawn("CHASER")
+	assert(same_room_enemy_a.source_candidate_id != same_room_enemy_b.source_candidate_id, "Same-room spawns should use separate experience lineages before repeating one")
+	manager.active_combatants.clear()
+	manager.combatant_records.clear()
+	for _i in range(4):
+		tracker.update(1.0, Vector2.ZERO, Vector2(0.0, 100.0), tracked, false, float(_i), true)
+	var kiter_experience: Dictionary = tracker.consume_enemy_experience(kite_genome.instance_id)
+	var rusher_experience: Dictionary = tracker.consume_enemy_experience(rush_genome.instance_id)
+	assert(float(kiter_experience.get("kiting_ratio", 0.0)) == 1.0, "Kiter must record its own distance evidence")
+	assert(float(rusher_experience.get("rushing_ratio", 0.0)) == 1.0, "Rusher must record its own close-range movement evidence")
+	assert(tracker.consume_enemy_experience(kite_genome.instance_id).is_empty(), "Consumed enemy evidence must not leak into the next encounter")
+	kiter.queue_free()
+	rusher.queue_free()
+
+	var chaser_pool: Array = manager.active_genomes["CHASER"]
+	var individual_a: RefCounted = chaser_pool[0]
+	var individual_b: RefCounted = chaser_pool[1]
+	for encounter_index in range(2):
+		var personal_a: RefCounted = individual_a.duplicate_genome()
+		personal_a.source_candidate_id = individual_a.candidate_id
+		personal_a.instance_id = "individual-a-%d" % encounter_index
+		manager.register_spawned_combatant(personal_a)
+		tracker.enemy_experience[personal_a.instance_id] = {
+			"family": "CHASER", "exposure_seconds": 4.0, "kiting_seconds": 4.0,
+			"camping_seconds": 0.0, "evasive_seconds": 0.0, "rushing_seconds": 0.0, "nearby_dashes": 0
+		}
+		manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 1, true)
+	var personal_b: RefCounted = individual_b.duplicate_genome()
+	personal_b.source_candidate_id = individual_b.candidate_id
+	personal_b.instance_id = "individual-b-0"
+	manager.register_spawned_combatant(personal_b)
+	tracker.enemy_experience[personal_b.instance_id] = {
+		"family": "CHASER", "exposure_seconds": 4.0, "kiting_seconds": 0.0,
+		"camping_seconds": 4.0, "evasive_seconds": 0.0, "rushing_seconds": 0.0, "nearby_dashes": 0
+	}
+	manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 1, true)
+	personal_b = individual_b.duplicate_genome()
+	personal_b.source_candidate_id = individual_b.candidate_id
+	personal_b.instance_id = "individual-b-1"
+	manager.register_spawned_combatant(personal_b)
+	tracker.enemy_experience[personal_b.instance_id] = {
+		"family": "CHASER", "exposure_seconds": 4.0, "kiting_seconds": 0.0,
+		"camping_seconds": 4.0, "evasive_seconds": 0.0, "rushing_seconds": 0.0, "nearby_dashes": 0
+	}
+	manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 1, true)
+	assert(individual_a.has_mutation("RAPID_PURSUIT"), "Kiting evidence should teach this Chaser to pursue faster")
+	assert(individual_b.has_mutation("PINCER_WINGS"), "Camping evidence should teach this different Chaser to flank")
+	assert(not individual_a.has_mutation("PINCER_WINGS") and not individual_b.has_mutation("RAPID_PURSUIT"), "Enemy evolutions must remain individually attributed")
+	assert(individual_a.get_max_health() == individual_a.base_max_health * 2, "Each first evolution must double that individual's health")
+	assert(individual_b.get_max_health() == individual_b.base_max_health * 2, "Alternative first evolution must also double health")
+
+	director.reset_run_learning()
+	assert(not director.run_evolution_unlocked and not manager.per_enemy_evolution_mode, "Run reset must relock learning")
+	for candidate in manager.active_genomes["CHASER"]:
+		assert(candidate.tier == 0 and candidate.active_mutations.is_empty(), "Run reset must restore all Chasers to tier one")
+		assert(int(candidate.individual_experience.get("encounters", 0)) == 0, "Run reset must clear per-enemy experience")
+	assert(manager.evolution_history.is_empty(), "Run reset must discard evolution history")
+	assert(tracker.enemy_experience.is_empty(), "Run reset must clear pending enemy experience")
+	tracker.reset()
+	print("  [PASS] Sector-One Evolution Lock, Per-Enemy Adaptation, and Run Reset Scenario")
 	return true

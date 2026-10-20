@@ -172,7 +172,7 @@ func _physics_process(delta: float) -> void:
 		if not touch_aim.is_zero_approx():
 			aim_direction = touch_aim.normalized()
 
-	rotation = aim_direction.angle()
+	_update_visual_facing(move_input)
 	move_and_slide()
 	if dash_time > 0.0:
 		for i in range(get_slide_collision_count()):
@@ -210,6 +210,17 @@ func _spawn_dash_ghost(has_static_blink: bool) -> void:
 
 func set_touch_move(value: Vector2) -> void:
 	touch_move = value.limit_length(1.0)
+	if not touch_move.is_zero_approx():
+		_update_visual_facing(touch_move)
+	queue_redraw()
+
+
+func _update_visual_facing(move_input: Vector2) -> void:
+	# The operative's body follows the movement stick while moving. Keep aim_direction
+	# independent so twin-stick firing can still target another direction.
+	var facing_direction := move_input if not move_input.is_zero_approx() else aim_direction
+	if not facing_direction.is_zero_approx():
+		rotation = facing_direction.angle()
 
 
 func set_touch_aim(value: Vector2) -> void:
