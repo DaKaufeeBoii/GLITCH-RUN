@@ -1,5 +1,7 @@
 # GLITCH//RUN — Behavior-Driven Enemy Learning Plan
 
+> **Status: Design proposal, not a release-status document.** The game currently has run-scoped enemy adaptation/evolution, an explicit first-sector lock, and deterministic tests for per-enemy evidence and reset behavior. The more open-ended mutable-gene learner, fully matched Python/GDScript training pipeline, and all acceptance criteria in this proposal have not been verified as complete. Sections below describe the target design; statements under “Current implementation problems” are audit observations from when this plan was written and should be rechecked against current code before implementation.
+
 ## Objective
 
 Replace fixed encounter-count enemy evolution with a run-scoped system in which each enemy species observes the player's behavior, learns which responses work fairly, and changes its own behavior genome over the course of that run.
