@@ -156,17 +156,19 @@ func record_encounter_result(
 	player_profile: Dictionary,
 	chosen_tactic: String,
 	tracker: RefCounted = null,
-	biome_index: int = -1
+	biome_index: int = -1,
+	encounter_completed: bool = true
 ) -> Array[Dictionary]:
 	## Reports combat feedback to LearningPolicy, AdaptiveDirector, and EvolutionManager.
 	if biome_index > 0:
 		current_biome = biome_index
 
-	adaptive_director.record_tactic_result(chosen_tactic, damage_taken)
+	if encounter_completed:
+		adaptive_director.record_tactic_result(chosen_tactic, damage_taken)
 
 	if use_learning_policy:
 		var act_id: int = LEARNING_POLICY_SCRIPT.ACTION_NAMES.find(chosen_tactic)
-		if act_id >= 0:
+		if encounter_completed and act_id >= 0:
 			var reward: float = learning_policy.compute_reward(damage_taken, combat_time, player_profile, act_id)
 			learning_policy.update_policy(reward)
 
@@ -183,6 +185,7 @@ func record_encounter_result(
 			player_profile,
 			chosen_tactic,
 			tracker,
-			current_biome
+			current_biome,
+			encounter_completed
 		)
 	return []

@@ -31,6 +31,13 @@ var family: String = "CHASER" # "CHASER", "SHOOTER", "DASHER", "BOSS"
 var generation: int = 1
 var variant_name: String = "Standard"
 var variant_id: String = ""
+var candidate_id: String = ""
+var parent_candidate_id: String = ""
+var source_candidate_id: String = ""
+var instance_id: String = ""
+var policy_action_id: int = -1
+var policy_action_name: String = ""
+var policy_context: Array[float] = []
 var major_evolution_count: int = 0
 var tier: int = 0: # Kept synchronized with major_evolution_count
 	get:
@@ -60,7 +67,9 @@ var active_mutations: Array[String] = []
 
 # Lifetime encounter fitness metrics
 var encounters_survived: int = 0
+var evaluated_encounters: int = 0
 var damage_dealt_to_player: int = 0
+var damage_received: int = 0
 var player_dashes_forced: int = 0
 var combat_time_active: float = 0.0
 var fitness_score: float = 0.0
@@ -126,6 +135,13 @@ func duplicate_genome() -> RefCounted:
 	var copy = get_script().new(family, generation)
 	copy.variant_name = variant_name
 	copy.variant_id = variant_id
+	copy.candidate_id = candidate_id
+	copy.parent_candidate_id = parent_candidate_id
+	copy.source_candidate_id = source_candidate_id
+	copy.instance_id = instance_id
+	copy.policy_action_id = policy_action_id
+	copy.policy_action_name = policy_action_name
+	copy.policy_context = policy_context.duplicate()
 	copy.major_evolution_count = major_evolution_count
 	copy.base_max_health = base_max_health
 	copy.prediction_strength = prediction_strength
@@ -138,7 +154,9 @@ func duplicate_genome() -> RefCounted:
 	copy.damage_multipliers = damage_multipliers.duplicate()
 	copy.active_mutations = active_mutations.duplicate()
 	copy.encounters_survived = encounters_survived
+	copy.evaluated_encounters = evaluated_encounters
 	copy.damage_dealt_to_player = damage_dealt_to_player
+	copy.damage_received = damage_received
 	copy.player_dashes_forced = player_dashes_forced
 	copy.combat_time_active = combat_time_active
 	copy.fitness_score = fitness_score
@@ -272,46 +290,55 @@ func apply_to_enemy(enemy_node: Node2D) -> void:
 
 	# 1. Chaser behavioral application
 	if family == "CHASER":
+		var action: String = policy_action_name
+		if action.is_empty():
+			action = "CRIMSON_BLASTER" if tier >= 2 else ("RAPID_PURSUIT" if tier >= 1 else "CONTACT_PURSUIT")
 		var speed: float = 92.0 * aggression
-		if tier >= 1 or has_mutation("RAPID_PURSUIT"):
+		if action in ["RAPID_PURSUIT", "CRIMSON_BLASTER"]:
 			speed = maxf(135.0, 135.0 * aggression)
 		if "move_speed" in enemy_node:
 			enemy_node.move_speed = speed
 		if "has_ranged_attack" in enemy_node:
-			enemy_node.has_ranged_attack = (tier >= 2 or has_mutation("CRIMSON_BLASTER"))
+			enemy_node.has_ranged_attack = action == "CRIMSON_BLASTER"
 		if "flank_angle" in enemy_node:
-			enemy_node.flank_angle = flanking_tendency * 0.70
-			if flanking_tendency > 0.15:
-				enemy_node.set("is_flanker", true)
+			enemy_node.flank_angle = flanking_tendency * 0.70 if action == "FLANKING_PINCER" else 0.0
+			if "is_flanker" in enemy_node:
+				enemy_node.is_flanker = action == "FLANKING_PINCER"
 
 	# 2. Shooter behavioral application
 	elif family == "SHOOTER":
+		var action: String = policy_action_name
+		if action.is_empty():
+			action = "HEAVY_BEAM" if tier >= 3 else ("PREDICTIVE_OPTICS" if tier >= 2 else ("AGILE_STRAFE" if tier >= 1 else "STANDARD_VOLLEY"))
 		var s_speed: float = 75.0 * aggression
-		if tier >= 1 or has_mutation("AGILE_STRAFE"):
+		if action in ["AGILE_STRAFE", "PREDICTIVE_OPTICS", "HEAVY_BEAM"]:
 			s_speed = maxf(115.0, 115.0 * aggression)
 		if "move_speed" in enemy_node:
 			enemy_node.move_speed = s_speed
 
 		if "lead_prediction" in enemy_node:
-			if tier >= 2 or has_mutation("PREDICTIVE_OPTICS"):
+			if action in ["PREDICTIVE_OPTICS", "HEAVY_BEAM"]:
 				enemy_node.lead_prediction = 1.0
 			else:
 				enemy_node.lead_prediction = 0.0 # Bad aim at tier 0 and 1
 
 		if "has_beam_attack" in enemy_node:
-			enemy_node.has_beam_attack = (tier >= 3 or has_mutation("HEAVY_BEAM") or has_mutation("BURST_VOLLEY"))
+			enemy_node.has_beam_attack = action == "HEAVY_BEAM"
 
 		if "ideal_distance" in enemy_node:
 			enemy_node.ideal_distance = preferred_distance
 
 	# 3. Dasher behavioral application
 	elif family == "DASHER":
+		var action: String = policy_action_name
+		if action.is_empty():
+			action = "REINFORCED_CHASSIS" if tier >= 3 else ("OVERCLOCKED_THRUSTERS" if tier >= 2 else ("ION_HAZARD_TRAIL" if tier >= 1 else "DIRECT_LUNGE"))
 		var p_spd: float = 95.0 * aggression
 		var l_spd: float = 520.0 * aggression
-		if tier >= 2 or has_mutation("OVERCLOCKED_THRUSTERS"):
+		if action in ["OVERCLOCKED_THRUSTERS", "REINFORCED_CHASSIS"]:
 			p_spd = maxf(150.0, 150.0 * aggression)
 			l_spd = maxf(820.0, 820.0 * aggression)
-		elif tier == 1 or has_mutation("ION_HAZARD_TRAIL"):
+		elif action == "ION_HAZARD_TRAIL":
 			p_spd = maxf(120.0, 120.0 * aggression)
 			l_spd = maxf(650.0, 650.0 * aggression)
 
@@ -320,7 +347,7 @@ func apply_to_enemy(enemy_node: Node2D) -> void:
 		if "lunge_speed" in enemy_node:
 			enemy_node.lunge_speed = l_spd
 		if "has_hazard_trail" in enemy_node:
-			enemy_node.has_hazard_trail = (tier >= 1 or has_mutation("ION_HAZARD_TRAIL"))
+			enemy_node.has_hazard_trail = action in ["ION_HAZARD_TRAIL", "OVERCLOCKED_THRUSTERS", "REINFORCED_CHASSIS"]
 
 	# Generic modifiers
 	if "damage_multipliers" in enemy_node:
@@ -334,13 +361,14 @@ func calculate_fitness() -> float:
 	var survival_reward := minf(combat_time_active, 30.0) * 0.10
 	var damage_reward := float(damage_dealt_to_player) * 2.5
 	var pressure_reward := float(player_dashes_forced) * 0.40
+	var damage_received_penalty := minf(float(damage_received) * 0.15, 2.0)
 
 	var overkill_penalty := 0.0
 	if damage_dealt_to_player >= 4:
 		# Variant caused excessive damage; penalize to prevent degenerate stomps
 		overkill_penalty = float(damage_dealt_to_player - 3) * 3.0
 
-	fitness_score = maxf(0.0, survival_reward + damage_reward + pressure_reward - overkill_penalty)
+	fitness_score = maxf(0.0, survival_reward + damage_reward + pressure_reward - overkill_penalty - damage_received_penalty)
 	return fitness_score
 
 
@@ -349,6 +377,8 @@ func to_dict() -> Dictionary:
 		"family": family,
 		"generation": generation,
 		"variant_name": variant_name,
+		"candidate_id": candidate_id,
+		"parent_candidate_id": parent_candidate_id,
 		"tier": tier,
 		"base_max_health": base_max_health,
 		"prediction_strength": prediction_strength,
@@ -361,7 +391,9 @@ func to_dict() -> Dictionary:
 		"damage_multipliers": damage_multipliers.duplicate(),
 		"active_mutations": active_mutations.duplicate(),
 		"encounters_survived": encounters_survived,
+		"evaluated_encounters": evaluated_encounters,
 		"damage_dealt_to_player": damage_dealt_to_player,
+		"damage_received": damage_received,
 		"fitness_score": fitness_score
 	}
 
@@ -370,6 +402,8 @@ static func from_dict(d: Dictionary) -> RefCounted:
 	var script = load("res://scripts/enemy_genome.gd") as GDScript
 	var g = script.new(d.get("family", "CHASER"), int(d.get("generation", 1)))
 	g.variant_name = d.get("variant_name", "Standard")
+	g.candidate_id = d.get("candidate_id", "")
+	g.parent_candidate_id = d.get("parent_candidate_id", "")
 	g.tier = int(d.get("tier", 0))
 	g.base_max_health = int(d.get("base_max_health", 3))
 	g.prediction_strength = float(d.get("prediction_strength", 0.0))
@@ -382,7 +416,9 @@ static func from_dict(d: Dictionary) -> RefCounted:
 	g.damage_multipliers = d.get("damage_multipliers", { "plasma": 1.0, "dash": 1.0, "hazard": 1.0 })
 	g.active_mutations.assign(d.get("active_mutations", []))
 	g.encounters_survived = int(d.get("encounters_survived", 0))
+	g.evaluated_encounters = int(d.get("evaluated_encounters", 0))
 	g.damage_dealt_to_player = int(d.get("damage_dealt_to_player", 0))
+	g.damage_received = int(d.get("damage_received", 0))
 	g.fitness_score = float(d.get("fitness_score", 0.0))
 	g.clamp_all_traits()
 	return g

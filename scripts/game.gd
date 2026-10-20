@@ -2646,7 +2646,8 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 						var v_genome = encounter_director.evolution_manager.get_genome_for_spawn(v_type)
 						if v_genome:
 							v_genome.apply_to_enemy(v_enemy)
-							encounter_director.evolution_manager.register_spawned_combatant(v_genome)
+							_apply_encounter_modifiers(v_enemy, spd_m, tel_m, v_flank, lead_v, encounter.hazard_trail)
+							encounter_director.evolution_manager.register_spawned_combatant(v_genome, v_enemy)
 			)
 		return
 
@@ -2696,7 +2697,8 @@ func _spawn_wave_enemies(wave_num: int) -> void:
 					)
 					if genome and enemy:
 						genome.apply_to_enemy(enemy)
-						encounter_director.evolution_manager.register_spawned_combatant(genome)
+						_apply_encounter_modifiers(enemy, spd_m, tel_m, flank, lead_v, encounter.hazard_trail)
+						encounter_director.evolution_manager.register_spawned_combatant(genome, enemy)
 			)
 
 
@@ -2853,7 +2855,8 @@ func _spawn_phase_two_reinforcements(boss_pos: Vector2) -> void:
 					var g = encounter_director.evolution_manager.get_genome_for_spawn(m_fam)
 					if g:
 						g.apply_to_enemy(enemy)
-						encounter_director.evolution_manager.register_spawned_combatant(g)
+						_apply_encounter_modifiers(enemy, 1.15, 0.85, flank, 0.5, false)
+						encounter_director.evolution_manager.register_spawned_combatant(g, enemy)
 		)
 
 
@@ -2910,9 +2913,39 @@ func _spawn_enemy(
 	return enemy
 
 
+func _apply_encounter_modifiers(
+	enemy: Node2D,
+	speed_mult: float,
+	_telegraph_mult: float,
+	flank_angle: float,
+	lead_prediction: float,
+	hazard_trail: bool
+) -> void:
+	if not is_instance_valid(enemy):
+		return
+	# Genome application picks the species behavior; the director's room-level
+	# modifiers are layered afterward so they remain effective for this spawn.
+	if "move_speed" in enemy:
+		enemy.move_speed *= speed_mult
+	if "patrol_speed" in enemy:
+		enemy.patrol_speed *= speed_mult
+	if "lunge_speed" in enemy:
+		enemy.lunge_speed *= speed_mult
+	if flank_angle != 0.0 and "flank_angle" in enemy:
+		enemy.flank_angle = flank_angle
+		if "is_flanker" in enemy:
+			enemy.is_flanker = true
+	if lead_prediction > 0.0 and "lead_prediction" in enemy:
+		enemy.lead_prediction = maxf(float(enemy.lead_prediction), lead_prediction)
+	if hazard_trail and "has_hazard_trail" in enemy:
+		enemy.has_hazard_trail = true
+
+
 func _on_enemy_defeated(enemy_node: Node2D) -> void:
 	if run_over:
 		return
+	if encounter_director and encounter_director.evolution_manager and is_instance_valid(enemy_node) and "genome" in enemy_node:
+		encounter_director.evolution_manager.record_combatant_defeated(enemy_node.genome, enemy_node)
 	var rs = get_node_or_null("/root/RunState")
 	var is_boss_core := enemy_node == boss_ref
 	var bits_reward := 2 if current_room_data and current_room_data.room_type == "ELITE" else 1
@@ -3033,7 +3066,8 @@ func _on_room_cleared() -> void:
 			tracker.get_profile(),
 			current_sector_tactic,
 			tracker,
-			cur_biome
+			cur_biome,
+			true
 		)
 		rs.set_evolution_log(encounter_director.evolution_manager.evolution_history)
 
@@ -3238,7 +3272,8 @@ func _on_player_died() -> void:
 			tracker.get_profile(),
 			current_sector_tactic,
 			tracker,
-			cur_biome
+			cur_biome,
+			false
 		)
 		rs.set_evolution_log(encounter_director.evolution_manager.evolution_history)
 

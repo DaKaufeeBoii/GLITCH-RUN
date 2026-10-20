@@ -205,6 +205,8 @@ func take_damage(amount: int, source: String = "plasma") -> void:
 	var mult: float = damage_multipliers.get(source, 1.0)
 	var final_amount: int = maxi(1, int(roundf(float(amount) * mult)))
 	health = maxi(0, health - final_amount)
+	if genome and "damage_received" in genome:
+		genome.damage_received += final_amount
 	damage_flash = 0.12
 	queue_redraw()
 	if health == 0:

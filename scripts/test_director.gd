@@ -97,6 +97,7 @@ static func run_all_tests() -> bool:
 	all_passed = test_teleportation_prevention_mid_combat() and all_passed
 	all_passed = test_non_combat_rooms_variety_and_traversal() and all_passed
 	all_passed = test_evolution_mechanics_biome_1_lock() and all_passed
+	all_passed = test_ai_decision_outcome_attribution() and all_passed
 
 	if all_passed:
 		print("--- ALL 57 DIRECTOR, EVOLUTION, STEERING, BOSS ROSTER, SETTINGS, UI & ANDROID HARDENING SCENARIOS PASSED DETERMINISTICALLY ---")
@@ -1288,10 +1289,10 @@ static func test_android_configuration_and_touch_targets() -> bool:
 	assert(f != null, "export_presets.cfg must be readable")
 	var content := f.get_as_text()
 	f.close()
-	assert("com.antigravity.glitchrun" in content, "Must configure unique Android package ID")
+	assert('package/unique_name="com.antigravity.glitchrun"' in content, "Must configure the documented Android package ID")
 	assert("permissions/vibrate=true" in content, "Haptics permission must be enabled")
 	assert("permissions/internet=false" in content, "Internet permission must be explicitly false for offline safety")
-	assert("screen/orientation=1" in content, "Landscape orientation must be enforced in export preset")
+	assert(ProjectSettings.get_setting("display/window/handheld/orientation") == "landscape", "Landscape orientation must be enforced by the project")
 	assert("gradle_build/min_sdk=\"24\"" in content, "Min SDK must be 24 (Android 7.0)")
 	assert("gradle_build/target_sdk=\"36\"" in content, "Target SDK must be 36 (Android 16)")
 
@@ -1301,7 +1302,7 @@ static func test_android_configuration_and_touch_targets() -> bool:
 	assert(float(ctrl.get("DASH_RADIUS")) >= 48.0, "Dash radius must be at least 48dp touch threshold")
 	assert(float(ctrl.get("RELOAD_RADIUS")) * 2.0 >= 48.0, "Reload button diameter must exceed 48dp touch threshold")
 	assert(ctrl.has_signal("reload_pressed"), "Mobile controls must expose reload_pressed signal")
-	assert("android_icon_192.png" in content, "Launcher 192 icon must be configured")
+	assert('launcher_icons/main_192x192="res://assets/icon/android_icon_192.png"' in content, "Launcher 192 icon must be configured")
 	ctrl.free()
 
 	print("  [PASS] Android Export Preset Configuration & Touch Targets Scenario")
@@ -1448,6 +1449,7 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 
 	# Verify Tier 2 Chaser node behavior:
 	var chaser_node = CHASER_SCENE.instantiate()
+	chaser_g.policy_action_name = "CRIMSON_BLASTER"
 	chaser_g.apply_to_enemy(chaser_node)
 	assert(chaser_node.max_health == 12, "Chaser Tier 2 max health must be 12 (4x of base 3)")
 	assert(chaser_node.health == 12, "Chaser Tier 2 current health must be 12")
@@ -1469,6 +1471,7 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 	assert(evo_mgr.get_species_tier("DASHER") == 1, "Dasher evolves to Tier 1 after observed dash evasion")
 	assert(evo_mgr.get_species_health_multiplier("DASHER") == 2, "Dasher Tier 1 must have 2x health multiplier")
 	var dasher_node1 = DASHER_SCENE.instantiate()
+	dasher_g.policy_action_name = "ION_HAZARD_TRAIL"
 	dasher_g.apply_to_enemy(dasher_node1)
 	assert(dasher_node1.has_hazard_trail, "Dasher Tier 1 must drop hazard mines")
 	assert(dasher_node1.lunge_speed >= 650.0, "Dasher Tier 1 speed boosted to 650.0")
@@ -1482,6 +1485,7 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 	assert(evo_mgr.get_species_tier("DASHER") == 2, "Dasher evolves to Tier 2 after continued dash evasion")
 	assert(evo_mgr.get_species_health_multiplier("DASHER") == 4, "Dasher Tier 2 must have 4x health multiplier")
 	var dasher_node2 = DASHER_SCENE.instantiate()
+	dasher_g.policy_action_name = "OVERCLOCKED_THRUSTERS"
 	dasher_g.apply_to_enemy(dasher_node2)
 	assert(dasher_node2.lunge_speed >= 800.0, "Dasher Tier 2 hyper speed >= 800 px/s")
 	assert(dasher_node2.max_health == 8, "Dasher Tier 2 max health must be 8 (4x base 2)")
@@ -1494,6 +1498,7 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 	assert(evo_mgr.get_species_tier("DASHER") == 3, "Dasher evolves to Tier 3 after sustained evasion")
 	assert(evo_mgr.get_species_health_multiplier("DASHER") == 8, "Dasher Tier 3 has 8x health multiplier")
 	var dasher_node3 = DASHER_SCENE.instantiate()
+	dasher_g.policy_action_name = "REINFORCED_CHASSIS"
 	dasher_g.apply_to_enemy(dasher_node3)
 	assert(dasher_node3.max_health == 16, "Dasher Tier 3 max health must be 16 (8x base 2)")
 	dasher_node3.free()
@@ -1508,6 +1513,7 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 	assert(evo_mgr.get_species_tier("SHOOTER") == 1, "Shooter Tier 1 after rushing observed")
 	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 2, "Shooter Tier 1 has 2x health (6 HP)")
 	var shooter_node1 = SHOOTER_SCENE.instantiate()
+	shooter_g.policy_action_name = "AGILE_STRAFE"
 	shooter_g.apply_to_enemy(shooter_node1)
 	assert(shooter_node1.move_speed >= 110.0, "Shooter Tier 1 has speed buff >= 110")
 	assert(shooter_node1.max_health == 6, "Shooter Tier 1 max health must be 6 (2x base 3)")
@@ -1522,6 +1528,7 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 	assert(evo_mgr.get_species_tier("SHOOTER") == 2, "Shooter Tier 2 after mobility observed")
 	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 4, "Shooter Tier 2 has 4x health (12 HP)")
 	var shooter_node2 = SHOOTER_SCENE.instantiate()
+	shooter_g.policy_action_name = "PREDICTIVE_OPTICS"
 	shooter_g.apply_to_enemy(shooter_node2)
 	assert(shooter_node2.max_health == 12, "Shooter Tier 2 max health must be 12 (4x base 3)")
 	assert(shooter_node2.lead_prediction == 1.0, "Shooter Tier 2 has pinpoint lead prediction 1.0")
@@ -1535,6 +1542,7 @@ static func test_enemy_evolution_species_isolation_and_tiers() -> bool:
 	assert(evo_mgr.get_species_tier("SHOOTER") == 3, "Shooter Tier 3 after camping observed")
 	assert(evo_mgr.get_species_health_multiplier("SHOOTER") == 8, "Shooter Tier 3 has 8x health (24 HP)")
 	var shooter_node3 = SHOOTER_SCENE.instantiate()
+	shooter_g.policy_action_name = "HEAVY_BEAM"
 	shooter_g.apply_to_enemy(shooter_node3)
 	assert(shooter_node3.max_health == 24, "Shooter Tier 3 max health must be 24 (8x base 3)")
 	assert(shooter_node3.has_beam_attack, "Shooter Tier 3 has charged beam attack")
@@ -1732,6 +1740,35 @@ static func test_behavior_driven_learning_and_evidence_switch() -> bool:
 	assert(evo_mgr.evolution_history.is_empty(), "Reset clears evolution history")
 
 	print("  [PASS] Behavior-Driven Enemy Learning, Strategy Switch & Isolation Scenario")
+	return true
+
+
+static func test_ai_decision_outcome_attribution() -> bool:
+	var evo = EVOLUTION_MANAGER_SCRIPT.new()
+	var snapshot: RefCounted = evo.get_genome_for_spawn("CHASER")
+	var source_id: String = snapshot.source_candidate_id
+	var enemy: CharacterBody2D = CHASER_SCENE.instantiate()
+	snapshot.apply_to_enemy(enemy)
+	evo.register_spawned_combatant(snapshot, enemy)
+	var record: Dictionary = evo.combatant_records[snapshot.instance_id]
+	assert(record.action_applied, "Selected baseline behavior must be confirmed on the spawned Chaser")
+	assert(record.selected_action == "CONTACT_PURSUIT", "Chaser decision must be species-compatible")
+	snapshot.damage_dealt_to_player = 2
+	snapshot.damage_received = 1
+	evo.record_combatant_defeated(snapshot, enemy)
+	evo.process_encounter_end(0, 1, 30.0, {"ranged": 0.1, "mobility": 0.1, "aggression": 0.6, "turret": 0.1}, "DEFAULT", null, 2, true)
+	assert(snapshot.combat_time_active < 30.0, "Early defeat must not receive full encounter survival credit")
+	var source: RefCounted = evo._find_candidate("CHASER", source_id)
+	assert(source != null, "Spawn outcome must resolve to its source population candidate")
+	assert(source.damage_dealt_to_player == 2, "Damage outcome must update only the source candidate")
+	assert(source.damage_received == 1 and source.evaluated_encounters == 1, "Candidate fitness must use measured damage and participation")
+	assert(evo.species_policies["CHASER"].action_counts[snapshot.policy_action_id] == 1, "Executed decision must train its own recorded action")
+
+	var generation_before: int = evo.generation
+	evo.process_encounter_end(1, 0, 20.0, {"active_families": ["DASHER"]}, "DEFAULT", null, 2, true)
+	assert(evo.generation == generation_before, "No-participation encounter must not breed or advance generation")
+	enemy.free()
+	print("  [PASS] Per-Enemy Decision Execution, Outcome Attribution & Evidence-Gated Breeding")
 	return true
 
 
@@ -2228,11 +2265,16 @@ static func test_non_combat_rooms_variety_and_traversal() -> bool:
 
 	# Verify generated non-combat rooms in procedural layouts have empty spawns
 	var layout = gen.generate_dungeon(8888, 7, 3, true)
+	assert(gen._validate_generated_floor(layout), "Constructed floor must pass final graph, room, and boss/extract validation")
 	for room in layout.rooms:
 		if room.room_type in ["START", "EXTRACT", "CACHE", "SHRINE", "TRANSIT", "SHOP", "GIFT", "RECOVERY", "SECRET"]:
 			assert(room.enemy_spawns.is_empty(), "Non-combat room %s must not have enemy spawns" % room.room_type)
 			var wave_spawns = gen.generate_wave_spawns(room, 8888, 1, 4)
 			assert(wave_spawns.is_empty(), "Non-combat room %s must not generate wave hostiles" % room.room_type)
+	for room_type in ["START", "COMBAT", "ELITE", "BOSS", "SHOP", "GIFT", "RECOVERY"]:
+		var fallback = gen._build_fallback_room(2, room_type, true, ["START", "COMBAT", "BOSS"])
+		assert(fallback.is_validated, "Procedural %s fallback must pass the same reachability validator" % room_type)
+		assert(gen._validate_room_reachability(fallback, true), "Procedural %s fallback reachability must be reproducible" % room_type)
 
 	print("  [PASS] Non-Combat Room Variety (Cache, Shrine, Transit) & Safe Traversal Scenario")
 	return true

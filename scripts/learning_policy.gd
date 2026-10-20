@@ -160,7 +160,13 @@ func extract_context(profile: Dictionary, room_chokepoint_ratio: float = 0.0) ->
 	return vec
 
 
-func select_action(context: Array[float], current_hp: int = 5, max_hp: int = 5, allow_stabilization: bool = true) -> Dictionary:
+func select_action(
+	context: Array[float],
+	current_hp: int = 5,
+	max_hp: int = 5,
+	allow_stabilization: bool = true,
+	eligible_action_names: Array[String] = []
+) -> Dictionary:
 	last_context_vector = context.duplicate()
 
 	# Mercy stabilization override for high-level Director only
@@ -185,11 +191,17 @@ func select_action(context: Array[float], current_hp: int = 5, max_hp: int = 5, 
 	for a in range(action_count):
 		ucb_scores.append(0.0)
 
-	var candidate_limit := action_count
-	if family_id == "DIRECTOR":
-		candidate_limit = action_count - 1 # Exclude automatic stabilization when player is healthy
+	var eligible_indices: Array[int] = []
+	for a in range(action_count):
+		if family_id == "DIRECTOR" and not allow_stabilization and action_names[a] == "STABILIZATION":
+			continue
+		if not eligible_action_names.is_empty() and action_names[a] not in eligible_action_names:
+			continue
+		eligible_indices.append(a)
+	if eligible_indices.is_empty():
+		return {"action_id": -1, "action_name": "", "confidence": 0.0, "reason": "No eligible action", "ucb_scores": ucb_scores}
 
-	for a in range(candidate_limit):
+	for a in eligible_indices:
 		# 1. Expected reward = theta[a] . x
 		var expected_reward := 0.0
 		for f in range(FEATURE_DIM):
@@ -292,10 +304,20 @@ func compute_reward(
 func update_policy(reward: float) -> void:
 	if last_selected_action < 0 or last_context_vector.is_empty():
 		return
+	update_policy_for_decision(last_selected_action, last_context_vector, reward)
 
-	var a := last_selected_action
+
+func update_policy_for_decision(action_id: int, context: Array[float], reward: float) -> bool:
+	if action_id < 0 or action_id >= action_count or context.size() != FEATURE_DIM:
+		return false
+	for value in context:
+		if not is_finite(value):
+			return false
+	var x: Array[float] = context.duplicate()
+	var a := action_id
+	reward = clampf(reward, -2.0, 2.0)
+
 	action_counts[a] += 1
-	var x := last_context_vector
 
 	# Exact Sherman-Morrison rank-1 update of inv_cov[a]:
 	# u = inv_cov[a] * x
@@ -323,6 +345,23 @@ func update_policy(reward: float) -> void:
 
 	# Recompute parameter vector theta[a] = inv_cov[a] * b_vec[a]
 	_recalculate_theta(a)
+	return true
+
+
+func compute_outcome_reward(outcome: Dictionary) -> float:
+	## Bounded, deterministic fitness signal from observed combat results.
+	if not bool(outcome.get("valid", false)):
+		return 0.0
+	var dealt := clampf(float(outcome.get("damage_dealt", 0)), 0.0, 4.0) / 4.0
+	var survived := clampf(float(outcome.get("survival_seconds", 0.0)) / 20.0, 0.0, 1.0)
+	var forced := clampf(float(outcome.get("dashes_forced", 0)), 0.0, 3.0) / 3.0
+	var received := clampf(float(outcome.get("damage_received", 0)), 0.0, 4.0) / 4.0
+	var player_damage := clampf(float(outcome.get("player_damage_taken", 0)), 0.0, 4.0) / 4.0
+	var completion := 1.0 if bool(outcome.get("encounter_completed", false)) else 0.0
+	var reward: float = dealt * 0.40 + survived * 0.20 + forced * 0.10 + completion * 0.15 - received * 0.10 - player_damage * 0.15
+	if bool(outcome.get("encounter_failed", false)):
+		reward -= 0.25
+	return clampf(reward, -1.0, 1.0)
 
 
 func _recalculate_theta(a: int) -> void:

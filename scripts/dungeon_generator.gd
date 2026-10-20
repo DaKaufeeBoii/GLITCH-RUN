@@ -207,8 +207,48 @@ func generate_dungeon(
 	if procedural_floor:
 		_build_floor_corridors_and_thresholds(layout, room_types)
 		_designate_secret_room(layout, geom_rng)
+		if not _validate_generated_floor(layout):
+			push_error("Generated floor seed %d failed end-to-end validation" % seed_val)
 
 	return layout
+
+
+func _validate_generated_floor(layout: DungeonLayout) -> bool:
+	if layout == null or layout.rooms.is_empty():
+		return false
+	if layout.rooms[0].room_type != "START" or not layout.rooms[0].is_validated:
+		return false
+	if layout.rooms[layout.rooms.size() - 1].room_type not in ["BOSS", "EXTRACT"]:
+		return false
+	for room in layout.rooms:
+		if not room.is_validated or not _validate_room_reachability(room, true):
+			return false
+		for neighbor in room.connections:
+			if not layout.adjacency.get(int(neighbor), []).has(room.index):
+				return false
+			if not layout.get_room(int(neighbor)):
+				return false
+	if layout.is_boss_floor and layout.rooms[layout.rooms.size() - 1].room_type != "BOSS":
+		return false
+	if not layout.is_boss_floor and layout.rooms[layout.rooms.size() - 1].room_type != "EXTRACT":
+		return false
+	return _all_required_rooms_reachable(layout)
+
+
+func _all_required_rooms_reachable(layout: DungeonLayout) -> bool:
+	var visited: Dictionary = {0: true}
+	var queue: Array[int] = [0]
+	while not queue.is_empty():
+		var current: int = queue.pop_front()
+		for neighbor_value in layout.adjacency.get(current, []):
+			var neighbor := int(neighbor_value)
+			if not visited.has(neighbor):
+				visited[neighbor] = true
+				queue.append(neighbor)
+	for room in layout.rooms:
+		if room.room_type in ["START", "COMBAT", "ELITE", "BOSS", "EXTRACT"] and not visited.has(room.index):
+			return false
+	return true
 
 
 func _designate_secret_room(layout: DungeonLayout, rng: RandomNumberGenerator) -> void:
@@ -1418,7 +1458,9 @@ func _build_fallback_room(
 				room.shop_stock = _generate_shop_stock(RandomNumberGenerator.new())
 			elif room_type == "GIFT":
 				room.gift_choices = _generate_gift_choices(RandomNumberGenerator.new())
-		room.is_validated = true
+		room.is_validated = _validate_room_reachability(room, true)
+		if not room.is_validated:
+			push_error("Procedural fallback room %d (%s) failed reachability validation" % [index, room_type])
 		return room
 
 	if index == 0:
@@ -1438,7 +1480,9 @@ func _build_fallback_room(
 		})
 		room.obstacles.clear()
 		room.enemy_spawns.clear()
-		room.is_validated = true
+		room.is_validated = _validate_room_reachability(room, false)
+		if not room.is_validated:
+			push_error("Legacy start fallback room failed reachability validation")
 		return room
 
 	room.bounds = ROOM_RECT
@@ -1468,5 +1512,7 @@ func _build_fallback_room(
 		room.enemy_spawns.append({ "type": "CHASER", "pos": Vector2(740, 276), "flank_angle": 0.0 })
 		room.enemy_spawns.append({ "type": "SHOOTER", "pos": Vector2(620, 360), "flank_angle": 0.0 })
 
-	room.is_validated = true
+	room.is_validated = _validate_room_reachability(room, false)
+	if not room.is_validated:
+		push_error("Legacy fallback room %d (%s) failed reachability validation" % [index, room_type])
 	return room
