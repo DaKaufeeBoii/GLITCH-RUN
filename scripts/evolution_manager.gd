@@ -490,7 +490,8 @@ func process_encounter_end(
 	_selected_tactic: String,
 	tracker: RefCounted = null,
 	biome_index: int = -1,
-	encounter_completed: bool = true
+	encounter_completed: bool = true,
+	completed_floors_total: int = 0
 ) -> Array[Dictionary]:
 	## Evaluates combat outcomes under strict species evidence isolation.
 	## A species evolves ONLY when its own observed battle data justifies adaptation.
@@ -546,7 +547,9 @@ func process_encounter_end(
 			if per_enemy_evolution_mode and tracker and tracker.has_method("consume_enemy_experience"):
 				var personal_profile: Dictionary = tracker.consume_enemy_experience(str(g.instance_id))
 				if not personal_profile.is_empty():
-					var personal_evolution: Dictionary = _process_candidate_experience(candidate, personal_profile, sector_index)
+					var personal_evolution: Dictionary = _process_candidate_experience(
+						candidate, personal_profile, sector_index, current_biome, completed_floors_total
+					)
 					if not personal_evolution.is_empty():
 						new_adaptations.append(personal_evolution)
 
@@ -833,7 +836,13 @@ func process_encounter_end(
 	return new_adaptations
 
 
-func _process_candidate_experience(candidate: RefCounted, observation: Dictionary, sector_index: int) -> Dictionary:
+func _process_candidate_experience(
+	candidate: RefCounted,
+	observation: Dictionary,
+	sector_index: int,
+	biome_index: int = 1,
+	completed_floors_total: int = 0
+) -> Dictionary:
 	## Deterministic, authored evolution rules fed only by this candidate's own
 	## spawned enemy observations. One candidate can evolve while its siblings do not.
 	if float(observation.get("exposure_seconds", 0.0)) < 3.0:
@@ -846,6 +855,16 @@ func _process_candidate_experience(candidate: RefCounted, observation: Dictionar
 	memory["evasion"] = minf(4.0, float(memory.get("evasion", 0.0)) + maxf(0.0, float(observation.get("evasive_ratio", 0.0)) - 0.30) + dash_evidence)
 	memory["rushing"] = minf(4.0, float(memory.get("rushing", 0.0)) + maxf(0.0, float(observation.get("rushing_ratio", 0.0)) - 0.20))
 	candidate.individual_experience = memory
+
+	# Keep learning evidence during the opening biome, but prevent promotions
+	# until that onboarding biome is fully cleared. Later tiers need progressively
+	# longer floor gaps: 3 floors, then 5, then 7, before evidence can promote again.
+	if biome_index < 2:
+		return {}
+	if candidate.tier > 0:
+		var floors_required: int = candidate.tier * 2 + 1
+		if completed_floors_total - int(candidate.last_evolution_floor) < floors_required:
+			return {}
 
 	var mutation := ""
 	match str(candidate.family):
@@ -873,6 +892,7 @@ func _process_candidate_experience(candidate: RefCounted, observation: Dictionar
 				mutation = "HEAVY_BEAM"
 	if mutation.is_empty() or not candidate.apply_named_mutation(mutation):
 		return {}
+	candidate.last_evolution_floor = completed_floors_total
 	candidate.generation = generation
 	candidate.variant_id = "%s-v%d-%04d" % [candidate.family, candidate.tier + 1, randi() % 10000]
 	var health_multiplier := int(pow(2.0, candidate.tier))

@@ -2713,15 +2713,18 @@ func _spawn_boss(pos: Vector2) -> void:
 		return
 	var rs_node = get_node_or_null("/root/RunState")
 	var cur_sector: int = rs_node.progression.sector_index if (rs_node and rs_node.progression) else 1
+	var biome_index: int = rs_node.progression.current_biome if (rs_node and rs_node.progression) else 1
+	var absolute_sector := (biome_index - 1) * 3 + cur_sector
 	var cur_seed: int = rs_node.current_seed if rs_node else 1337
 	var last_id: String = boss_director.last_scheduled_boss_id if boss_director else ""
 
-	current_boss_def = boss_director.select_boss_for_sector(cur_sector, cur_seed, last_id) if boss_director else null
+	current_boss_def = boss_director.select_boss_for_sector(absolute_sector, cur_seed, last_id) if boss_director else null
 	var scene_path: String = current_boss_def.scene_path if current_boss_def else "res://scenes/enemies/boss.tscn"
 	var boss_packed: PackedScene = load(scene_path)
 	var boss: Node2D = boss_packed.instantiate()
 
 	boss.position = pos
+	boss.scale = Vector2(1.25, 1.25)
 	boss.target = player
 	if "squad_coordinator" in boss:
 		boss.squad_coordinator = squad_coordinator
@@ -2736,28 +2739,10 @@ func _spawn_boss(pos: Vector2) -> void:
 	if "is_mid_boss" in boss:
 		boss.is_mid_boss = is_mid
 
-	# Boss difficulty scaling: First boss is notably easier, progressively harder as depth and sectors advance
-	var hp_scale := 1.0
-	if cur_sector == 1:
-		hp_scale = 0.55 # Sector 1 (First boss): accessible 55% health (~19-20 HP)
-	elif cur_sector == 2:
-		hp_scale = 0.80 # Sector 2 (Mid-boss): ~28 HP
-	else:
-		hp_scale = 1.0 + float(cur_sector - 3) * 0.15
-
-	if tracker and rs_node and rs_node.progression:
-		var p_prof: Dictionary = tracker.get_profile()
-		var p_rating: float = RunProgression.compute_performance_rating(
-			player.health if is_instance_valid(player) else 5,
-			player.max_health if is_instance_valid(player) else 5,
-			p_prof
-		)
-		if p_rating < 0.85:
-			hp_scale *= 0.85
-		elif p_rating > 1.30:
-			hp_scale *= 1.10
-
-	var scaled_hp: int = maxi(15, int(roundf(float(boss.max_health) * hp_scale)))
+	# Boss vitality follows a predictable linear curve: 50 HP in the first
+	# sector, then +5 HP per sector. Final bosses have two 50+ HP phases
+	# (100 effective HP at the start); mid-bosses retain one phase.
+	var scaled_hp: int = 50 + maxi(0, absolute_sector - 1) * 5
 	boss.max_health = scaled_hp
 	boss.health = scaled_hp
 	if "dash_speed" in boss and cur_sector == 1:
@@ -3077,7 +3062,8 @@ func _on_room_cleared() -> void:
 			current_sector_tactic,
 			tracker,
 			cur_biome,
-			true
+			true,
+		rs.progression.completed_floors_total if rs.progression else 0
 		)
 		rs.set_evolution_log(encounter_director.evolution_manager.evolution_history)
 
@@ -3284,7 +3270,8 @@ func _on_player_died() -> void:
 			current_sector_tactic,
 			tracker,
 			cur_biome,
-			false
+			false,
+			rs.progression.completed_floors_total if rs.progression else 0
 		)
 		rs.set_evolution_log(encounter_director.evolution_manager.evolution_history)
 

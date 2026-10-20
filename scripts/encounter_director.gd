@@ -167,7 +167,8 @@ func record_encounter_result(
 	chosen_tactic: String,
 	tracker: RefCounted = null,
 	biome_index: int = -1,
-	encounter_completed: bool = true
+	encounter_completed: bool = true,
+	completed_floors_total: int = 0
 ) -> Array[Dictionary]:
 	## Reports combat feedback to LearningPolicy, AdaptiveDirector, and EvolutionManager.
 	if biome_index > 0:
@@ -202,6 +203,7 @@ func record_encounter_result(
 			chosen_tactic,
 			tracker,
 			current_biome,
-			encounter_completed
+			encounter_completed,
+			completed_floors_total
 		)
 	return []

@@ -3,7 +3,7 @@
 [ext_resource type="Script" path="res://scripts/boss_sentinel.gd" id="1_sentinel"]
 
 [sub_resource type="CircleShape2D" id="CircleShape_sentinel"]
-radius = 26.0
+radius = 40.0
 
 [node name="BossSentinel" type="CharacterBody2D"]
 collision_layer = 2

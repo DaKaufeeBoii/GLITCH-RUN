@@ -23,9 +23,9 @@ Enter GLITCH//RUN, a top-down action roguelite set inside a corrupted simulation
 
 Explore procedurally generated floors connected by branching routes. Fight through multi-wave rooms, find optional shops and gift caches, and choose upgrades that shape your run. Each floor’s room mix can change, so plan your route and decide when to risk a harder encounter.
 
-Start in the first sector against baseline enemies. After clearing it, run-scoped enemy adaptations can respond to encounter behavior. Each enemy species tracks its own experience, and those adaptations are cleared when the run ends.
+Start in the first sector against baseline enemies. After the opening sector, enemies begin learning from their own encounters; their first evolution waits until the first biome is complete, with increasingly spaced floor milestones afterward. Each enemy keeps its own run-scoped experience, and adaptations clear when the run ends.
 
-Face a rotating roster of multi-phase bosses, unlock additional operatives with Bits, and use touch controls designed for landscape play.
+Face a rotating roster of multi-phase bosses, including powerful chaser, dasher, and shooter variants. Unlock additional operatives with Bits, and use touch controls designed for landscape play.
 
 GLITCH//RUN is a single-player game. Game saves and settings are stored locally on the device.
 ```

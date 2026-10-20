@@ -1,10 +1,13 @@
 # Godot editor/import cache (recreated by Godot)
 .godot/
+.godot_test_data/
+.godot_test_local/
 
 # Android build and exported packages
 build/
 android/build/
 export_templates/
+*.mono/
 *.apk
 *.aab
 *.idsig

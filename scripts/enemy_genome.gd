@@ -39,6 +39,7 @@ var policy_action_id: int = -1
 var policy_action_name: String = ""
 var policy_context: Array[float] = []
 var major_evolution_count: int = 0
+var last_evolution_floor: int = -1
 var tier: int = 0: # Kept synchronized with major_evolution_count
 	get:
 		return major_evolution_count
@@ -151,6 +152,7 @@ func duplicate_genome() -> RefCounted:
 	copy.policy_action_name = policy_action_name
 	copy.policy_context = policy_context.duplicate()
 	copy.major_evolution_count = major_evolution_count
+	copy.last_evolution_floor = last_evolution_floor
 	copy.base_max_health = base_max_health
 	copy.prediction_strength = prediction_strength
 	copy.flanking_tendency = flanking_tendency

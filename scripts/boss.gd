@@ -8,8 +8,8 @@ signal phase_two_entered
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/enemy_projectile.tscn")
 
-@export var max_health := 35
-var health := 35
+@export var max_health := 50
+var health := 50
 var target: Node2D
 var defeated_already := false
 
@@ -30,6 +30,7 @@ var nav_grid: RefCounted = null
 var obstacle_rects: Array[Rect2] = []
 var burst_projectile_count := 8
 var dash_speed := 420.0
+var approach_speed := 55.0
 var post_burst_recovery := 1.0
 
 # Debuff status
@@ -116,7 +117,7 @@ func _physics_process(delta: float) -> void:
 							approach_dir = EnemySteering.avoid_obstacles(global_position, approach_dir, obstacle_rects, 50.0)
 					else:
 						approach_dir = EnemySteering.avoid_obstacles(global_position, to_target.normalized(), obstacle_rects, 50.0)
-				var eff_speed := 75.0 if is_phase_two else 55.0
+				var eff_speed := approach_speed * (1.35 if is_phase_two else 1.0)
 				velocity = approach_dir * eff_speed
 			else:
 				velocity = Vector2.ZERO
@@ -243,9 +244,9 @@ func take_damage(amount: int, _source: String = "plasma") -> void:
 func _draw() -> void:
 	# Attack telegraph visuals
 	if current_phase == AttackPhase.CHARGING_BURST:
-		var burst_radius := 30.0 + (1.0 - phase_timer / 0.85) * 45.0
+		var burst_radius := 42.0 + (1.0 - phase_timer / 0.85) * 58.0
 		draw_arc(Vector2.ZERO, burst_radius, 0.0, TAU, 32, Color(1.0, 0.25, 0.4, 0.8), 2.5)
-		draw_circle(Vector2.ZERO, 14.0, Color(1.0, 0.3, 0.5, 0.35))
+		draw_circle(Vector2.ZERO, 18.0, Color(1.0, 0.3, 0.5, 0.35))
 	elif current_phase == AttackPhase.CHARGING_DASH:
 		var line_color := Color(1.0, 0.35, 0.15, 0.75)
 		draw_line(Vector2.ZERO, to_local(global_position + dash_target_dir * 320.0), line_color, 4.0)
@@ -256,17 +257,17 @@ func _draw() -> void:
 	var pts: Array[Vector2] = []
 	for i in range(8):
 		var a := float(i) * TAU / 8.0
-		pts.append(Vector2(cos(a), sin(a)) * 28.0)
+		pts.append(Vector2(cos(a), sin(a)) * 36.0)
 	draw_colored_polygon(pts, core_color)
-	draw_arc(Vector2.ZERO, 28.0, 0.0, TAU, 32, Color("fb7185"), 2.5)
+	draw_arc(Vector2.ZERO, 36.0, 0.0, TAU, 32, Color("fb7185"), 3.0)
 
 	# Inner pulsing core
-	draw_circle(Vector2.ZERO, 13.0, Color("f43f5e"))
-	draw_circle(Vector2.ZERO, 6.0, Color("ffffff"))
+	draw_circle(Vector2.ZERO, 17.0, Color("f43f5e"))
+	draw_circle(Vector2.ZERO, 8.0, Color("ffffff"))
 
 	# Rotating Orbital Shield Nodes
 	for i in range(3):
 		var node_a := orbital_angle + i * (TAU / 3.0)
-		var node_pos := Vector2(cos(node_a), sin(node_a)) * 44.0
-		draw_circle(node_pos, 5.5, Color("fda4af"))
-		draw_circle(node_pos, 2.5, Color("ffffff"))
+		var node_pos := Vector2(cos(node_a), sin(node_a)) * 55.0
+		draw_circle(node_pos, 7.0, Color("fda4af"))
+		draw_circle(node_pos, 3.0, Color("ffffff"))

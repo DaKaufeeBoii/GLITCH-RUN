@@ -10,6 +10,7 @@ const LEARNING_POLICY_SCRIPT := preload("res://scripts/learning_policy.gd")
 const DUNGEON_GEN_SCRIPT := preload("res://scripts/dungeon_generator.gd")
 const ENCOUNTER_DIR_SCRIPT := preload("res://scripts/encounter_director.gd")
 const RUN_PROGRESSION_SCRIPT := preload("res://scripts/run_progression.gd")
+const RUN_STATE_SCRIPT := preload("res://scripts/run_state.gd")
 const ENEMY_STEERING_SCRIPT := preload("res://scripts/enemy_steering.gd")
 const SPATIAL_INDEX_SCRIPT := preload("res://scripts/spatial_index.gd")
 const SQUAD_COORDINATOR_SCRIPT := preload("res://scripts/squad_coordinator.gd")
@@ -695,6 +696,7 @@ static func test_run_progression_wave_scaling_and_depth() -> bool:
 	assert(prog.run_depth == 1, "Progression must start at depth 1")
 	assert(prog.sector_index == 1, "Progression must start in Sector 1")
 	assert(prog.room_index == 0, "Progression must start at room 0")
+	assert(prog.completed_floors_total == 0, "Run-wide completed floor milestones must start at zero")
 
 	# Sector wave schedule (Normal difficulty: Sector 1 = 3 waves, Sector 2 = 4 waves, Sector 3 = 5 waves)
 	assert(prog.sector_total_waves == 3, "Normal Sector 1 must schedule 3 regular waves")
@@ -722,6 +724,9 @@ static func test_run_progression_wave_scaling_and_depth() -> bool:
 	assert(prog.calculate_waves_for_current_room("COMBAT") >= 2, "Combat rooms guarantee multiple combat waves")
 
 	# Wave advancement across combat waves
+	prog.reset()
+	var floor_advance: Dictionary = prog.advance_floor()
+	assert(floor_advance.completed_floors_total == 1, "Completing a floor must increment the run-wide evolution milestone once")
 	prog.reset()
 	var w_count := prog.calculate_waves_for_current_room("COMBAT")
 	assert(w_count >= 2, "Early depth combat room has at least 2 waves")
@@ -1109,20 +1114,26 @@ static func test_dasher_hazard_cap_and_spacing() -> bool:
 
 static func test_boss_definition_registry() -> bool:
 	var director = BOSS_DIRECTOR_SCRIPT.new()
-	assert(director.definitions.size() == 3, "Boss director must have 3 authored bosses")
+	assert(director.definitions.size() == 6, "Boss director must have the original three bosses plus three enemy-family bosses")
 	assert(director.definitions.has("nexus_overlord"), "Must register nexus_overlord")
 	assert(director.definitions.has("vector_sentinel"), "Must register vector_sentinel")
 	assert(director.definitions.has("null_architect"), "Must register null_architect")
+	assert(director.definitions.has("redline_pursuer"), "Must register the Chaser-family boss")
+	assert(director.definitions.has("ion_afterimage"), "Must register the Dasher-family boss")
+	assert(director.definitions.has("zero_day_marksman"), "Must register the Shooter-family boss")
 
-	for b_id in ["nexus_overlord", "vector_sentinel", "null_architect"]:
+	for b_id in ["nexus_overlord", "vector_sentinel", "null_architect", "redline_pursuer", "ion_afterimage", "zero_day_marksman"]:
 		var b_def = director.get_boss_definition(b_id)
 		assert(b_def != null, "Definition must exist for %s" % b_id)
 		assert(ResourceLoader.exists(b_def.scene_path), "Boss scene must exist at %s" % b_def.scene_path)
-		assert(b_def.base_health >= 25, "Base health must be at least 25")
+		assert(b_def.base_health >= 50, "Boss phase health must begin at 50")
 		assert(b_def.base_speed > 30.0, "Base speed must be > 30")
 		assert(b_def.allowed_mutations.size() >= 2, "Boss must define at least 2 authored mutation tiers")
 		for m in b_def.allowed_mutations:
 			assert(m.has("id") and m.has("name") and m.has("desc"), "Mutation must have id, name, and desc trade-off")
+	var breacher_price: int = int(RUN_STATE_SCRIPT.CHARACTER_CATALOG["BREACHER"].price)
+	var longshot_price: int = int(RUN_STATE_SCRIPT.CHARACTER_CATALOG["LONGSHOT"].price)
+	assert(breacher_price == 1000 and longshot_price == 3000, "Permanent character prices must match the revised economy")
 
 	print("  [PASS] Boss Definition Roster Registry Scenario")
 	return true
@@ -1135,20 +1146,22 @@ static func test_boss_director_rotation_and_schedule() -> bool:
 	var sec1_eligible: Array = director.get_eligible_bosses(1)
 	assert(sec1_eligible.size() == 2, "Sector 1 must have exactly 2 eligible bosses")
 
-	# 2. Sector 2 eligibility: All 3 bosses eligible
+	# 2. Sector 2 eligibility: original roster plus Null Architect
 	var sec2_eligible: Array = director.get_eligible_bosses(2)
-	assert(sec2_eligible.size() == 3, "Sector 2+ must have all 3 bosses eligible")
+	assert(sec2_eligible.size() == 3, "Sector 2 must unlock the existing Null Architect")
+	var sec4_eligible: Array = director.get_eligible_bosses(4)
+	assert(sec4_eligible.size() == 6, "Enemy-family bosses must enter after the first biome")
 
 	# 3. Repetition cooldown: selecting boss for next sector must not repeat last_scheduled_boss_id
 	var seed_val := 4242
 	var b1 = director.select_boss_for_sector(1, seed_val, "")
-	var b2 = director.select_boss_for_sector(2, seed_val, b1.boss_id)
+	var b2 = director.select_boss_for_sector(4, seed_val, b1.boss_id)
 	assert(b2.boss_id != b1.boss_id, "Boss scheduling must enforce repetition cooldown across adjacent sectors")
 
 	# 4. Deterministic schedule: same seed must produce identical schedule
 	var director2 = BOSS_DIRECTOR_SCRIPT.new()
 	var b1_repro = director2.select_boss_for_sector(1, seed_val, "")
-	var b2_repro = director2.select_boss_for_sector(2, seed_val, b1_repro.boss_id)
+	var b2_repro = director2.select_boss_for_sector(4, seed_val, b1_repro.boss_id)
 	assert(b1_repro.boss_id == b1.boss_id, "Boss schedule must be 100% deterministic for a seed")
 	assert(b2_repro.boss_id == b2.boss_id, "Boss schedule must be 100% deterministic for a seed")
 
@@ -1189,6 +1202,30 @@ static func test_returning_boss_mutation_tradeoffs() -> bool:
 	assert(boss.burst_projectile_count == 10, "BURST_OVERCLOCK must increase projectiles to 10")
 	assert(boss.post_burst_recovery > 1.2, "BURST_OVERCLOCK must add recovery time trade-off")
 	boss.free()
+
+	# Family boss variants must execute their advertised bounded mutations.
+	var chaser_boss: Node = load("res://scenes/enemies/boss_chaser.tscn").instantiate()
+	chaser_boss._initialize_family_baseline()
+	var chaser_speed: float = chaser_boss.approach_speed
+	var chaser_mutations: Array[Dictionary] = [{"id": "PREDATORY_LOCK"}]
+	chaser_boss.apply_mutations(chaser_mutations)
+	assert(chaser_boss.approach_speed > chaser_speed, "Predatory Lock must increase chaser pursuit speed")
+	chaser_boss.free()
+	var dasher_boss: Node = load("res://scenes/enemies/boss_dasher.tscn").instantiate()
+	dasher_boss._initialize_family_baseline()
+	var dasher_recovery: float = dasher_boss.post_burst_recovery
+	var dasher_mutations: Array[Dictionary] = [{"id": "ION_WAKE"}]
+	dasher_boss.apply_mutations(dasher_mutations)
+	assert(dasher_boss.post_burst_recovery > dasher_recovery, "Ion Wake must make the dash hazard mutation's recovery trade-off real")
+	dasher_boss.free()
+	var shooter_boss: Node = load("res://scenes/enemies/boss_shooter.tscn").instantiate()
+	shooter_boss._initialize_family_baseline()
+	var shooter_spread_count: int = shooter_boss.burst_projectile_count
+	var shooter_mutations: Array[Dictionary] = [{"id": "CROSSHAIR_GRID"}]
+	shooter_boss.apply_mutations(shooter_mutations)
+	assert(shooter_boss.burst_projectile_count < shooter_spread_count, "Crosshair Grid must trade projectile count for longer recovery")
+	assert(shooter_boss.post_burst_recovery > 1.0, "Crosshair Grid must add a longer reload window")
+	shooter_boss.free()
 
 	print("  [PASS] Returning Boss Mutation Tiers & Trade-offs Scenario")
 	return true
@@ -2407,6 +2444,12 @@ static func test_evolution_mechanics_biome_1_lock() -> bool:
 	assert(evo_mgr.is_evolution_enabled() and evo_mgr.per_enemy_evolution_mode, "Clearing sector one explicitly enables per-enemy evolution")
 	var post_unlock_chaser: RefCounted = evo_mgr.get_genome_for_spawn("CHASER")
 	assert(post_unlock_chaser.tier == 0 and post_unlock_chaser.active_mutations.is_empty(), "Unlock enables learning but does not grant free mutations")
+	var learning_candidate: RefCounted = evo_mgr.active_genomes["CHASER"][0]
+	var strong_kiting_observation := {"exposure_seconds": 4.0, "kiting_ratio": 1.0}
+	assert(evo_mgr._process_candidate_experience(learning_candidate, strong_kiting_observation, 1, 1, 9).is_empty(), "Accumulated evidence must not trigger evolution during biome one")
+	assert(evo_mgr._process_candidate_experience(learning_candidate, strong_kiting_observation, 1, 1, 9).is_empty(), "Repeated evidence still cannot bypass the biome-one lock")
+	assert(learning_candidate.tier == 0, "First major evolution must wait until one full biome is cleared")
+	assert(not evo_mgr._process_candidate_experience(learning_candidate, strong_kiting_observation, 1, 2, 9).is_empty(), "Evidence can trigger the first evolution after biome one")
 
 	print("  [PASS] Strict First-Sector Evolution Lock & Explicit Unlock Scenario")
 	return true
@@ -2458,6 +2501,7 @@ static func test_sector_gated_individual_enemy_evolution_and_reset() -> bool:
 	assert(tracker.enemy_experience.is_empty(), "Enemy experience must remain paused while locked")
 	director.unlock_after_first_sector()
 	assert(manager.per_enemy_evolution_mode, "Completing sector one must enable per-enemy evolution")
+	manager.current_biome = 2 # The first complete biome has now been cleared.
 	var same_room_enemy_a: RefCounted = manager.get_genome_for_spawn("CHASER")
 	var same_room_enemy_b: RefCounted = manager.get_genome_for_spawn("CHASER")
 	assert(same_room_enemy_a.source_candidate_id != same_room_enemy_b.source_candidate_id, "Same-room spawns should use separate experience lineages before repeating one")
@@ -2485,7 +2529,7 @@ static func test_sector_gated_individual_enemy_evolution_and_reset() -> bool:
 			"family": "CHASER", "exposure_seconds": 4.0, "kiting_seconds": 4.0,
 			"camping_seconds": 0.0, "evasive_seconds": 0.0, "rushing_seconds": 0.0, "nearby_dashes": 0
 		}
-		manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 1, true)
+		manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 2, true, 12)
 	var personal_b: RefCounted = individual_b.duplicate_genome()
 	personal_b.source_candidate_id = individual_b.candidate_id
 	personal_b.instance_id = "individual-b-0"
@@ -2494,7 +2538,7 @@ static func test_sector_gated_individual_enemy_evolution_and_reset() -> bool:
 		"family": "CHASER", "exposure_seconds": 4.0, "kiting_seconds": 0.0,
 		"camping_seconds": 4.0, "evasive_seconds": 0.0, "rushing_seconds": 0.0, "nearby_dashes": 0
 	}
-	manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 1, true)
+	manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 2, true, 12)
 	personal_b = individual_b.duplicate_genome()
 	personal_b.source_candidate_id = individual_b.candidate_id
 	personal_b.instance_id = "individual-b-1"
@@ -2503,12 +2547,33 @@ static func test_sector_gated_individual_enemy_evolution_and_reset() -> bool:
 		"family": "CHASER", "exposure_seconds": 4.0, "kiting_seconds": 0.0,
 		"camping_seconds": 4.0, "evasive_seconds": 0.0, "rushing_seconds": 0.0, "nearby_dashes": 0
 	}
-	manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 1, true)
+	manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 2, true, 12)
 	assert(individual_a.has_mutation("RAPID_PURSUIT"), "Kiting evidence should teach this Chaser to pursue faster")
 	assert(individual_b.has_mutation("PINCER_WINGS"), "Camping evidence should teach this different Chaser to flank")
 	assert(not individual_a.has_mutation("PINCER_WINGS") and not individual_b.has_mutation("RAPID_PURSUIT"), "Enemy evolutions must remain individually attributed")
 	assert(individual_a.get_max_health() == individual_a.base_max_health * 2, "Each first evolution must double that individual's health")
 	assert(individual_b.get_max_health() == individual_b.base_max_health * 2, "Alternative first evolution must also double health")
+	assert(individual_a.last_evolution_floor == 12, "Evolution must record its floor milestone")
+	var delayed_personal: RefCounted = individual_a.duplicate_genome()
+	delayed_personal.source_candidate_id = individual_a.candidate_id
+	delayed_personal.instance_id = "individual-a-delay-2"
+	manager.register_spawned_combatant(delayed_personal)
+	tracker.enemy_experience[delayed_personal.instance_id] = {
+		"family": "CHASER", "exposure_seconds": 4.0, "kiting_seconds": 4.0,
+		"camping_seconds": 0.0, "evasive_seconds": 0.0, "rushing_seconds": 0.0, "nearby_dashes": 0
+	}
+	manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 2, true, 14)
+	assert(individual_a.tier == 1, "Second evolution must wait a full 3 floors after the previous one")
+	delayed_personal = individual_a.duplicate_genome()
+	delayed_personal.source_candidate_id = individual_a.candidate_id
+	delayed_personal.instance_id = "individual-a-delay-3"
+	manager.register_spawned_combatant(delayed_personal)
+	tracker.enemy_experience[delayed_personal.instance_id] = {
+		"family": "CHASER", "exposure_seconds": 4.0, "kiting_seconds": 4.0,
+		"camping_seconds": 0.0, "evasive_seconds": 0.0, "rushing_seconds": 0.0, "nearby_dashes": 0
+	}
+	manager.process_encounter_end(1, 0, 4.0, {}, "DEFAULT", tracker, 2, true, 15)
+	assert(individual_a.tier == 2 and individual_a.last_evolution_floor == 15, "Second evolution may occur after 3 completed floors if the evidence still supports it")
 
 	director.reset_run_learning()
 	assert(not director.run_evolution_unlocked and not manager.per_enemy_evolution_mode, "Run reset must relock learning")

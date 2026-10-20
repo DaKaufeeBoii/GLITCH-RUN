@@ -77,7 +77,7 @@ const CHARACTER_CATALOG := {
 	"BREACHER": {
 		"title": "BREACHER",
 		"role": "MELEE SPECIALIST",
-		"price": 2500,
+		"price": 1000,
 		"max_health": 6,
 		"move_speed_mult": 1.08,
 		"fire_interval_mult": 1.0,
@@ -86,7 +86,7 @@ const CHARACTER_CATALOG := {
 	"LONGSHOT": {
 		"title": "LONGSHOT",
 		"role": "SNIPER",
-		"price": 5000,
+		"price": 3000,
 		"max_health": 4,
 		"move_speed_mult": 1.0,
 		"fire_interval_mult": 1.55,

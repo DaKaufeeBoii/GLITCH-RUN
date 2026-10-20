@@ -21,6 +21,7 @@ const BIOME_DATA_SCRIPT := preload("res://scripts/biome_data.gd")
 
 var current_floor: int = 1 # 1 to total_floors_in_sector
 var total_floors_in_sector: int = 3 # Always odd: 3, 5, or 7 floors per sector
+var completed_floors_total: int = 0 # Run-wide floor count used for paced evolution milestones
 var seed_play_time: float = 0.0
 
 var run_depth: int = 1 # Monotonically increasing room steps taken across entire run
@@ -54,6 +55,7 @@ func reset() -> void:
 	current_biome = 1
 	sector_index = 1
 	current_floor = 1
+	completed_floors_total = 0
 	room_index = 0
 	rooms_per_sector = DEFAULT_ROOMS_PER_SECTOR
 	update_sector_floors(seed_play_time)
@@ -354,6 +356,7 @@ func advance_room(target_room: int = -1) -> Dictionary:
 
 func advance_floor() -> Dictionary:
 	## Advances to the next floor in the current sector, or triggers new sector/biome when all floors are cleared.
+	completed_floors_total += 1
 	run_depth += 1
 	current_floor += 1
 	room_index = 0
@@ -381,6 +384,7 @@ func advance_floor() -> Dictionary:
 		"is_new_floor": true,
 		"floor": current_floor,
 		"total_floors": total_floors_in_sector,
+		"completed_floors_total": completed_floors_total,
 		"is_new_sector": is_new_sector,
 		"is_new_biome": is_new_biome,
 		"biome": current_biome,

@@ -25,7 +25,7 @@ func _register_default_bosses() -> void:
 		"SINGULARITY CORE",
 		"res://scenes/enemies/boss.tscn",
 		1,
-		35,
+		50,
 		55.0,
 		Color("f43f5e"),
 		[
@@ -52,7 +52,7 @@ func _register_default_bosses() -> void:
 		"ORBITAL DEFENSE MATRIX",
 		"res://scenes/enemies/boss_sentinel.tscn",
 		1,
-		30,
+		50,
 		65.0,
 		Color("06b6d4"),
 		[
@@ -79,7 +79,7 @@ func _register_default_bosses() -> void:
 		"GRID CONTAINMENT CONSTRUCT",
 		"res://scenes/enemies/boss_architect.tscn",
 		2, # Unlocks at sector 2+
-		40,
+		50,
 		45.0,
 		Color("a855f7"),
 		[
@@ -98,6 +98,55 @@ func _register_default_bosses() -> void:
 		]
 	)
 	definitions["null_architect"] = architect
+
+	# Enemy-family bosses enter after the opening biome has taught the basics.
+	var redline = BOSS_DEFINITION_SCRIPT.new(
+		"redline_pursuer",
+		"REDLINE PURSUER",
+		"CHASER // PURSUIT ENGINE",
+		"res://scenes/enemies/boss_chaser.tscn",
+	4,
+		50,
+		78.0,
+		Color("fb3d55"),
+		[
+			{"id": "PREDATORY_LOCK", "name": "PREDATORY LOCK", "desc": "FASTER PURSUIT // LONGER DASH TELEGRAPH", "tier": 1},
+			{"id": "REDLINE_OVERRUN", "name": "REDLINE OVERRUN", "desc": "TWO-PASS CHARGE // WIDE RECOVERY WINDOW", "tier": 2}
+		]
+	)
+	definitions["redline_pursuer"] = redline
+
+	var afterimage = BOSS_DEFINITION_SCRIPT.new(
+		"ion_afterimage",
+		"ION AFTERIMAGE",
+		"DASHER // TRAIL REACTOR",
+		"res://scenes/enemies/boss_dasher.tscn",
+	4,
+		50,
+		58.0,
+		Color("e879f9"),
+		[
+			{"id": "ION_WAKE", "name": "ION WAKE", "desc": "SHORT DASH TRAIL // LONGER RECOVERY", "tier": 1},
+			{"id": "AFTERIMAGE_CHAIN", "name": "AFTERIMAGE CHAIN", "desc": "EXTRA DASH // BRIGHTER TELEGRAPH", "tier": 2}
+		]
+	)
+	definitions["ion_afterimage"] = afterimage
+
+	var marksman = BOSS_DEFINITION_SCRIPT.new(
+		"zero_day_marksman",
+		"ZERO-DAY MARKSMAN",
+		"SHOOTER // LONG-RANGE SENTINEL",
+		"res://scenes/enemies/boss_shooter.tscn",
+	4,
+		50,
+		48.0,
+		Color("fbbf24"),
+		[
+			{"id": "SIGHTLINE_CALIBRATION", "name": "SIGHTLINE CALIBRATION", "desc": "TIGHTER VOLLEY // LONG AIM TELEGRAPH", "tier": 1},
+			{"id": "CROSSHAIR_GRID", "name": "CROSSHAIR GRID", "desc": "WIDER VOLLEY // LONGER RELOAD WINDOW", "tier": 2}
+		]
+	)
+	definitions["zero_day_marksman"] = marksman
 
 
 func get_boss_definition(boss_id: String) -> BossDefinition:

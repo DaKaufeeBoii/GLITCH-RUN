@@ -8,8 +8,8 @@ signal phase_two_entered
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/enemy_projectile.tscn")
 
-@export var max_health := 40
-var health := 40
+@export var max_health := 50
+var health := 50
 var target: Node2D
 var defeated_already := false
 
@@ -252,15 +252,15 @@ func _draw() -> void:
 
 	# Fractured Hypercube Polygon
 	var pts := PackedVector2Array([
-		Vector2(-24, -24),
-		Vector2(24, -24),
-		Vector2(24, 24),
-		Vector2(-24, 24)
+		Vector2(-32, -32),
+		Vector2(32, -32),
+		Vector2(32, 32),
+		Vector2(-32, 32)
 	])
 	draw_colored_polygon(pts, SECONDARY_COLOR)
 	draw_polyline(pts, main_color, 2.0)
 
 	# Inner dimensional cross
-	draw_line(Vector2(-16, -16), Vector2(16, 16), GLITCH_COLOR, 1.5)
-	draw_line(Vector2(16, -16), Vector2(-16, 16), GLITCH_COLOR, 1.5)
+	draw_line(Vector2(-22, -22), Vector2(22, 22), GLITCH_COLOR, 2.0)
+	draw_line(Vector2(22, -22), Vector2(-22, 22), GLITCH_COLOR, 2.0)
 	draw_circle(Vector2.ZERO, 5.0, Color.WHITE if current_phase != AttackPhase.RECOVER else Color(0.3, 0.2, 0.4))

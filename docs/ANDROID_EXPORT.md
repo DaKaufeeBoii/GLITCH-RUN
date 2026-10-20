@@ -53,7 +53,9 @@ Review current distribution requirements in the relevant store console before re
 - [ ] Install and cold-launch on an ARM64 Android device in landscape.
 - [ ] Check touch controls, HUD margins, and menus on the target screen sizes/aspect ratios.
 - [ ] Check pause, Android Back navigation, background/resume, audio, and haptics.
-- [ ] Play through the first sector and verify enemies begin at baseline and learning stays locked until the sector is cleared.
+- [ ] Play through the first sector and verify enemies begin at baseline without collecting learning evidence. Afterward, verify that first evolution remains locked until the first biome is complete and later promotions are spaced by 3, 5, then 7 floors.
+- [ ] Verify the 50 HP starting boss phases, +5 HP per sector scaling, the three family bosses from biome 2 onward, and their movement/attack telegraphs on a phone-sized display.
+- [ ] Verify BREACHER and LONGSHOT unlock costs display as 1,000 and 3,000 Bits.
 - [ ] Verify a run reset/death clears run-scoped enemy learning.
 - [ ] Verify local settings and save data survive app restart and recover from malformed files.
 - [ ] Check frame pacing, heat, and memory over a longer run on representative devices.

@@ -8,8 +8,8 @@ signal phase_two_entered
 
 const PROJECTILE_SCENE := preload("res://scenes/weapons/enemy_projectile.tscn")
 
-@export var max_health := 30
-var health := 30
+@export var max_health := 50
+var health := 50
 var target: Node2D
 var defeated_already := false
 
@@ -219,13 +219,13 @@ func _draw() -> void:
 	var main_color := CORE_COLOR if damage_flash <= 0.0 else Color.WHITE
 
 	# Draw outer rotating ring
-	draw_arc(Vector2.ZERO, 36.0, 0.0, TAU, 32, RING_COLOR, 2.5, false)
+	draw_arc(Vector2.ZERO, 48.0, 0.0, TAU, 32, RING_COLOR, 3.0, false)
 
 	# Draw 4 orbital emitters
 	for i in range(4):
 		var a := orbital_angle + i * (PI / 2.0)
-		var p := Vector2(cos(a), sin(a)) * 36.0
-		draw_circle(p, 5.0, ACCENT_COLOR)
+		var p := Vector2(cos(a), sin(a)) * 48.0
+		draw_circle(p, 6.5, ACCENT_COLOR)
 
 		# Telegraph guide lines during CHARGING_SWEEP
 		if current_phase == AttackPhase.CHARGING_SWEEP:
@@ -240,10 +240,10 @@ func _draw() -> void:
 
 	# Central core diamond/octahedron
 	var pts := PackedVector2Array([
-		Vector2(0, -22),
-		Vector2(20, 0),
-		Vector2(0, 22),
-		Vector2(-20, 0)
+		Vector2(0, -29),
+		Vector2(26, 0),
+		Vector2(0, 29),
+		Vector2(-26, 0)
 	])
 	draw_colored_polygon(pts, main_color)
 	draw_polyline(pts, Color.WHITE if damage_flash > 0.0 else ACCENT_COLOR, 2.0)

@@ -6,8 +6,9 @@ GLITCH//RUN is an offline, single-player, top-down action roguelite built with G
 
 - Procedurally generated floors connect combat rooms and optional recovery, shop, gift, and other special rooms. Floor routes vary; special rooms are not guaranteed on every floor.
 - Combat rooms use multiple waves and varied enemy compositions. Sector progression and room generation are seeded for reproducible layouts.
-- The first sector is an onboarding sector: enemies begin at their baseline forms and their run-scoped learning/evolution is locked. After sector 1 is cleared, eligible enemies can learn from their own encounters. Run evolutions and evidence reset when the run ends or restarts.
-- Boss encounters have distinct phases and a rotating roster. The player can unlock permanent characters with archived Bits.
+- The first sector is an onboarding sector: enemies begin at baseline forms and do not collect learning evidence. After it is cleared, eligible enemies start learning from their own encounters, but the first evolution cannot happen until biome 1 is complete. Later evolution milestones are separated by 3, 5, then 7 completed floors. Evolution and evidence reset when a run ends or restarts.
+- Bosses begin at 50 HP per phase and gain 5 HP per completed sector. Biome-final bosses have two phases; sector mid-bosses have one. Three enemy-family bosses join the rotation from biome 2, with bounded arenas, obstacle-aware movement, and readable attack telegraphs.
+- Archived Bits unlock permanent characters: BREACHER costs 1,000 Bits and LONGSHOT costs 3,000 Bits.
 - Runs include touch-first menus, pause and quit flows, local settings, synthesized music and effects, and local save data.
 - The game runs offline. Settings, saves, and diagnostic logs stay in app-local `user://` storage.
 
@@ -55,7 +56,7 @@ The test runner is `scripts/test_runner.gd`. From the project root:
 godot --headless --path . --script res://scripts/test_runner.gd
 ```
 
-The current suite contains 59 scenarios covering procedural generation and reachability, progression, enemy AI and evolution, bosses, persistence, menus, and Android input/export configuration. The suite was last run successfully with Godot 4.7.2 during the current code review. A headless run needs a writable Godot `user://` location for save/settings persistence scenarios.
+The current suite contains 59 scenarios covering procedural generation and reachability, progression, enemy AI and evolution, bosses, persistence, menus, and Android input/export configuration. A headless run needs a writable Godot `user://` location for save/settings persistence scenarios. See the current test output before treating this count as verified for a later build.
 
 ## Useful project paths
 
